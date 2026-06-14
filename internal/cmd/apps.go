@@ -27,6 +27,7 @@ func newAppsCmd() *cobra.Command {
 		newAppsMcpCmd(),
 		newAppsCallCmd(),
 		newAppsBuildsCmd(),
+		newAppsOwnersCmd(),
 	)
 	return c
 }

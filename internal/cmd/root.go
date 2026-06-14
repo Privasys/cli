@@ -50,6 +50,9 @@ func NewRoot() *cobra.Command {
 		newAuthCmd(),
 		newConfigCmd(),
 		newAppsCmd(),
+		newAccountCmd(),
+		newTeamCmd(),
+		newAttestCmd(),
 		newVersionCmd(),
 	)
 	return root
