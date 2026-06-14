@@ -13,7 +13,21 @@ import (
 
 func newAppsCmd() *cobra.Command {
 	c := &cobra.Command{Use: "apps", Short: "Manage confidential apps"}
-	c.AddCommand(newAppsListCmd(), newAppsDescribeCmd())
+	c.AddCommand(
+		newAppsListCmd(),
+		newAppsDescribeCmd(),
+		newAppsCreateCmd(),
+		newAppsDeleteCmd(),
+		newAppsUploadCmd(),
+		newAppsVersionsCmd(),
+		newAppsDeployCmd(),
+		newAppsDeploymentsCmd(),
+		newAppsStopCmd(),
+		newAppsAPICmd(),
+		newAppsMcpCmd(),
+		newAppsCallCmd(),
+		newAppsBuildsCmd(),
+	)
 	return c
 }
 

@@ -1,0 +1,230 @@
+// Copyright (c) Privasys. All rights reserved.
+// Licensed under the GNU Affero General Public License v3.0.
+
+package api
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// do performs an authenticated request with an optional JSON body and decodes
+// the JSON response into out (out may be nil to discard).
+func (c *Client) do(ctx context.Context, method, path string, body, out interface{}) error {
+	var rdr io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		rdr = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, rdr)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("not authorized (%d) — check your login and account access", resp.StatusCode)
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("API error %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	if out != nil && len(data) > 0 {
+		if err := json.Unmarshal(data, out); err != nil {
+			return fmt.Errorf("decode response: %w", err)
+		}
+	}
+	return nil
+}
+
+// CreateApp creates an app from the given request body (CreateAppRequest shape).
+func (c *Client) CreateApp(ctx context.Context, body map[string]interface{}) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/apps", body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DeleteApp deletes an app by id.
+func (c *Client) DeleteApp(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/api/v1/apps/"+id, nil, nil)
+}
+
+// CheckName reports whether an app name is available.
+func (c *Client) CheckName(ctx context.Context, name string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.getJSON(ctx, "/api/v1/apps/check-name?name="+name, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// UploadCwasm uploads a .cwasm artifact for a wasm app (multipart field "file").
+func (c *Client) UploadCwasm(ctx context.Context, id, path string) (map[string]interface{}, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, err := mw.CreateFormFile("file", filepath.Base(path))
+	if err != nil {
+		return nil, err
+	}
+	if _, err := io.Copy(fw, f); err != nil {
+		return nil, err
+	}
+	mw.Close()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/v1/apps/"+id+"/upload", &buf)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("upload error %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	var out map[string]interface{}
+	json.Unmarshal(data, &out)
+	return out, nil
+}
+
+// ListVersions returns an app's versions.
+func (c *Client) ListVersions(ctx context.Context, id string) ([]map[string]interface{}, error) {
+	var raw json.RawMessage
+	if err := c.getJSON(ctx, "/api/v1/apps/"+id+"/versions", &raw); err != nil {
+		return nil, err
+	}
+	return unwrapList(raw, "versions")
+}
+
+// CreateVersion records a new version from a commit URL (build is triggered).
+func (c *Client) CreateVersion(ctx context.Context, id, commitURL string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/apps/"+id+"/versions",
+		map[string]string{"commit_url": commitURL}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DeployVersion deploys a version to an enclave.
+func (c *Client) DeployVersion(ctx context.Context, id, versionID, enclaveID string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost,
+		"/api/v1/apps/"+id+"/versions/"+versionID+"/deploy",
+		map[string]string{"enclave_id": enclaveID}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListDeployments returns an app's deployments.
+func (c *Client) ListDeployments(ctx context.Context, id string) ([]map[string]interface{}, error) {
+	var raw json.RawMessage
+	if err := c.getJSON(ctx, "/api/v1/apps/"+id+"/deployments", &raw); err != nil {
+		return nil, err
+	}
+	return unwrapList(raw, "deployments")
+}
+
+// StopDeployment stops a running deployment.
+func (c *Client) StopDeployment(ctx context.Context, id, deploymentID string, force bool) (map[string]interface{}, error) {
+	path := "/api/v1/apps/" + id + "/deployments/" + deploymentID + "/stop"
+	if force {
+		path += "?force=true"
+	}
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost, path, map[string]interface{}{}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// CompatibleEnclaves lists enclaves an app can be deployed to.
+func (c *Client) CompatibleEnclaves(ctx context.Context, id string) ([]map[string]interface{}, error) {
+	var raw json.RawMessage
+	if err := c.getJSON(ctx, "/api/v1/apps/"+id+"/compatible-enclaves", &raw); err != nil {
+		return nil, err
+	}
+	return unwrapList(raw, "enclaves")
+}
+
+// Schema returns the app's exported function schema (unwraps {status, schema}).
+func (c *Client) Schema(ctx context.Context, id string) (map[string]interface{}, error) {
+	var env map[string]json.RawMessage
+	if err := c.getJSON(ctx, "/api/v1/apps/"+id+"/schema", &env); err != nil {
+		return nil, err
+	}
+	if s, ok := env["schema"]; ok {
+		var out map[string]interface{}
+		if err := json.Unmarshal(s, &out); err != nil {
+			return nil, err
+		}
+		return out, nil
+	}
+	out := map[string]interface{}{}
+	for k, v := range env {
+		var anyv interface{}
+		json.Unmarshal(v, &anyv)
+		out[k] = anyv
+	}
+	return out, nil
+}
+
+// MCP returns the app's MCP tool manifest.
+func (c *Client) MCP(ctx context.Context, id string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.getJSON(ctx, "/api/v1/apps/"+id+"/mcp", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RPC calls an app function, passing body through verbatim and returning the
+// raw decoded result.
+func (c *Client) RPC(ctx context.Context, id, function string, body interface{}) (interface{}, error) {
+	var out interface{}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/apps/"+id+"/rpc/"+function, body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListBuilds returns an app's build jobs.
+func (c *Client) ListBuilds(ctx context.Context, id string) ([]map[string]interface{}, error) {
+	var raw json.RawMessage
+	if err := c.getJSON(ctx, "/api/v1/apps/"+id+"/builds", &raw); err != nil {
+		return nil, err
+	}
+	return unwrapList(raw, "builds")
+}

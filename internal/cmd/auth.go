@@ -78,12 +78,12 @@ func newAuthLoginCmd() *cobra.Command {
 // pendingDevice persists an in-progress device authorization so `auth poll`
 // (Mode B) can complete it from a separate invocation.
 type pendingDevice struct {
-	Issuer    string    `json:"issuer"`
-	DeviceCode string   `json:"device_code"`
-	Verifier  string    `json:"verifier"`
-	UserCode  string    `json:"user_code"`
-	Interval  int       `json:"interval"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Issuer     string    `json:"issuer"`
+	DeviceCode string    `json:"device_code"`
+	Verifier   string    `json:"verifier"`
+	UserCode   string    `json:"user_code"`
+	Interval   int       `json:"interval"`
+	ExpiresAt  time.Time `json:"expires_at"`
 }
 
 func pendingPath() (string, error) {
@@ -261,10 +261,10 @@ func newAuthWhoamiCmd() *cobra.Command {
 				return err
 			}
 			view := map[string]interface{}{
-				"subject": claims["sub"],
-				"issuer":  claims["iss"],
+				"subject":  claims["sub"],
+				"issuer":   claims["iss"],
 				"audience": claims["aud"],
-				"roles":   claims["roles"],
+				"roles":    claims["roles"],
 			}
 			if email, ok := claims["email"]; ok {
 				view["email"] = email
