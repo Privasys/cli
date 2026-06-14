@@ -1,4 +1,4 @@
-# privasys CLI
+# Privasys CLI
 
 The command-line interface to the [Privasys](https://privasys.org) confidential-computing platform. Authenticate with the Privasys Wallet, deploy and manage confidential apps, manage teams and billing, and verify attestation — from a terminal, a CI pipeline, or an AI agent.
 
