@@ -30,7 +30,7 @@ func newConfigCmd() *cobra.Command {
 					return err
 				}
 				if !env.Quiet {
-					fmt.Printf("Set %s = %s\n", args[0], args[1])
+					output.Success(cmd.OutOrStdout(), "Set %s = %s", args[0], args[1])
 				}
 				return nil
 			},

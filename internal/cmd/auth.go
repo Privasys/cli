@@ -67,7 +67,7 @@ func newAuthLoginCmd() *cobra.Command {
 				return err
 			}
 			sub := subjectOf(tr.AccessToken)
-			fmt.Printf("Logged in%s.\n", whom(sub))
+			output.Success(cmd.OutOrStdout(), "Logged in%s", whom(sub))
 			return nil
 		},
 	}
@@ -192,7 +192,7 @@ func newAuthPollCmd() *cobra.Command {
 			}
 			_ = os.Remove(p)
 			_ = env
-			fmt.Printf("Logged in%s.\n", whom(subjectOf(tr.AccessToken)))
+			output.Success(cmd.OutOrStdout(), "Logged in%s", whom(subjectOf(tr.AccessToken)))
 			return nil
 		},
 	}
@@ -235,7 +235,7 @@ func newAuthActivateSACmd() *cobra.Command {
 			if err := auth.Save(cred); err != nil {
 				return err
 			}
-			fmt.Printf("Activated service account %s.\n", key.UserID)
+			output.Success(cmd.OutOrStdout(), "Activated service account %s", key.UserID)
 			return nil
 		},
 	}
@@ -344,7 +344,7 @@ func newAuthLogoutCmd() *cobra.Command {
 			if err := auth.Delete(env.Cfg.Issuer); err != nil {
 				return err
 			}
-			fmt.Println("Logged out.")
+			output.Success(cmd.OutOrStdout(), "Logged out")
 			return nil
 		},
 	}

@@ -62,7 +62,7 @@ func newAppsCreateCmd() *cobra.Command {
 				return err
 			}
 			if !env.Quiet {
-				fmt.Fprintf(os.Stderr, "Created app %s (%s)\n", output.Str(app, "name"), output.Str(app, "id"))
+				output.Success(os.Stderr, "Created app %s (%s)", output.Str(app, "name"), output.Str(app, "id"))
 			}
 			return output.Emit(env.Format, app, func() output.Table {
 				return kvTable(app, []string{"name", "id", "app_type", "source_type", "status"})
@@ -111,7 +111,7 @@ func newAppsDeleteCmd() *cobra.Command {
 			if err := client.DeleteApp(cmd.Context(), appID); err != nil {
 				return err
 			}
-			fmt.Println("Deleted.")
+			output.Success(cmd.OutOrStdout(), "Deleted")
 			return nil
 		},
 	}

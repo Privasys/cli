@@ -37,7 +37,7 @@ func newVersionCmd() *cobra.Command {
 			ver := resolveVersion()
 			info := map[string]string{"version": ver, "commit": Commit, "built": Date}
 			return output.Emit(env.Format, info, func() output.Table {
-				return output.Table{Rows: [][]string{{fmt.Sprintf("privasys %s (commit %s, built %s)", ver, Commit, Date)}}}
+				return output.Table{Rows: [][]string{{fmt.Sprintf("%s %s %s", output.Wordmark(), ver, output.Slate("(commit "+Commit+", built "+Date+")"))}}}
 			})
 		},
 	}
