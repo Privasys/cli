@@ -65,7 +65,7 @@ brews:
       owner: Privasys
       name: homebrew-tap
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
-    disable: '{{ if .Env.TAP_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
+    skip_upload: '{{ if .Env.TAP_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
     directory: Formula
     homepage: https://privasys.org
     description: Deploy and verify confidential apps from your terminal or your agent
@@ -81,7 +81,7 @@ scoops:
       owner: Privasys
       name: scoop-bucket
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
-    disable: '{{ if .Env.TAP_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
+    skip_upload: '{{ if .Env.TAP_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
     homepage: https://privasys.org
     description: Deploy and verify confidential apps from your terminal or your agent
     license: AGPL-3.0
