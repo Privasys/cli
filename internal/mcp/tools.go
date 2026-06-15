@@ -215,6 +215,18 @@ func (s *Server) registerTools() {
 			},
 		},
 		{
+			Name:        "verify_quote",
+			Description: "Verify a base64 TEE quote with the attestation server (pair with attest's quote.raw_base64).",
+			Schema:      obj(map[string]interface{}{"quote_base64": strProp("base64-encoded TEE quote")}, "quote_base64"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				q, err := requireStr(args, "quote_base64")
+				if err != nil {
+					return nil, err
+				}
+				return d.Client.VerifyQuote(ctx, q)
+			},
+		},
+		{
 			Name:        "account_show",
 			Description: "Show the current account and your role.",
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {

@@ -104,3 +104,14 @@ func (c *Client) Attest(ctx context.Context, appID, challenge string) (map[strin
 	}
 	return out, nil
 }
+
+// VerifyQuote submits a base64 TEE quote to the attestation server (via the
+// management service) and returns the verification verdict.
+func (c *Client) VerifyQuote(ctx context.Context, quoteBase64 string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/verify-quote",
+		map[string]string{"quote": quoteBase64}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
