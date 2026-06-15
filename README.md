@@ -6,9 +6,9 @@ Licensed under AGPL-3.0.
 
 ## Install
 
-**Script (macOS / Linux):**
+**Script (macOS / Linux)** — [read it first](https://github.com/Privasys/cli/blob/main/install.sh):
 ```sh
-curl -fsSL https://privasys.org/cli/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/Privasys/cli/main/install.sh | sh
 ```
 
 **Binaries:** download the archive for your OS/arch from the [releases page](https://github.com/Privasys/cli/releases) and put `privasys` on your `PATH`. Windows binaries are currently unsigned.
