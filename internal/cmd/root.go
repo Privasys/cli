@@ -5,10 +5,13 @@
 package cmd
 
 import (
+	"errors"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Privasys/cli/internal/auth"
 	"github.com/Privasys/cli/internal/config"
 )
 
@@ -54,6 +57,7 @@ func NewRoot() *cobra.Command {
 		newTeamCmd(),
 		newBillingCmd(),
 		newAttestCmd(),
+		newMcpCmd(),
 		newVersionCmd(),
 	)
 	return root
@@ -64,8 +68,38 @@ func Execute() {
 	if err := NewRoot().Execute(); err != nil {
 		// Cobra already printed nothing (SilenceErrors); print to stderr.
 		os.Stderr.WriteString("error: " + err.Error() + "\n")
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
+}
+
+// exitCode maps an error to a stable process exit code so scripts and agents
+// can branch on the failure class.
+//
+//	1 generic   3 not authenticated   4 not authorized   5 not found
+func exitCode(err error) int {
+	if errors.Is(err, auth.ErrNotLoggedIn) {
+		return 3
+	}
+	s := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(s, "not authenticated"):
+		return 3
+	case strings.Contains(s, "not authorized"):
+		return 4
+	case strings.Contains(s, "404") || strings.Contains(s, "not found"):
+		return 5
+	default:
+		return 1
+	}
+}
+
+// stdoutIsTTY reports whether stdout is an interactive terminal.
+func stdoutIsTTY() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 // loadEnv resolves the configuration with persistent-flag and env overrides.
@@ -88,6 +122,12 @@ func loadEnv(cmd *cobra.Command) (*Env, error) {
 	format := cfg.Format
 	if v, _ := cmd.Flags().GetString("format"); v != "" {
 		format = v
+	}
+	// Agent-friendly default: when the format wasn't explicitly chosen and the
+	// (human) table format would apply, emit JSON when stdout is piped.
+	formatExplicit := cmd.Flags().Changed("format") || os.Getenv("PRIVASYS_FORMAT") != ""
+	if !formatExplicit && format == "table" && !stdoutIsTTY() {
+		format = "json"
 	}
 	noInput, _ := cmd.Flags().GetBool("no-input")
 	quiet, _ := cmd.Flags().GetBool("quiet")

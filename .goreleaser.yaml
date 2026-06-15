@@ -1,0 +1,54 @@
+# Copyright (c) Privasys. All rights reserved.
+# Licensed under the GNU Affero General Public License v3.0.
+#
+# Release config for the Privasys CLI. `goreleaser release` builds signed
+# (checksummed) cross-platform binaries and publishes a GitHub release on a
+# `v*` tag. Windows binaries are unsigned for now (no Authenticode cert).
+version: 2
+
+project_name: privasys
+
+builds:
+  - id: privasys
+    main: ./cmd/privasys
+    binary: privasys
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X github.com/Privasys/cli/internal/cmd.Version={{ .Version }}
+      - -X github.com/Privasys/cli/internal/cmd.Commit={{ .ShortCommit }}
+      - -X github.com/Privasys/cli/internal/cmd.Date={{ .CommitDate }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: default
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: Privasys
+    name: cli
+  draft: false
+  prerelease: auto
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
