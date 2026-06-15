@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "privasys": {
+      "command": "privasys",
+      "args": ["mcp", "serve"]
+    }
+  }
+}

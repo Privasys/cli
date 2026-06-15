@@ -58,6 +58,7 @@ func NewRoot() *cobra.Command {
 		newBillingCmd(),
 		newAttestCmd(),
 		newMcpCmd(),
+		newAgentsCmd(),
 		newVersionCmd(),
 	)
 	return root

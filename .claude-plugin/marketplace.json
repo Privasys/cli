@@ -1,0 +1,14 @@
+{
+  "name": "privasys",
+  "owner": {
+    "name": "Privasys",
+    "url": "https://privasys.org"
+  },
+  "plugins": [
+    {
+      "name": "privasys",
+      "source": "./plugins/privasys",
+      "description": "Deploy and verify confidential apps on Privasys: MCP tools, slash commands, and a workflow skill. Requires the privasys CLI on PATH."
+    }
+  ]
+}

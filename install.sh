@@ -70,5 +70,6 @@ case ":$PATH:" in
   *) printf '    %sexport PATH="$PATH:%s"%s   %s(add to your shell profile)%s\n' "$BLUE" "$dir" "$RESET" "$SLATE" "$RESET" ;;
 esac
 printf '    %s%s auth login%s            %s# sign in with your wallet%s\n' "$BLUE" "$BIN" "$RESET" "$SLATE" "$RESET"
+printf '    %s%s agents init%s           %s# wire the platform into your AI agent%s\n' "$BLUE" "$BIN" "$RESET" "$SLATE" "$RESET"
 printf '    %s%s mcp serve%s             %s# expose the platform to an AI agent%s\n' "$BLUE" "$BIN" "$RESET" "$SLATE" "$RESET"
 printf '\n  %sDocs:%s https://github.com/%s\n\n' "$SLATE" "$RESET" "$REPO"

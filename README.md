@@ -11,6 +11,19 @@ Licensed under AGPL-3.0.
 curl -fsSL https://raw.githubusercontent.com/Privasys/cli/main/install.sh | sh
 ```
 
+**Homebrew (macOS / Linux):**
+```sh
+brew install Privasys/tap/privasys
+```
+
+**Scoop (Windows):**
+```powershell
+scoop bucket add privasys https://github.com/Privasys/scoop-bucket
+scoop install privasys
+```
+
+**Debian / RPM:** download the `.deb` or `.rpm` for your arch from the [releases page](https://github.com/Privasys/cli/releases) and install it with `dpkg -i` / `rpm -i`.
+
 **Binaries:** download the archive for your OS/arch from the [releases page](https://github.com/Privasys/cli/releases) and put `privasys` on your `PATH`. Windows binaries are currently unsigned.
 
 > `go install` is not supported: the CLI does client-side RA-TLS (challenging the enclave directly), which links the RA-TLS client library and is built with the [Privasys Go fork](https://github.com/Privasys/go) (`-tags ratls`). Use the released binaries. To build from source, check out `Privasys/ra-tls-clients` next to this repo and build with the fork: `GOROOT=<go-fork> go build -tags ratls ./cmd/privasys`.
@@ -63,6 +76,7 @@ Commands that take an app accept either its **id or its name** (e.g. `privasys a
 | `auth` | `login`, `begin`, `poll`, `activate-service-account`, `whoami`, `print-access-token`, `list`, `logout` |
 | `config` | `set`, `get`, `list` |
 | `mcp` | `serve` (see [For AI agents](#for-ai-agents)) |
+| `agents` | `init` (wire MCP into Claude Code / Cursor / VS Code / Gemini) |
 
 Deploy an app end to end:
 ```sh
@@ -99,6 +113,23 @@ The CLI is built to be driven by AI agents.
 ```sh
 # Claude Code
 claude mcp add privasys -- privasys mcp serve
+```
+
+**One-command wiring.** `privasys agents init` drops the right MCP registration (and an `AGENTS.md` briefing) into your repo so an agent picks up the tools with no manual JSON editing:
+
+```sh
+privasys agents init                 # Claude Code + AGENTS.md
+privasys agents init --all           # every supported harness (claude, cursor, vscode, gemini)
+privasys agents init --print         # show what would be written, touch nothing
+```
+
+It is idempotent and never writes secrets — the generated config only points at the local `privasys` binary, which reads its token from the OS keychain.
+
+**Claude Code plugin.** Install the plugin for slash commands (`/deploy`, `/attest`), a workflow skill, and the MCP server in one step:
+
+```sh
+claude plugin marketplace add Privasys/cli
+claude plugin install privasys@privasys
 ```
 
 Tools include `whoami`, `apps_list`/`apps_describe`/`apps_create`/`apps_deploy`/`apps_call`/…, `attest`, `attest_direct` (client-side challenge), `verify_quote`, `account_show`, `team_list`/`team_add`, and `billing_*`. The server authenticates exactly like the CLI — a logged-in session, or a service account (`PRIVASYS_SERVICE_KEY`) for unattended use.

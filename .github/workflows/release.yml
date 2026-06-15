@@ -60,3 +60,7 @@ jobs:
           workdir: cli
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT with contents:write on Privasys/homebrew-tap + Privasys/scoop-bucket.
+          # Always defined (empty when the secret is unset) so the goreleaser
+          # templates resolve; when empty the brew/scoop publishers self-disable.
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}

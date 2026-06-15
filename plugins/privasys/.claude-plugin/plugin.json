@@ -1,0 +1,14 @@
+{
+  "name": "privasys",
+  "displayName": "Privasys",
+  "version": "0.1.0",
+  "description": "Deploy and verify confidential apps on the Privasys platform from Claude Code.",
+  "author": {
+    "name": "Privasys",
+    "url": "https://privasys.org"
+  },
+  "homepage": "https://github.com/Privasys/cli",
+  "repository": "https://github.com/Privasys/cli",
+  "license": "AGPL-3.0",
+  "keywords": ["confidential-computing", "attestation", "deploy", "ra-tls", "mcp"]
+}

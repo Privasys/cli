@@ -38,6 +38,54 @@ archives:
       - LICENSE
       - README.md
 
+# Native Linux packages. These need no external token, so they ship on every
+# release. The archives above remain the canonical agent/CI install path.
+nfpms:
+  - id: privasys
+    package_name: privasys
+    vendor: Privasys
+    homepage: https://privasys.org
+    maintainer: Privasys <support@privasys.org>
+    description: |-
+      The command-line interface to the Privasys confidential-computing platform.
+      Authenticate with the wallet, deploy and manage confidential apps, manage
+      teams and billing, and verify enclave attestation. Agent-first (MCP).
+    license: AGPL-3.0
+    formats: [deb, rpm]
+    bindir: /usr/bin
+
+# Homebrew tap (macOS/Linux) and Scoop bucket (Windows). These publish by
+# pushing to sibling repos, which the per-repo Actions GITHUB_TOKEN cannot do,
+# so they use a dedicated PAT (TAP_GITHUB_TOKEN). When that secret is absent the
+# steps disable themselves and the rest of the release still succeeds; add the
+# secret and they publish automatically on the next tag.
+brews:
+  - name: privasys
+    repository:
+      owner: Privasys
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    disable: '{{ if .Env.TAP_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
+    directory: Formula
+    homepage: https://privasys.org
+    description: Deploy and verify confidential apps from your terminal or your agent
+    license: AGPL-3.0
+    test: |
+      system "#{bin}/privasys", "version"
+    install: |
+      bin.install "privasys"
+
+scoops:
+  - name: privasys
+    repository:
+      owner: Privasys
+      name: scoop-bucket
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    disable: '{{ if .Env.TAP_GITHUB_TOKEN }}false{{ else }}true{{ end }}'
+    homepage: https://privasys.org
+    description: Deploy and verify confidential apps from your terminal or your agent
+    license: AGPL-3.0
+
 checksum:
   name_template: "checksums.txt"
 
