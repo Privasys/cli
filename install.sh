@@ -13,10 +13,11 @@ BIN="privasys"
 # --- colour (only on a TTY, respecting NO_COLOR / TERM=dumb) ---
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != "dumb" ]; then
   GREEN=$(printf '\033[38;2;52;232;158m'); BLUE=$(printf '\033[38;2;0;188;242m')
-  SLATE=$(printf '\033[38;2;100;116;139m'); BOLD=$(printf '\033[1m'); RESET=$(printf '\033[0m')
-  CHECK="${GREEN}✔${RESET}"
+  SLATE=$(printf '\033[38;2;100;116;139m'); WHITE=$(printf '\033[97m')
+  BOLD=$(printf '\033[1m'); RESET=$(printf '\033[0m')
+  CHECK="${GREEN}✓${RESET}"
 else
-  GREEN=; BLUE=; SLATE=; BOLD=; RESET=; CHECK="*"
+  GREEN=; BLUE=; SLATE=; WHITE=; BOLD=; RESET=; CHECK="-"
 fi
 
 step() { printf '  %s %s\n' "$CHECK" "$1"; }
@@ -24,12 +25,11 @@ info() { printf '    %s%s%s\n' "$SLATE" "$1" "$RESET"; }
 die()  { printf '\n  %sx%s %s\n' "$BLUE" "$RESET" "$1" >&2; exit 1; }
 
 banner() {
-  printf '\n'
   # Mark = two triangles split on a diagonal (the Privasys logo), green + blue.
-  printf '  %s%s◤%s%s◢%s  %s%spriv%s%s%sasys%s %s%sCLI%s\n' \
-    "$BOLD" "$GREEN" "$RESET" "$BLUE" "$RESET" \
-    "$BOLD" "$GREEN" "$RESET" "$BOLD" "$BLUE" "$RESET" \
-    "$SLATE" "" "$RESET"
+  # Wordmark in white; "CLI" in slate.
+  mark="${BOLD}${GREEN}◤${RESET}${BLUE}◢${RESET}"
+  name="${BOLD}${WHITE}privasys${RESET}"
+  printf '\n  %s  %s %sCLI%s\n' "$mark" "$name" "$SLATE" "$RESET"
   printf '  %sDeploy and verify confidential apps — from your terminal or your agent.%s\n\n' "$SLATE" "$RESET"
 }
 

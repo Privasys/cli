@@ -14,6 +14,7 @@ const (
 	cGreen = "\033[38;2;52;232;158m"
 	cBlue  = "\033[38;2;0;188;242m"
 	cSlate = "\033[38;2;100;116;139m"
+	cWhite = "\033[97m"
 	cBold  = "\033[1m"
 	cReset = "\033[0m"
 )
@@ -48,10 +49,10 @@ func Blue(s string) string  { return paint(cBlue, s) }
 func Slate(s string) string { return paint(cSlate, s) }
 func Bold(s string) string  { return paint(cBold, s) }
 
-// Check returns a brand-green check mark (plain ASCII when colour is off).
+// Check returns a light brand-green check mark (plain ASCII when colour is off).
 func Check() string {
 	if useColor {
-		return cGreen + "✔" + cReset
+		return cGreen + "✓" + cReset
 	}
 	return "OK"
 }
@@ -62,11 +63,11 @@ func Success(w io.Writer, format string, a ...interface{}) {
 	fmt.Fprintf(w, "%s %s\n", Check(), fmt.Sprintf(format, a...))
 }
 
-// Wordmark returns the "privasys" wordmark with the brand gradient split
-// (green → blue), bold on a colour terminal.
+// Wordmark returns the "privasys" wordmark in bold white (the brand colours
+// stay on the logo mark, not the name).
 func Wordmark() string {
 	if !useColor {
 		return "privasys"
 	}
-	return cBold + cGreen + "priv" + cBlue + "asys" + cReset
+	return cBold + cWhite + "privasys" + cReset
 }
