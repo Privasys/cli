@@ -12,6 +12,10 @@ on:
 permissions:
   contents: write
 
+# Run JS actions on Node 24 (org standard; clears the Node 20 deprecation).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
