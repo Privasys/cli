@@ -14,6 +14,10 @@ builds:
     binary: privasys
     env:
       - CGO_ENABLED=0
+    # Built with the Privasys Go fork (set up in the Release workflow) so the
+    # client-side RA-TLS challenge (0xFFBB) is available.
+    tags:
+      - ratls
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
     ldflags:

@@ -31,7 +31,7 @@ func newMcpCmd() *cobra.Command {
 				if err != nil {
 					return mcp.Deps{}, err
 				}
-				return mcp.Deps{Client: api.New(env.Cfg.Endpoint, token), Token: token}, nil
+				return mcp.Deps{Client: api.New(env.Cfg.Endpoint, token), Token: token, Issuer: env.Cfg.Issuer}, nil
 			}
 			srv := mcp.NewServer(deps, resolveVersion())
 			return srv.Serve(cmd.Context(), os.Stdin, os.Stdout)

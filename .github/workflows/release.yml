@@ -2,6 +2,8 @@
 # Licensed under the GNU Affero General Public License v3.0.
 #
 # Builds and publishes cross-platform CLI binaries on a v* tag via goreleaser.
+# The CLI links the RA-TLS client library and is built with the Privasys Go
+# fork (-tags ratls) so client-side challenge-response attestation works.
 name: Release
 
 on:
@@ -12,26 +14,46 @@ on:
 permissions:
   contents: write
 
-# Run JS actions on Node 24 (org standard; clears the Node 20 deprecation).
+# Run JS actions on Node 24 (org standard).
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  GO_RATLS_VERSION: privasys-v0.2.0-go1.25.8
+  GOTOOLCHAIN: local
 
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout cli
+        uses: actions/checkout@v5
         with:
+          path: cli
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+
+      - name: Checkout ra-tls-clients (sibling for the go.mod replace)
+        uses: actions/checkout@v5
         with:
-          go-version: "1.25"
-          cache: true
-      - name: Test
-        run: go test ./...
+          repository: Privasys/ra-tls-clients
+          path: ra-tls-clients
+
+      - name: Install Go RA-TLS fork
+        run: |
+          curl -sL "https://github.com/Privasys/go/releases/download/${GO_RATLS_VERSION}/go-ratls-${GO_RATLS_VERSION}-linux-amd64.tar.gz" \
+            -o /tmp/go-ratls.tar.gz
+          tar -C "${GITHUB_WORKSPACE}" -xzf /tmp/go-ratls.tar.gz
+          mv "${GITHUB_WORKSPACE}/go-ratls" "${GITHUB_WORKSPACE}/go-fork"
+          echo "${GITHUB_WORKSPACE}/go-fork/bin" >> "$GITHUB_PATH"
+          echo "GOROOT=${GITHUB_WORKSPACE}/go-fork" >> "$GITHUB_ENV"
+          "${GITHUB_WORKSPACE}/go-fork/bin/go" version
+
+      - name: Test (-tags ratls)
+        working-directory: cli
+        run: go test -tags ratls ./...
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
           args: release --clean
+          workdir: cli
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

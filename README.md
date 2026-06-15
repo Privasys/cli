@@ -11,12 +11,9 @@ Licensed under AGPL-3.0.
 curl -fsSL https://privasys.org/cli/install.sh | sh
 ```
 
-**Go:**
-```sh
-go install github.com/Privasys/cli/cmd/privasys@latest
-```
+**Binaries:** download the archive for your OS/arch from the [releases page](https://github.com/Privasys/cli/releases) and put `privasys` on your `PATH`. Windows binaries are currently unsigned.
 
-**Binaries:** download a signed archive for your OS/arch from the [releases page](https://github.com/Privasys/cli/releases) and put `privasys` on your `PATH`. Windows binaries are currently unsigned.
+> `go install` is not supported: the CLI does client-side RA-TLS (challenging the enclave directly), which links the RA-TLS client library and is built with the [Privasys Go fork](https://github.com/Privasys/go) (`-tags ratls`). Use the released binaries. To build from source, check out `Privasys/ra-tls-clients` next to this repo and build with the fork: `GOROOT=<go-fork> go build -tags ratls ./cmd/privasys`.
 
 Verify:
 ```sh
@@ -100,7 +97,7 @@ The CLI is built to be driven by AI agents.
 claude mcp add privasys -- privasys mcp serve
 ```
 
-Tools include `whoami`, `apps_list`/`apps_describe`/`apps_create`/`apps_deploy`/`apps_call`/…, `attest`, `verify_quote`, `account_show`, `team_list`/`team_add`, and `billing_*`. The server authenticates exactly like the CLI — a logged-in session, or a service account (`PRIVASYS_SERVICE_KEY`) for unattended use.
+Tools include `whoami`, `apps_list`/`apps_describe`/`apps_create`/`apps_deploy`/`apps_call`/…, `attest`, `attest_direct` (client-side challenge), `verify_quote`, `account_show`, `team_list`/`team_add`, and `billing_*`. The server authenticates exactly like the CLI — a logged-in session, or a service account (`PRIVASYS_SERVICE_KEY`) for unattended use.
 
 **Scripting.** Every command takes `--format json` (and `yaml`); output auto-switches to JSON when stdout is not a TTY. `--no-input` never prompts. Stable exit codes:
 
@@ -121,13 +118,22 @@ privasys apps list --format json | jq '.[].name'
 
 `privasys attest <app-id>` fetches the deployed app's RA-TLS attestation (TEE quote, measurements, certificate, and Privasys OID extensions) and can verify and export it.
 
+There are two trust models:
+
+- **Default (server-side):** the management service performs the RA-TLS handshake and returns the result. Convenient, but you trust the control plane.
+- **`--direct` (client-side):** the CLI connects to the enclave itself over RA-TLS, **challenges it with a fresh nonce**, and verifies the quote against the attestation server. You trust the enclave's hardware attestation, not the control plane. This is the recommended verification path. (`--host` bypasses the control plane entirely; otherwise the app's hostname is looked up for convenience.)
+
 ```sh
-privasys attest <app-id>                       # summary: quote type, MRENCLAVE/MRTD, RTMRs
-privasys attest <app-id> --challenge $(openssl rand -hex 16)   # fresh challenge-response quote
+privasys attest <app-id>                       # server-side: quote type, MRENCLAVE/MRTD, RTMRs
 privasys attest <app-id> --extensions          # print the certificate's OID extensions
 privasys attest <app-id> --verify              # verify the quote with the attestation server
 privasys attest <app-id> --out ./att           # dump all artifacts to a directory
 privasys attest <app-id> --format json         # full attestation as JSON
+
+# Client-side, challenge the enclave directly:
+privasys attest <app-id> --direct
+privasys attest <app-id> --direct --host <app>.apps.privasys.org   # no control-plane lookup
+privasys attest <app-id> --direct --mrtd <hex>                     # pin an expected measurement
 ```
 
 `--out <dir>` writes:

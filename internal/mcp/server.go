@@ -25,6 +25,7 @@ const protocolVersion = "2024-11-05"
 type Deps struct {
 	Client *api.Client
 	Token  string
+	Issuer string
 }
 
 // DepsFunc returns a fresh authenticated Deps (or an error if not logged in).

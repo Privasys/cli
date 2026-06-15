@@ -3,11 +3,17 @@ module github.com/Privasys/cli
 go 1.25.0
 
 require (
+	enclave-os-mini/clients/go v0.0.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/spf13/cobra v1.10.2
 	github.com/zalando/go-keyring v0.2.8
 	gopkg.in/yaml.v3 v3.0.1
 )
+
+// The RA-TLS client library is a sibling checkout (the release workflow checks
+// out Privasys/ra-tls-clients next to this repo). Client-side challenge-response
+// additionally requires the Privasys Go fork built with -tags ratls.
+replace enclave-os-mini/clients/go => ../ra-tls-clients/go
 
 require (
 	github.com/danieljoos/wincred v1.2.3 // indirect

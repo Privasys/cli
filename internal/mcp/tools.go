@@ -8,6 +8,7 @@ import (
 	"errors"
 
 	"github.com/Privasys/cli/internal/auth"
+	"github.com/Privasys/cli/internal/ratls"
 )
 
 var (
@@ -224,6 +225,43 @@ func (s *Server) registerTools() {
 					return nil, err
 				}
 				return d.Client.VerifyQuote(ctx, q)
+			},
+		},
+		{
+			Name:        "attest_direct",
+			Description: "Verify an app's enclave client-side: connect over RA-TLS, challenge it with a fresh nonce, and verify the quote against the attestation server (does not trust the control plane).",
+			Schema: obj(map[string]interface{}{
+				"app_id":       strProp("the app id (used to resolve the enclave hostname)"),
+				"host":         strProp("enclave gateway FQDN (optional; bypasses control-plane lookup)"),
+				"no_challenge": map[string]interface{}{"type": "boolean", "description": "use deterministic mode instead of a fresh challenge"},
+			}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				host := argStr(args, "host")
+				if host == "" {
+					id, err := requireStr(args, "app_id")
+					if err != nil {
+						return nil, err
+					}
+					app, err := d.Client.GetApp(ctx, id)
+					if err != nil {
+						return nil, err
+					}
+					if h, ok := app["hostname"].(string); ok {
+						host = h
+					}
+					if host == "" {
+						return nil, errors.New("could not resolve app hostname; pass 'host'")
+					}
+				}
+				attTok, _ := auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")
+				var nonce []byte
+				if b, _ := args["no_challenge"].(bool); !b {
+					nonce = ratls.NewNonce()
+				}
+				return ratls.Verify(ctx, ratls.Params{
+					Host: host, Port: 443, ServerName: host,
+					Challenge: nonce, AttServerURL: "https://as.privasys.org/verify", AttServerTok: attTok,
+				})
 			},
 		},
 		{

@@ -85,10 +85,17 @@ func AccessToken(ctx context.Context, issuer string) (string, error) {
 }
 
 func refresh(ctx context.Context, issuer, refreshToken string) (*TokenResponse, error) {
+	return refreshWithScope(ctx, issuer, refreshToken, "")
+}
+
+func refreshWithScope(ctx context.Context, issuer, refreshToken, scope string) (*TokenResponse, error) {
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
 		"client_id":     {ClientID},
+	}
+	if scope != "" {
+		form.Set("scope", scope)
 	}
 	var tr TokenResponse
 	if err := postForm(ctx, issuer+"/token", form, &tr); err != nil {
@@ -98,6 +105,56 @@ func refresh(ctx context.Context, issuer, refreshToken string) (*TokenResponse, 
 		return nil, fmt.Errorf("%s: %s", tr.Error, tr.ErrorDescription)
 	}
 	return &tr, nil
+}
+
+// AccessTokenForAudience mints an access token bound to a specific audience
+// (e.g. "attestation-server") so the CLI can call that resource server
+// directly. For user sessions it uses the refresh grant with an `audience:`
+// scope (the rotated refresh token keeps the original scope); for service
+// accounts it mints via JWT-bearer. PRIVASYS_ACCESS_TOKEN is returned as-is.
+func AccessTokenForAudience(ctx context.Context, issuer, audience string) (string, error) {
+	if t := os.Getenv("PRIVASYS_ACCESS_TOKEN"); t != "" {
+		return t, nil
+	}
+	if sk := os.Getenv("PRIVASYS_SERVICE_KEY"); sk != "" {
+		k, err := loadServiceKeyFromEnv(sk)
+		if err != nil {
+			return "", err
+		}
+		tr, err := MintServiceAccountToken(ctx, issuer, k, audience)
+		if err != nil {
+			return "", err
+		}
+		return tr.AccessToken, nil
+	}
+	cred, err := Load(issuer)
+	if err != nil {
+		return "", err
+	}
+	if cred.IsServiceKeyAcc && cred.ServiceKey != "" {
+		k, err := ParseServiceKey([]byte(cred.ServiceKey))
+		if err != nil {
+			return "", err
+		}
+		tr, err := MintServiceAccountToken(ctx, issuer, k, audience)
+		if err != nil {
+			return "", err
+		}
+		return tr.AccessToken, nil
+	}
+	if cred.RefreshToken == "" {
+		return "", ErrNotLoggedIn
+	}
+	tr, err := refreshWithScope(ctx, issuer, cred.RefreshToken, "openid audience:"+audience)
+	if err != nil {
+		return "", err
+	}
+	// Persist the rotated refresh token (single-use rotation).
+	if tr.RefreshToken != "" {
+		cred.RefreshToken = tr.RefreshToken
+		_ = Save(cred)
+	}
+	return tr.AccessToken, nil
 }
 
 func loadServiceKeyFromEnv(v string) (*ServiceKey, error) {
