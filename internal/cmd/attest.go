@@ -56,13 +56,13 @@ plane. Challenge mode requires a CLI built with the Privasys Go fork.
 				if err != nil {
 					return err
 				}
-				app, err := client.GetApp(ctx, args[0])
+				appID, err := resolveAppID(ctx, client, args[0])
 				if err != nil {
 					return err
 				}
-				serverName = output.Str(app, "hostname")
-				if serverName == "" {
-					return fmt.Errorf("could not resolve the app's hostname; pass --host <enclave-fqdn>")
+				serverName, err = client.ActiveDeploymentHost(ctx, appID)
+				if err != nil {
+					return fmt.Errorf("%w; pass --host <enclave-fqdn>", err)
 				}
 			}
 

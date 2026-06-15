@@ -4,12 +4,59 @@
 package cmd
 
 import (
+	"context"
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"github.com/Privasys/cli/internal/api"
 	"github.com/Privasys/cli/internal/auth"
 	"github.com/Privasys/cli/internal/output"
 )
+
+// resolveAppID accepts an app id (UUID) or name and returns the id. Names are
+// resolved client-side (the API's /apps/{id} requires a UUID), so developers
+// can use the friendly name everywhere.
+func resolveAppID(ctx context.Context, client *api.Client, ref string) (string, error) {
+	if isUUID(ref) {
+		return ref, nil
+	}
+	apps, err := client.ListApps(ctx)
+	if err != nil {
+		return "", err
+	}
+	var match string
+	for _, a := range apps {
+		if output.Str(a, "name") == ref {
+			if match != "" {
+				return "", fmt.Errorf("multiple apps named %q; use the id", ref)
+			}
+			match = output.Str(a, "id")
+		}
+	}
+	if match == "" {
+		return "", fmt.Errorf("no app named %q (see `privasys apps list`)", ref)
+	}
+	return match, nil
+}
+
+func isUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+			continue
+		}
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
 
 func newAppsCmd() *cobra.Command {
 	c := &cobra.Command{Use: "apps", Short: "Manage confidential apps"}
@@ -88,7 +135,11 @@ func newAppsDescribeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			app, err := client.GetApp(cmd.Context(), args[0])
+			appID, err := resolveAppID(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
+			app, err := client.GetApp(cmd.Context(), appID)
 			if err != nil {
 				return err
 			}

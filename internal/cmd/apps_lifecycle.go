@@ -104,7 +104,11 @@ func newAppsDeleteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := client.DeleteApp(cmd.Context(), args[0]); err != nil {
+			appID, err := resolveAppID(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
+			if err := client.DeleteApp(cmd.Context(), appID); err != nil {
 				return err
 			}
 			fmt.Println("Deleted.")
@@ -220,7 +224,10 @@ func newAppsDeployCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			appID := args[0]
+			appID, err := resolveAppID(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
 
 			// Default to the latest version when not specified.
 			if versionID == "" {
@@ -322,7 +329,11 @@ func newAppsDeploymentsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			deps, err := client.ListDeployments(cmd.Context(), args[0])
+			appID, err := resolveAppID(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
+			deps, err := client.ListDeployments(cmd.Context(), appID)
 			if err != nil {
 				return err
 			}
@@ -455,34 +466,36 @@ the data path. Your token is presented to the app for its own auth.
 				}
 			}
 
-			// Resolve enclave hostname / app type (metadata only; the data
-			// itself goes direct). --host skips this control-plane read.
-			appName, aType, serverName := "", "wasm", host
-			if host == "" || path == "" {
-				client, err := apiClient(cmd, env)
-				if err != nil {
-					return err
-				}
-				app, err := client.GetApp(ctx, args[0])
-				if err != nil {
-					return err
-				}
-				appName = output.Str(app, "name")
-				if t := appType(app); t != "" {
-					aType = t
-				}
-				if serverName == "" {
-					serverName = output.Str(app, "hostname")
-				}
-				if path == "" && aType == "container" {
-					path = resolveContainerPath(app, args[1])
-				}
+			// Resolve app metadata (type/name/manifest) and the deployment
+			// hostname. Metadata only — the data itself goes direct. --host
+			// skips the hostname lookup.
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(ctx, client, args[0])
+			if err != nil {
+				return err
+			}
+			appName, aType, serverName := args[0], "wasm", host
+			app, err := client.GetApp(ctx, appID)
+			if err != nil {
+				return err
+			}
+			if n := output.Str(app, "name"); n != "" {
+				appName = n
+			}
+			if t := appType(app); t != "" {
+				aType = t
+			}
+			if path == "" && aType == "container" {
+				path = resolveContainerPath(app, args[1])
 			}
 			if serverName == "" {
-				return fmt.Errorf("could not resolve the app's hostname; pass --host <enclave-fqdn>")
-			}
-			if appName == "" {
-				appName = args[0]
+				serverName, err = client.ActiveDeploymentHost(ctx, appID)
+				if err != nil {
+					return fmt.Errorf("%w; pass --host <enclave-fqdn>", err)
+				}
 			}
 
 			appTok := token

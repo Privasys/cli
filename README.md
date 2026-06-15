@@ -51,6 +51,8 @@ Tokens are stored in the OS keychain (with a `0600` file fallback); the long-liv
 
 ## Commands
 
+Commands that take an app accept either its **id or its name** (e.g. `privasys apps call my-app …`).
+
 | Group | Commands |
 | --- | --- |
 | `apps` | `list`, `describe`, `create`, `upload`, `delete`, `versions {list,create}`, `deploy [--watch]`, `deployments`, `stop`, `api`, `mcp`, `call`, `builds`, `owners {list,add,remove}` |

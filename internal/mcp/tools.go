@@ -190,9 +190,9 @@ func (s *Server) registerTools() {
 				if err != nil {
 					return nil, err
 				}
-				host, _ := app["hostname"].(string)
-				if host == "" {
-					return nil, errors.New("app has no hostname (not deployed?)")
+				host, err := d.Client.ActiveDeploymentHost(ctx, id)
+				if err != nil {
+					return nil, err
 				}
 				name, _ := app["name"].(string)
 				aType, _ := app["app_type"].(string)
@@ -246,15 +246,9 @@ func (s *Server) registerTools() {
 					if err != nil {
 						return nil, err
 					}
-					app, err := d.Client.GetApp(ctx, id)
+					host, err = d.Client.ActiveDeploymentHost(ctx, id)
 					if err != nil {
 						return nil, err
-					}
-					if h, ok := app["hostname"].(string); ok {
-						host = h
-					}
-					if host == "" {
-						return nil, errors.New("could not resolve app hostname; pass 'host'")
 					}
 				}
 				attTok, _ := auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")

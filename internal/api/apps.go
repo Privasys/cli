@@ -213,6 +213,34 @@ func (c *Client) MCP(ctx context.Context, id string) (map[string]interface{}, er
 // (App function calls are direct over RA-TLS — see internal/ratls.Call — not
 // proxied through the control plane.)
 
+// ActiveDeploymentHost returns the gateway FQDN of the app's active deployment
+// (the SNI the client connects to for direct RA-TLS). The hostname lives on
+// the deployment record, not the app record.
+func (c *Client) ActiveDeploymentHost(ctx context.Context, appID string) (string, error) {
+	deps, err := c.ListDeployments(ctx, appID)
+	if err != nil {
+		return "", err
+	}
+	var fallback string
+	for _, d := range deps {
+		h, _ := d["hostname"].(string)
+		if h == "" {
+			continue
+		}
+		switch s, _ := d["status"].(string); s {
+		case "active", "deployed", "running":
+			return h, nil
+		}
+		if fallback == "" {
+			fallback = h
+		}
+	}
+	if fallback != "" {
+		return fallback, nil
+	}
+	return "", fmt.Errorf("app has no deployment with a hostname (is it deployed?)")
+}
+
 // ListBuilds returns an app's build jobs.
 func (c *Client) ListBuilds(ctx context.Context, id string) ([]map[string]interface{}, error) {
 	var raw json.RawMessage
