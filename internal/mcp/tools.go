@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -176,6 +177,7 @@ func (s *Server) registerTools() {
 				"app_id":   strProp("the app id"),
 				"function": strProp("the function name"),
 				"data":     map[string]interface{}{"description": "JSON request body"},
+				"attest":   map[string]interface{}{"type": "boolean", "description": "also verify the quote against the attestation server"},
 			}, "app_id", "function"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
@@ -207,16 +209,21 @@ func (s *Server) registerTools() {
 				if aType == "container" {
 					path = containerPath(app, fn)
 				}
-				attTok, _ := auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")
-				res, err := ratls.Call(ctx, ratls.CallParams{
+				attURL, attTok := "", ""
+				if b, _ := args["attest"].(bool); b {
+					attURL = "https://as.privasys.org/verify"
+					attTok, _ = auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")
+				}
+				var buf bytes.Buffer
+				status, err := ratls.Call(ctx, ratls.CallParams{
 					Host: host, ServerName: host, AppName: name, AppType: aType,
 					Function: fn, Path: path, Body: body, AppToken: d.Token,
-					Challenge: ratls.NewNonce(), AttServerURL: "https://as.privasys.org/verify", AttServerTok: attTok,
-				})
+					Challenge: ratls.NewNonce(), AttServerURL: attURL, AttServerTok: attTok,
+				}, &buf)
 				if err != nil {
 					return nil, err
 				}
-				return map[string]interface{}{"status": res.Status, "body": string(res.Body)}, nil
+				return map[string]interface{}{"status": status, "body": buf.String()}, nil
 			},
 		},
 		{

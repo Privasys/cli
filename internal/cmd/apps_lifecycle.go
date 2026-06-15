@@ -430,18 +430,24 @@ func newAppsMcpCmd() *cobra.Command {
 
 func newAppsCallCmd() *cobra.Command {
 	var data, host, token, path, attServer string
-	var noChallenge bool
+	var noChallenge, doAttest bool
 	cmd := &cobra.Command{
 		Use:   "call <app-id> <function>",
 		Short: "Call an app function directly over RA-TLS (verifies the enclave first)",
 		Long: `Calls an app function by connecting to its enclave over RA-TLS, verifying the
 attestation, and sending the request directly — the control plane is never in
-the data path. Your token is presented to the app for its own auth.
+the data path. Your token is presented to the app for its own auth. The
+response streams to stdout, so chunked and SSE endpoints work.
+
+By default the enclave is verified locally (RA-TLS + fresh-nonce report-data
+binding) without contacting the attestation server. Pass --attest for full
+quote verification (genuine TEE + TCB) against the attestation server.
 
   --data    JSON request body, or @file
   --host    enclave gateway FQDN (default: resolved from the app)
   --token   token to present to the app (default: your access token)
   --path    container endpoint path (default: /<function>)
+  --attest  also verify the quote against the attestation server
   --no-challenge  skip the fresh-nonce challenge (deterministic verify)`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -505,26 +511,31 @@ the data path. Your token is presented to the app for its own auth.
 					return err
 				}
 			}
-			attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
+			// The attestation-server call is opt-in (--attest); by default we
+			// verify the RA-TLS report-data binding locally without it.
+			attURL, attTok := "", ""
+			if doAttest {
+				attURL = attServer
+				if attTok, _ = auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server"); attTok == "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), "warning: could not mint an attestation-server token; verifying report-data binding only")
+				}
+			}
 			var nonce []byte
 			if !noChallenge {
 				nonce = ratls.NewNonce()
 			}
 
-			res, err := ratls.Call(ctx, ratls.CallParams{
+			status, err := ratls.Call(ctx, ratls.CallParams{
 				Host: serverName, ServerName: serverName, AppName: appName, AppType: aType,
 				Function: args[1], Path: path, Body: body, AppToken: appTok,
-				Challenge: nonce, AttServerURL: attServer, AttServerTok: attTok,
-			})
+				Challenge: nonce, AttServerURL: attURL, AttServerTok: attTok,
+			}, os.Stdout)
 			if err != nil {
 				return err
 			}
-			os.Stdout.Write(res.Body)
-			if len(res.Body) > 0 && res.Body[len(res.Body)-1] != '\n' {
-				fmt.Println()
-			}
-			if res.Status >= 400 {
-				return fmt.Errorf("app returned status %d", res.Status)
+			fmt.Println()
+			if status >= 400 {
+				return fmt.Errorf("app returned status %d", status)
 			}
 			return nil
 		},
@@ -533,7 +544,8 @@ the data path. Your token is presented to the app for its own auth.
 	cmd.Flags().StringVar(&host, "host", "", "enclave gateway FQDN (default: resolved from the app)")
 	cmd.Flags().StringVar(&token, "token", "", "token to present to the app (default: your access token)")
 	cmd.Flags().StringVar(&path, "path", "", "container endpoint path (default: /<function>)")
-	cmd.Flags().StringVar(&attServer, "att-server", "https://as.privasys.org/verify", "attestation server verify endpoint")
+	cmd.Flags().BoolVar(&doAttest, "attest", false, "also verify the quote against the attestation server")
+	cmd.Flags().StringVar(&attServer, "att-server", "https://as.privasys.org/verify", "attestation server verify endpoint (with --attest)")
 	cmd.Flags().BoolVar(&noChallenge, "no-challenge", false, "skip the fresh-nonce challenge (deterministic verify)")
 	return cmd
 }

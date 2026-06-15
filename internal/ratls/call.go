@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	rc "enclave-os-mini/clients/go/ratls"
@@ -23,27 +24,23 @@ type CallParams struct {
 	Body         []byte // raw JSON request body (may be nil)
 	AppToken     string // user JWT presented as app_auth / Bearer
 	Challenge    []byte // verify-before-send nonce
-	AttServerURL string
+	AttServerURL string // set (with AttServerTok) to verify the quote remotely
 	AttServerTok string
 }
 
-// CallResult is a direct app call's response.
-type CallResult struct {
-	Status int    `json:"status"`
-	Body   []byte `json:"-"`
-}
-
-// Call verifies the enclave (RA-TLS challenge + quote verification) and, only
-// if verification passes, sends the request directly to the app. The control
-// plane is never in the data path. It refuses to send to an unattested enclave.
-func Call(ctx context.Context, p CallParams) (*CallResult, error) {
-	opts := &rc.Options{ServerName: p.ServerName, Timeout: 30 * time.Second}
+// Call verifies the enclave (RA-TLS challenge + report-data binding; plus a
+// remote quote verification when AttServerURL/Tok are set) and, only if
+// verification passes, sends the request directly to the app — the control
+// plane is never in the data path. Container responses (incl. chunked/SSE)
+// stream to out; the response status is returned.
+func Call(ctx context.Context, p CallParams, out io.Writer) (int, error) {
+	opts := &rc.Options{ServerName: p.ServerName, Timeout: 60 * time.Second}
 	if len(p.Challenge) > 0 {
 		opts.Challenge = p.Challenge
 	}
 	client, err := rc.Connect(p.Host, 443, opts)
 	if err != nil {
-		return nil, fmt.Errorf("RA-TLS connect to %s: %w", p.Host, err)
+		return 0, fmt.Errorf("RA-TLS connect to %s: %w", p.Host, err)
 	}
 	defer client.Close()
 
@@ -64,7 +61,7 @@ func Call(ctx context.Context, p CallParams) (*CallResult, error) {
 		policy.QuoteVerification = &rc.QuoteVerificationConfig{Endpoint: p.AttServerURL, Token: p.AttServerTok}
 	}
 	if _, verr := client.VerifyCertificate(policy); verr != nil {
-		return nil, fmt.Errorf("enclave attestation failed — refusing to send data: %w", verr)
+		return 0, fmt.Errorf("enclave attestation failed — refusing to send data: %w", verr)
 	}
 
 	if p.AppType == "container" {
@@ -72,18 +69,20 @@ func Call(ctx context.Context, p CallParams) (*CallResult, error) {
 		if path == "" {
 			path = "/" + p.Function
 		}
-		status, body, err := client.HTTPRequest("POST", path, p.ServerName, p.Body, p.AppToken)
+		resp, err := client.HTTPDo("POST", path, p.ServerName, p.Body, p.AppToken)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
-		return &CallResult{Status: status, Body: body}, nil
+		defer resp.Body.Close()
+		_, _ = io.Copy(out, resp.Body)
+		return resp.StatusCode, nil
 	}
 
 	// WASM: connect_call needs no platform role (auth rides in app_auth).
 	var parsed interface{} = map[string]interface{}{}
 	if len(p.Body) > 0 {
 		if err := json.Unmarshal(p.Body, &parsed); err != nil {
-			return nil, fmt.Errorf("request body is not valid JSON: %w", err)
+			return 0, fmt.Errorf("request body is not valid JSON: %w", err)
 		}
 	}
 	connectCall := map[string]interface{}{"app": p.AppName, "function": p.Function, "body": parsed}
@@ -93,7 +92,8 @@ func Call(ctx context.Context, p CallParams) (*CallResult, error) {
 	payload, _ := json.Marshal(map[string]interface{}{"connect_call": connectCall})
 	body, err := client.SendData(payload, "")
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	return &CallResult{Status: 200, Body: body}, nil
+	_, _ = out.Write(body)
+	return 200, nil
 }
