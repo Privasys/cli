@@ -210,15 +210,8 @@ func (c *Client) MCP(ctx context.Context, id string) (map[string]interface{}, er
 	return out, nil
 }
 
-// RPC calls an app function, passing body through verbatim and returning the
-// raw decoded result.
-func (c *Client) RPC(ctx context.Context, id, function string, body interface{}) (interface{}, error) {
-	var out interface{}
-	if err := c.do(ctx, http.MethodPost, "/api/v1/apps/"+id+"/rpc/"+function, body, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
+// (App function calls are direct over RA-TLS — see internal/ratls.Call — not
+// proxied through the control plane.)
 
 // ListBuilds returns an app's build jobs.
 func (c *Client) ListBuilds(ctx context.Context, id string) ([]map[string]interface{}, error) {

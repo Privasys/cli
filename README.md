@@ -69,6 +69,8 @@ privasys apps deploy demo --watch
 privasys apps call demo hello --data '{"who":"world"}'
 ```
 
+> **Data plane is direct.** `apps call` connects to the enclave over RA-TLS, verifies its attestation, and sends the request directly — the control plane is never in the data path, and your data only goes to a verified enclave. Same for `attest`. Control-plane operations (create/deploy/versions, accounts, team, billing) go through the platform API as usual.
+
 Manage a team and billing:
 ```sh
 privasys team add <sub> --email dev@acme.com --role member

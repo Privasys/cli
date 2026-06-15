@@ -6,7 +6,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"mime"
 	"net/http"
 	"net/http/httptest"
@@ -112,27 +111,8 @@ func TestSchemaUnwrap(t *testing.T) {
 	}
 }
 
-func TestRPCPassthrough(t *testing.T) {
-	c, done := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/apps/app-1/rpc/hello" {
-			t.Fatalf("path %s", r.URL.Path)
-		}
-		body, _ := io.ReadAll(r.Body)
-		if !strings.Contains(string(body), "\"who\":\"world\"") {
-			t.Errorf("body not passed through: %s", body)
-		}
-		json.NewEncoder(w).Encode(map[string]string{"greeting": "hello world"})
-	})
-	defer done()
-	res, err := c.RPC(context.Background(), "app-1", "hello", map[string]string{"who": "world"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	m, _ := res.(map[string]interface{})
-	if m["greeting"] != "hello world" {
-		t.Fatalf("got %v", res)
-	}
-}
+// App function calls are direct over RA-TLS now (internal/ratls.Call); there
+// is no control-plane RPC method to test here.
 
 func TestUploadCwasm(t *testing.T) {
 	dir := t.TempDir()

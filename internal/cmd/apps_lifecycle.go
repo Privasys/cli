@@ -12,7 +12,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Privasys/cli/internal/api"
+	"github.com/Privasys/cli/internal/auth"
 	"github.com/Privasys/cli/internal/output"
+	"github.com/Privasys/cli/internal/ratls"
 )
 
 func newAppsCreateCmd() *cobra.Command {
@@ -416,43 +418,130 @@ func newAppsMcpCmd() *cobra.Command {
 }
 
 func newAppsCallCmd() *cobra.Command {
-	var data string
+	var data, host, token, path, attServer string
+	var noChallenge bool
 	cmd := &cobra.Command{
 		Use:   "call <app-id> <function>",
-		Short: "Call an app function (RPC)",
-		Args:  cobra.ExactArgs(2),
+		Short: "Call an app function directly over RA-TLS (verifies the enclave first)",
+		Long: `Calls an app function by connecting to its enclave over RA-TLS, verifying the
+attestation, and sending the request directly — the control plane is never in
+the data path. Your token is presented to the app for its own auth.
+
+  --data    JSON request body, or @file
+  --host    enclave gateway FQDN (default: resolved from the app)
+  --token   token to present to the app (default: your access token)
+  --path    container endpoint path (default: /<function>)
+  --no-challenge  skip the fresh-nonce challenge (deterministic verify)`,
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
 			if err != nil {
 				return err
 			}
-			var body interface{}
+			ctx := cmd.Context()
+
+			var body []byte
 			if data != "" {
-				raw := []byte(data)
-				if len(data) > 1 && data[0] == '@' {
+				body = []byte(data)
+				if data[0] == '@' {
 					b, rerr := os.ReadFile(data[1:])
 					if rerr != nil {
 						return rerr
 					}
-					raw = b
+					body = b
 				}
-				if err := json.Unmarshal(raw, &body); err != nil {
-					return fmt.Errorf("--data is not valid JSON: %w", err)
+				if !json.Valid(body) {
+					return fmt.Errorf("--data is not valid JSON")
 				}
 			}
-			client, err := apiClient(cmd, env)
+
+			// Resolve enclave hostname / app type (metadata only; the data
+			// itself goes direct). --host skips this control-plane read.
+			appName, aType, serverName := "", "wasm", host
+			if host == "" || path == "" {
+				client, err := apiClient(cmd, env)
+				if err != nil {
+					return err
+				}
+				app, err := client.GetApp(ctx, args[0])
+				if err != nil {
+					return err
+				}
+				appName = output.Str(app, "name")
+				if t := appType(app); t != "" {
+					aType = t
+				}
+				if serverName == "" {
+					serverName = output.Str(app, "hostname")
+				}
+				if path == "" && aType == "container" {
+					path = resolveContainerPath(app, args[1])
+				}
+			}
+			if serverName == "" {
+				return fmt.Errorf("could not resolve the app's hostname; pass --host <enclave-fqdn>")
+			}
+			if appName == "" {
+				appName = args[0]
+			}
+
+			appTok := token
+			if appTok == "" {
+				appTok, err = auth.AccessToken(ctx, env.Cfg.Issuer)
+				if err != nil {
+					return err
+				}
+			}
+			attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
+			var nonce []byte
+			if !noChallenge {
+				nonce = ratls.NewNonce()
+			}
+
+			res, err := ratls.Call(ctx, ratls.CallParams{
+				Host: serverName, ServerName: serverName, AppName: appName, AppType: aType,
+				Function: args[1], Path: path, Body: body, AppToken: appTok,
+				Challenge: nonce, AttServerURL: attServer, AttServerTok: attTok,
+			})
 			if err != nil {
 				return err
 			}
-			res, err := client.RPC(cmd.Context(), args[0], args[1], body)
-			if err != nil {
-				return err
+			os.Stdout.Write(res.Body)
+			if len(res.Body) > 0 && res.Body[len(res.Body)-1] != '\n' {
+				fmt.Println()
 			}
-			return output.Emit(env.Format, res, nil)
+			if res.Status >= 400 {
+				return fmt.Errorf("app returned status %d", res.Status)
+			}
+			return nil
 		},
 	}
 	cmd.Flags().StringVar(&data, "data", "", "JSON request body, or @file to read from a file")
+	cmd.Flags().StringVar(&host, "host", "", "enclave gateway FQDN (default: resolved from the app)")
+	cmd.Flags().StringVar(&token, "token", "", "token to present to the app (default: your access token)")
+	cmd.Flags().StringVar(&path, "path", "", "container endpoint path (default: /<function>)")
+	cmd.Flags().StringVar(&attServer, "att-server", "https://as.privasys.org/verify", "attestation server verify endpoint")
+	cmd.Flags().BoolVar(&noChallenge, "no-challenge", false, "skip the fresh-nonce challenge (deterministic verify)")
 	return cmd
+}
+
+// resolveContainerPath maps a function name to a container endpoint via the
+// app's privasys.json tool manifest, falling back to /<function>.
+func resolveContainerPath(app map[string]interface{}, function string) string {
+	mcp, ok := app["container_mcp"].(map[string]interface{})
+	if ok {
+		if tools, ok := mcp["tools"].([]interface{}); ok {
+			for _, t := range tools {
+				tm, ok := t.(map[string]interface{})
+				if ok && output.Str(tm, "name") == function {
+					if ep := output.Str(tm, "endpoint"); ep != "" {
+						return ep
+					}
+				}
+			}
+		}
+	}
+	return "/" + function
 }
 
 func newAppsBuildsCmd() *cobra.Command {

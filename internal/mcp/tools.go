@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/Privasys/cli/internal/auth"
@@ -170,7 +171,7 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "apps_call",
-			Description: "Call an app function (RPC). 'data' is the JSON request body.",
+			Description: "Call an app function directly over RA-TLS (verifies the enclave first; control plane is not in the data path). 'data' is the JSON request body.",
 			Schema: obj(map[string]interface{}{
 				"app_id":   strProp("the app id"),
 				"function": strProp("the function name"),
@@ -185,7 +186,37 @@ func (s *Server) registerTools() {
 				if err != nil {
 					return nil, err
 				}
-				return d.Client.RPC(ctx, id, fn, args["data"])
+				app, err := d.Client.GetApp(ctx, id)
+				if err != nil {
+					return nil, err
+				}
+				host, _ := app["hostname"].(string)
+				if host == "" {
+					return nil, errors.New("app has no hostname (not deployed?)")
+				}
+				name, _ := app["name"].(string)
+				aType, _ := app["app_type"].(string)
+				if aType == "" {
+					aType = "wasm"
+				}
+				var body []byte
+				if args["data"] != nil {
+					body, _ = json.Marshal(args["data"])
+				}
+				path := ""
+				if aType == "container" {
+					path = containerPath(app, fn)
+				}
+				attTok, _ := auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")
+				res, err := ratls.Call(ctx, ratls.CallParams{
+					Host: host, ServerName: host, AppName: name, AppType: aType,
+					Function: fn, Path: path, Body: body, AppToken: d.Token,
+					Challenge: ratls.NewNonce(), AttServerURL: "https://as.privasys.org/verify", AttServerTok: attTok,
+				})
+				if err != nil {
+					return nil, err
+				}
+				return map[string]interface{}{"status": res.Status, "body": string(res.Body)}, nil
 			},
 		},
 		{
@@ -308,3 +339,22 @@ func (s *Server) registerTools() {
 }
 
 func mapKey(k string) string { return k }
+
+// containerPath maps a function name to a container endpoint via the app's
+// privasys.json tool manifest, falling back to /<function>.
+func containerPath(app map[string]interface{}, function string) string {
+	if mcp, ok := app["container_mcp"].(map[string]interface{}); ok {
+		if tools, ok := mcp["tools"].([]interface{}); ok {
+			for _, t := range tools {
+				if tm, ok := t.(map[string]interface{}); ok {
+					if n, _ := tm["name"].(string); n == function {
+						if ep, _ := tm["endpoint"].(string); ep != "" {
+							return ep
+						}
+					}
+				}
+			}
+		}
+	}
+	return "/" + function
+}
