@@ -95,6 +95,10 @@ release:
     name: cli
   draft: false
   prerelease: auto
+  # Keep an existing release for the tag so re-running a release (e.g. to retry
+  # the brew/scoop tap push after fixing TAP_GITHUB_TOKEN) is idempotent instead
+  # of erroring on "release already exists".
+  mode: keep-existing
 
 changelog:
   use: github
