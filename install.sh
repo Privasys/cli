@@ -3,7 +3,7 @@
 # Licensed under the GNU Affero General Public License v3.0.
 #
 # Install the Privasys CLI. Usage:
-#   curl -fsSL https://privasys.org/cli/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/Privasys/cli/main/install.sh | sh
 # Override the install dir with PRIVASYS_INSTALL_DIR.
 set -eu
 
