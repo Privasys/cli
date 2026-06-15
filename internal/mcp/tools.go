@@ -239,6 +239,96 @@ func (s *Server) registerTools() {
 			},
 		},
 		{
+			Name:        "apps_versions_stage",
+			Description: "Stage the new measurement (enclave MRTD + image digest) for a vault-backed app version on the constellation. Owner-only. Staging grants no key access; it proposes the measurement a later promote authorises.",
+			Schema: obj(map[string]interface{}{
+				"app_id":  strProp("the app id"),
+				"version": strProp("version id (default: latest)"),
+				"enclave": strProp("enclave id (default: only compatible)"),
+			}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				vid, err := resolveLatestVersion(ctx, d, id, argStr(args, "version"))
+				if err != nil {
+					return nil, err
+				}
+				enc := argStr(args, "enclave")
+				if enc == "" {
+					encs, err := d.Client.CompatibleEnclaves(ctx, id)
+					if err != nil {
+						return nil, err
+					}
+					if len(encs) != 1 {
+						return nil, errPickEnclave
+					}
+					enc, _ = encs[0]["id"].(string)
+				}
+				return d.Client.StageProfile(ctx, id, vid, enc)
+			},
+		},
+		{
+			Name:        "apps_versions_pending",
+			Description: "List staged-but-unpromoted vault key profiles for a version, with the staged measurement and per-vault K-of-N progress. Owner-only.",
+			Schema: obj(map[string]interface{}{
+				"app_id":  strProp("the app id"),
+				"version": strProp("version id (default: latest)"),
+			}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				vid, err := resolveLatestVersion(ctx, d, id, argStr(args, "version"))
+				if err != nil {
+					return nil, err
+				}
+				return d.Client.ListPending(ctx, id, vid)
+			},
+		},
+		{
+			Name:        "apps_versions_promote",
+			Description: "Promote (approve) a staged measurement so the vault releases the data key to the new app/enclave version. Owner-only, and irreversible consent: surface the staged measurement (via apps_versions_pending) to a human and get explicit sign-off before calling this.",
+			Schema: obj(map[string]interface{}{
+				"app_id":     strProp("the app id"),
+				"version":    strProp("version id (default: latest)"),
+				"pending_id": intProp("pending profile id (default 0)"),
+			}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				vid, err := resolveLatestVersion(ctx, d, id, argStr(args, "version"))
+				if err != nil {
+					return nil, err
+				}
+				return d.Client.PromoteProfile(ctx, id, vid, argInt(args, "pending_id"))
+			},
+		},
+		{
+			Name:        "apps_versions_revoke",
+			Description: "Drop a staged-but-unpromoted vault key profile. Owner-only.",
+			Schema: obj(map[string]interface{}{
+				"app_id":     strProp("the app id"),
+				"version":    strProp("version id (default: latest)"),
+				"pending_id": intProp("pending profile id (default 0)"),
+			}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				vid, err := resolveLatestVersion(ctx, d, id, argStr(args, "version"))
+				if err != nil {
+					return nil, err
+				}
+				return d.Client.RevokeProfile(ctx, id, vid, argInt(args, "pending_id"))
+			},
+		},
+		{
 			Name:        "attest",
 			Description: "Verify an app's enclave client-side: connect over RA-TLS, challenge it with a fresh nonce, and verify the quote against the attestation server. Does not trust the control plane.",
 			Schema: obj(map[string]interface{}{
@@ -340,6 +430,23 @@ func (s *Server) registerTools() {
 }
 
 func mapKey(k string) string { return k }
+
+// resolveLatestVersion returns ref if non-empty, else the id of the app's
+// latest version.
+func resolveLatestVersion(ctx context.Context, d Deps, appID, ref string) (string, error) {
+	if ref != "" {
+		return ref, nil
+	}
+	vs, err := d.Client.ListVersions(ctx, appID)
+	if err != nil {
+		return "", err
+	}
+	if len(vs) == 0 {
+		return "", errNoVersions
+	}
+	id, _ := vs[len(vs)-1]["id"].(string)
+	return id, nil
+}
 
 // containerPath maps a function name to a container endpoint via the app's
 // privasys.json tool manifest, falling back to /<function>.

@@ -4,9 +4,12 @@
 package cmd
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -203,8 +206,331 @@ func newAppsVersionsCmd() *cobra.Command {
 				})
 			},
 		},
+		newVersionsStageCmd(),
+		newVersionsPendingCmd(),
+		newVersionsPromoteCmd(),
+		newVersionsRevokeCmd(),
 	)
 	c.PersistentFlags().String("commit-url", "", "GitHub commit URL")
+	return c
+}
+
+// emitFanout renders a per-vault fan-out result ({staged|promoted, quorum,
+// vaults:[…]}) and writes a one-line human summary to stderr.
+func emitFanout(cmd *cobra.Command, env *Env, res map[string]interface{}, verb string) error {
+	if !env.Quiet && env.Format == "table" {
+		if n, ok := res[verb]; ok {
+			fmt.Fprintf(cmd.ErrOrStderr(), "%s %v/%v vaults\n", verb, n, res["quorum"])
+		}
+	}
+	return output.Emit(env.Format, res, func() output.Table {
+		rows := [][]string{}
+		if vs, ok := res["vaults"].([]interface{}); ok {
+			for _, v := range vs {
+				m, _ := v.(map[string]interface{})
+				rows = append(rows, []string{
+					output.Str(m, "vault"), output.Str(m, "ok"),
+					output.Str(m, "pending_id"), output.Str(m, "policy_version"),
+					output.Str(m, "error"),
+				})
+			}
+		}
+		return output.Table{Headers: []string{"VAULT", "OK", "PENDING", "POLICY_VER", "ERROR"}, Rows: rows}
+	})
+}
+
+// confirm asks a y/N question. It refuses to guess in non-interactive contexts
+// (--no-input or a non-TTY), where the caller must pass an explicit --yes.
+func confirm(cmd *cobra.Command, env *Env, prompt string) (bool, error) {
+	if env.NoInput || !stdoutIsTTY() {
+		return false, fmt.Errorf("refusing to prompt; pass --yes to proceed")
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "%s [y/N] ", prompt)
+	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	line = strings.ToLower(strings.TrimSpace(line))
+	return line == "y" || line == "yes", nil
+}
+
+// newAppsUpgradeCmd is the guided upgrade-approval flow for a vault-backed app.
+func newAppsUpgradeCmd() *cobra.Command {
+	var enclaveID string
+	var pendingID int
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "upgrade <app> [version]",
+		Short: "Approve a vault-backed app's upgrade so its data unlocks for the new version",
+		Long: `Guided upgrade approval. When a vault-backed app's measurement changes (you
+deploy a new version, or the enclave is upgraded), the vault locks the data
+until you, the app owner, approve the new measurement. The platform cannot do
+this for you.
+
+This stages the new measurement, shows what is being approved (the staged
+profile and per-vault progress), and promotes it after your confirmation. Use
+the discrete ` + "`apps versions stage|pending|promote|revoke`" + ` commands for finer
+control or for scripting.`,
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			appID, err := resolveAppID(ctx, client, args[0])
+			if err != nil {
+				return err
+			}
+			vid, err := resolveVersionRef(ctx, client, appID, argOr(args, 1, ""))
+			if err != nil {
+				return err
+			}
+			enc, err := resolveEnclaveRef(ctx, client, appID, enclaveID)
+			if err != nil {
+				return err
+			}
+
+			staged, err := client.StageProfile(ctx, appID, vid, enc)
+			if err != nil {
+				return err
+			}
+			if !env.Quiet && env.Format == "table" {
+				fmt.Fprintf(cmd.ErrOrStderr(), "staged %v/%v vaults\n", staged["staged"], staged["quorum"])
+			}
+
+			// Show exactly what is about to be approved (the verify-before-approve step).
+			pend, err := client.ListPending(ctx, appID, vid)
+			if err != nil {
+				return err
+			}
+			if !env.Quiet && env.Format == "table" {
+				if buf, mErr := json.MarshalIndent(pend, "", "  "); mErr == nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "Measurement to approve (review the digest against your build):\n%s\n", buf)
+				}
+			}
+
+			if !yes {
+				ok, cErr := confirm(cmd, env, fmt.Sprintf("Promote pending #%d for %s? This releases the data key to the new version.", pendingID, args[0]))
+				if cErr != nil {
+					return cErr
+				}
+				if !ok {
+					return fmt.Errorf("aborted")
+				}
+			}
+
+			res, err := client.PromoteProfile(ctx, appID, vid, pendingID)
+			if err != nil {
+				return err
+			}
+			return emitFanout(cmd, env, res, "promoted")
+		},
+	}
+	cmd.Flags().StringVar(&enclaveID, "enclave", "", "target enclave id (default: the only compatible one)")
+	cmd.Flags().IntVar(&pendingID, "pending", 0, "pending profile id to promote (default 0)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "promote without an interactive confirmation")
+	return cmd
+}
+
+// argOr returns args[i] when present, else def.
+func argOr(args []string, i int, def string) string {
+	if i < len(args) {
+		return args[i]
+	}
+	return def
+}
+
+// resolveVersionRef resolves a version ref (id or version number) to its id,
+// defaulting to the latest version when ref is empty.
+func resolveVersionRef(ctx context.Context, client *api.Client, appID, ref string) (string, error) {
+	vs, err := client.ListVersions(ctx, appID)
+	if err != nil {
+		return "", err
+	}
+	if len(vs) == 0 {
+		return "", fmt.Errorf("app has no versions")
+	}
+	if ref == "" {
+		return output.Str(vs[len(vs)-1], "id"), nil
+	}
+	for _, v := range vs {
+		if output.Str(v, "id") == ref || output.Str(v, "version_number") == ref {
+			return output.Str(v, "id"), nil
+		}
+	}
+	return "", fmt.Errorf("version %q not found", ref)
+}
+
+// resolveEnclaveRef picks the target enclave: the flag if set, else the single
+// compatible enclave, else an error asking for --enclave.
+func resolveEnclaveRef(ctx context.Context, client *api.Client, appID, flag string) (string, error) {
+	if flag != "" {
+		return flag, nil
+	}
+	encs, err := client.CompatibleEnclaves(ctx, appID)
+	if err != nil {
+		return "", err
+	}
+	switch len(encs) {
+	case 1:
+		return output.Str(encs[0], "id"), nil
+	case 0:
+		return "", fmt.Errorf("no compatible enclaves; pass --enclave <id>")
+	default:
+		return "", fmt.Errorf("multiple compatible enclaves; pass --enclave <id>")
+	}
+}
+
+func newVersionsStageCmd() *cobra.Command {
+	var enclaveID string
+	c := &cobra.Command{
+		Use:   "stage <app> [version]",
+		Short: "Stage the new measurement for a version on the vault constellation (owner-only)",
+		Long:  "Proposes the measurement (enclave MRTD + image digest) that a later promote will authorise. Staging grants no key access on its own. Needed when an enclave or app upgrade changes the measurement of a vault-backed app.",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
+			vid, err := resolveVersionRef(cmd.Context(), client, appID, argOr(args, 1, ""))
+			if err != nil {
+				return err
+			}
+			enc, err := resolveEnclaveRef(cmd.Context(), client, appID, enclaveID)
+			if err != nil {
+				return err
+			}
+			res, err := client.StageProfile(cmd.Context(), appID, vid, enc)
+			if err != nil {
+				return err
+			}
+			return emitFanout(cmd, env, res, "staged")
+		},
+	}
+	c.Flags().StringVar(&enclaveID, "enclave", "", "target enclave id (default: the only compatible one)")
+	return c
+}
+
+func newVersionsPendingCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "pending <app> [version]",
+		Short: "Show staged-but-unpromoted profiles and per-vault progress (owner-only)",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
+			vid, err := resolveVersionRef(cmd.Context(), client, appID, argOr(args, 1, ""))
+			if err != nil {
+				return err
+			}
+			res, err := client.ListPending(cmd.Context(), appID, vid)
+			if err != nil {
+				return err
+			}
+			return output.Emit(env.Format, res, func() output.Table {
+				rows := [][]string{}
+				if vs, ok := res["vaults"].([]interface{}); ok {
+					for _, v := range vs {
+						m, _ := v.(map[string]interface{})
+						rows = append(rows, []string{
+							output.Str(m, "vault"), output.Str(m, "ok"),
+							output.Str(m, "pending_id"), output.Str(m, "error"),
+						})
+					}
+				}
+				return output.Table{Headers: []string{"VAULT", "OK", "PENDING", "ERROR"}, Rows: rows}
+			})
+		},
+	}
+}
+
+func newVersionsPromoteCmd() *cobra.Command {
+	var pendingID int
+	c := &cobra.Command{
+		Use:   "promote <app> [version]",
+		Short: "Promote (approve) a staged measurement so the vault releases the data key to it (owner-only)",
+		Long:  "Authorises the new measurement. This is the act that lets the upgraded enclave/app reconstruct the data-encryption key. Only the app owner can promote; the platform cannot.",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
+			vid, err := resolveVersionRef(cmd.Context(), client, appID, argOr(args, 1, ""))
+			if err != nil {
+				return err
+			}
+			res, err := client.PromoteProfile(cmd.Context(), appID, vid, pendingID)
+			if err != nil {
+				return err
+			}
+			return emitFanout(cmd, env, res, "promoted")
+		},
+	}
+	c.Flags().IntVar(&pendingID, "pending", 0, "pending profile id (stable across vaults; default 0)")
+	return c
+}
+
+func newVersionsRevokeCmd() *cobra.Command {
+	var pendingID int
+	c := &cobra.Command{
+		Use:   "revoke <app> [version]",
+		Short: "Drop a staged-but-unpromoted profile (owner-only)",
+		Args:  cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
+			vid, err := resolveVersionRef(cmd.Context(), client, appID, argOr(args, 1, ""))
+			if err != nil {
+				return err
+			}
+			res, err := client.RevokeProfile(cmd.Context(), appID, vid, pendingID)
+			if err != nil {
+				return err
+			}
+			return emitFanout(cmd, env, res, "revoked")
+		},
+	}
+	c.Flags().IntVar(&pendingID, "pending", 0, "pending profile id (default 0)")
 	return c
 }
 
@@ -301,6 +627,11 @@ func watchDeployment(cmd *cobra.Command, client *api.Client, env *Env, appID, de
 					return kvTable(cur, []string{"id", "status", "container_state", "enclave_host", "hostname"})
 				})
 			case "failed", "error", "stopped":
+				// If this is a vault-backed app whose measurement just changed,
+				// the data key is locked pending owner approval (the upgrade gate).
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"hint: if this app uses vault-backed storage and you changed the version or enclave, the data key may be locked pending approval — run: privasys apps upgrade %s\n",
+					appID)
 				return fmt.Errorf("deployment %s ended in status %q", depID, st)
 			}
 		}

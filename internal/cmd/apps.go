@@ -68,6 +68,7 @@ func newAppsCmd() *cobra.Command {
 		newAppsUploadCmd(),
 		newAppsVersionsCmd(),
 		newAppsDeployCmd(),
+		newAppsUpgradeCmd(),
 		newAppsDeploymentsCmd(),
 		newAppsStopCmd(),
 		newAppsAPICmd(),

@@ -148,6 +148,51 @@ func (c *Client) DeployVersion(ctx context.Context, id, versionID, enclaveID str
 	return out, nil
 }
 
+// StageProfile stages a pending vault key profile for a version's measurement
+// (MRTD + image digest on the target enclave). Owner-only.
+func (c *Client) StageProfile(ctx context.Context, id, versionID, enclaveID string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost,
+		"/api/v1/apps/"+id+"/versions/"+versionID+"/stage",
+		map[string]string{"enclave_id": enclaveID}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ListPending returns the pending vault key profiles for a version, with the
+// staged measurement and per-vault K-of-N progress. Owner-only.
+func (c *Client) ListPending(ctx context.Context, id, versionID string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.getJSON(ctx, "/api/v1/apps/"+id+"/versions/"+versionID+"/pending", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// PromoteProfile promotes (approves) a staged profile, authorizing the new
+// measurement so the vault releases the data key to it. Owner-only.
+func (c *Client) PromoteProfile(ctx context.Context, id, versionID string, pendingID int) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost,
+		"/api/v1/apps/"+id+"/versions/"+versionID+"/promote",
+		map[string]int{"pending_id": pendingID}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RevokeProfile drops a staged-but-unpromoted profile. Owner-only.
+func (c *Client) RevokeProfile(ctx context.Context, id, versionID string, pendingID int) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost,
+		"/api/v1/apps/"+id+"/versions/"+versionID+"/revoke",
+		map[string]int{"pending_id": pendingID}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ListDeployments returns an app's deployments.
 func (c *Client) ListDeployments(ctx context.Context, id string) ([]map[string]interface{}, error) {
 	var raw json.RawMessage
