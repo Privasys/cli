@@ -116,24 +116,15 @@ privasys apps list --format json | jq '.[].name'
 
 ## Attestation
 
-`privasys attest <app-id>` fetches the deployed app's RA-TLS attestation (TEE quote, measurements, certificate, and Privasys OID extensions) and can verify and export it.
-
-There are two trust models:
-
-- **Default (server-side):** the management service performs the RA-TLS handshake and returns the result. Convenient, but you trust the control plane.
-- **`--direct` (client-side):** the CLI connects to the enclave itself over RA-TLS, **challenges it with a fresh nonce**, and verifies the quote against the attestation server. You trust the enclave's hardware attestation, not the control plane. This is the recommended verification path. (`--host` bypasses the control plane entirely; otherwise the app's hostname is looked up for convenience.)
+`privasys attest <app-id>` is **always client-side**: the CLI connects to the app's enclave over RA-TLS (through the gateway's L4 splice), **challenges it with a fresh nonce**, and verifies the quote against the attestation server. You trust the enclave's hardware attestation, not the control plane — there is no server-side proxy path. (`--host` skips even the hostname lookup, so nothing touches the control plane.)
 
 ```sh
-privasys attest <app-id>                       # server-side: quote type, MRENCLAVE/MRTD, RTMRs
-privasys attest <app-id> --extensions          # print the certificate's OID extensions
-privasys attest <app-id> --verify              # verify the quote with the attestation server
-privasys attest <app-id> --out ./att           # dump all artifacts to a directory
-privasys attest <app-id> --format json         # full attestation as JSON
-
-# Client-side, challenge the enclave directly:
-privasys attest <app-id> --direct
-privasys attest <app-id> --direct --host <app>.apps.privasys.org   # no control-plane lookup
-privasys attest <app-id> --direct --mrtd <hex>                     # pin an expected measurement
+privasys attest <app-id>                                  # challenge + verify
+privasys attest <app-id> --host <app>.apps.privasys.org   # no control-plane lookup at all
+privasys attest <app-id> --mrtd <hex>                     # pin an expected measurement
+privasys attest <app-id> --extensions                     # print the certificate's OID extensions
+privasys attest <app-id> --out ./att                      # dump certificate.pem, quote.bin, attestation.json
+privasys attest <app-id> --format json                    # full result as JSON
 ```
 
 `--out <dir>` writes:

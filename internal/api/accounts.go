@@ -91,27 +91,6 @@ func (c *Client) RemoveAppOwner(ctx context.Context, appID, sub string) (map[str
 	return out, nil
 }
 
-// Attest returns the app's attestation result (server-side RA-TLS via the
-// management service). An optional challenge nonce switches to challenge mode.
-func (c *Client) Attest(ctx context.Context, appID, challenge string) (map[string]interface{}, error) {
-	path := "/api/v1/apps/" + appID + "/attest"
-	if challenge != "" {
-		path += "?challenge=" + url.QueryEscape(challenge)
-	}
-	var out map[string]interface{}
-	if err := c.getJSON(ctx, path, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// VerifyQuote submits a base64 TEE quote to the attestation server (via the
-// management service) and returns the verification verdict.
-func (c *Client) VerifyQuote(ctx context.Context, quoteBase64 string) (map[string]interface{}, error) {
-	var out map[string]interface{}
-	if err := c.do(ctx, http.MethodPost, "/api/v1/verify-quote",
-		map[string]string{"quote": quoteBase64}, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
+// Attestation is client-side only (see `attest` / internal/ratls): the CLI
+// connects to the enclave and verifies the quote itself, never via a
+// control-plane proxy. No management-service attestation methods live here.

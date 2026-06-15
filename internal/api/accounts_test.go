@@ -96,26 +96,5 @@ func TestAppOwners(t *testing.T) {
 	}
 }
 
-func TestAttest(t *testing.T) {
-	c, done := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/apps/app-1/attest" {
-			t.Fatalf("path %s", r.URL.Path)
-		}
-		if r.URL.Query().Get("challenge") != "nonce123" {
-			t.Errorf("challenge not forwarded: %q", r.URL.Query().Get("challenge"))
-		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"quote":          map[string]interface{}{"type": "TDX Quote", "mrtd": "abcd"},
-			"challenge_mode": true,
-		})
-	})
-	defer done()
-	res, err := c.Attest(context.Background(), "app-1", "nonce123")
-	if err != nil {
-		t.Fatal(err)
-	}
-	q, _ := res["quote"].(map[string]interface{})
-	if q["type"] != "TDX Quote" {
-		t.Fatalf("got %v", res)
-	}
-}
+// Attestation is client-side only now (see internal/ratls); there is no
+// management-service attest method to test here.

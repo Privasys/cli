@@ -202,34 +202,7 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "attest",
-			Description: "Fetch an app's attestation (TEE quote + measurements). Optional 'challenge' for a fresh challenge-response quote.",
-			Schema: obj(map[string]interface{}{
-				"app_id":    strProp("the app id"),
-				"challenge": strProp("challenge nonce (optional)"),
-			}, "app_id"),
-			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
-				id, err := requireStr(args, "app_id")
-				if err != nil {
-					return nil, err
-				}
-				return d.Client.Attest(ctx, id, argStr(args, "challenge"))
-			},
-		},
-		{
-			Name:        "verify_quote",
-			Description: "Verify a base64 TEE quote with the attestation server (pair with attest's quote.raw_base64).",
-			Schema:      obj(map[string]interface{}{"quote_base64": strProp("base64-encoded TEE quote")}, "quote_base64"),
-			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
-				q, err := requireStr(args, "quote_base64")
-				if err != nil {
-					return nil, err
-				}
-				return d.Client.VerifyQuote(ctx, q)
-			},
-		},
-		{
-			Name:        "attest_direct",
-			Description: "Verify an app's enclave client-side: connect over RA-TLS, challenge it with a fresh nonce, and verify the quote against the attestation server (does not trust the control plane).",
+			Description: "Verify an app's enclave client-side: connect over RA-TLS, challenge it with a fresh nonce, and verify the quote against the attestation server. Does not trust the control plane.",
 			Schema: obj(map[string]interface{}{
 				"app_id":       strProp("the app id (used to resolve the enclave hostname)"),
 				"host":         strProp("enclave gateway FQDN (optional; bypasses control-plane lookup)"),
