@@ -25,7 +25,6 @@ func newAppsCreateCmd() *cobra.Command {
 		name, displayName, description string
 		source, appType                string
 		commitURL, image               string
-		port                           int
 		storage                        bool
 		cloudImageName, cloudChannel   string
 		enclave                        string
@@ -50,9 +49,8 @@ func newAppsCreateCmd() *cobra.Command {
 			putStr(body, "cloud_image_name", cloudImageName)
 			putStr(body, "cloud_image_channel", cloudChannel)
 			putStr(body, "enclave_id", enclave)
-			if port != 0 {
-				body["container_port"] = port
-			}
+			// container_port is platform-allocated (the app listens on $PORT);
+			// not a user input. See bug #43.
 			if storage {
 				body["container_storage"] = true
 			}
@@ -80,7 +78,6 @@ func newAppsCreateCmd() *cobra.Command {
 	f.StringVar(&appType, "type", "", "app type: wasm|container")
 	f.StringVar(&commitURL, "commit-url", "", "GitHub commit URL (github source)")
 	f.StringVar(&image, "image", "", "container image ref (package source)")
-	f.IntVar(&port, "port", 0, "container port (container apps)")
 	f.BoolVar(&storage, "storage", false, "request encrypted container storage")
 	f.StringVar(&cloudImageName, "cloud-image-name", "", "cloud image name (cloud_image source)")
 	f.StringVar(&cloudChannel, "cloud-image-channel", "", "cloud image channel (cloud_image source)")

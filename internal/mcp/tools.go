@@ -58,7 +58,6 @@ func (s *Server) registerTools() {
 				"image":        strProp("container image ref (package source)"),
 				"display_name": strProp("human-friendly name"),
 				"description":  strProp("description"),
-				"port":         intProp("container port"),
 			}, "name", "source_type"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				name, err := requireStr(args, "name")
@@ -78,9 +77,7 @@ func (s *Server) registerTools() {
 				if v := argStr(args, "image"); v != "" {
 					body["container_image"] = v
 				}
-				if p := argInt(args, "port"); p != 0 {
-					body["container_port"] = p
-				}
+				// container_port is platform-allocated (app listens on $PORT).
 				return d.Client.CreateApp(ctx, body)
 			},
 		},
