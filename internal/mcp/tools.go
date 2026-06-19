@@ -326,6 +326,37 @@ func (s *Server) registerTools() {
 			},
 		},
 		{
+			Name:        "apps_rotate_key",
+			Description: "Rotate a vault-backed app's data encryption key (key hygiene, NOT an upgrade). The app keeps running and data is never re-encrypted: the platform provisions a new key generation, re-keys the running volume online, advances the key handle, and retires the old generation. Owner-only. Surface the resulting old→new key handles to a human; the app must be running on the target enclave.",
+			Schema: obj(map[string]interface{}{
+				"app_id":  strProp("the app id"),
+				"version": strProp("the running version id (default: latest)"),
+				"enclave": strProp("enclave the app runs on (default: only compatible)"),
+			}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				vid, err := resolveLatestVersion(ctx, d, id, argStr(args, "version"))
+				if err != nil {
+					return nil, err
+				}
+				enc := argStr(args, "enclave")
+				if enc == "" {
+					encs, err := d.Client.CompatibleEnclaves(ctx, id)
+					if err != nil {
+						return nil, err
+					}
+					if len(encs) != 1 {
+						return nil, errPickEnclave
+					}
+					enc, _ = encs[0]["id"].(string)
+				}
+				return d.Client.RotateKey(ctx, id, vid, enc)
+			},
+		},
+		{
 			Name:        "attest",
 			Description: "Verify an app's enclave client-side: connect over RA-TLS, challenge it with a fresh nonce, and verify the quote against the attestation server. Does not trust the control plane.",
 			Schema: obj(map[string]interface{}{

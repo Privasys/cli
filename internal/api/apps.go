@@ -193,6 +193,20 @@ func (c *Client) RevokeProfile(ctx context.Context, id, versionID string, pendin
 	return out, nil
 }
 
+// RotateKey rotates the app's vault-backed volume KEK without re-encrypting
+// data: it provisions a new key generation, re-keys the running container's
+// LUKS keyslots online, advances the key handle, and retires the old
+// generation. enclaveID is the enclave the app currently runs on. Owner-only.
+func (c *Client) RotateKey(ctx context.Context, id, versionID, enclaveID string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost,
+		"/api/v1/apps/"+id+"/versions/"+versionID+"/rotate-key",
+		map[string]string{"enclave_id": enclaveID}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ListDeployments returns an app's deployments.
 func (c *Client) ListDeployments(ctx context.Context, id string) ([]map[string]interface{}, error) {
 	var raw json.RawMessage

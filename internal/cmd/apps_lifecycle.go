@@ -331,6 +331,77 @@ control or for scripting.`,
 	return cmd
 }
 
+// newAppsRotateKeyCmd rotates a vault-backed app's volume encryption key.
+func newAppsRotateKeyCmd() *cobra.Command {
+	var enclaveID string
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "rotate-key <app> [version]",
+		Short: "Rotate a vault-backed app's data encryption key (online, no data re-encryption)",
+		Long: `Rotates the vault-held key that wraps your app's encrypted volume. This is key
+hygiene, NOT an upgrade: the data on disk is never re-encrypted and the app stays
+running. The platform provisions a new key generation, re-keys the volume's LUKS
+keyslots from the old key to the new (both open the volume across the switch, so
+no failure can lock your data), advances the key handle, and retires the old
+generation.
+
+Use it on a schedule, or after a suspected exposure of a vault share. The app
+must be running on the target enclave (its live measurement is what the new key
+generation authorises).`,
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			appID, err := resolveAppID(ctx, client, args[0])
+			if err != nil {
+				return err
+			}
+			vid, err := resolveVersionRef(ctx, client, appID, argOr(args, 1, ""))
+			if err != nil {
+				return err
+			}
+			enc, err := resolveEnclaveRef(ctx, client, appID, enclaveID)
+			if err != nil {
+				return err
+			}
+			if !yes {
+				ok, cErr := confirm(cmd, env, fmt.Sprintf("Rotate the data encryption key for %s? The app keeps running and data is preserved.", args[0]))
+				if cErr != nil {
+					return cErr
+				}
+				if !ok {
+					return fmt.Errorf("aborted")
+				}
+			}
+			res, err := client.RotateKey(ctx, appID, vid, enc)
+			if err != nil {
+				return err
+			}
+			if !env.Quiet && env.Format == "table" {
+				if nh := output.Str(res, "new_handle"); nh != "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "rotated to %s\n", nh)
+				}
+				if warn := output.Str(res, "warning"); warn != "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", warn)
+				}
+			}
+			return output.Emit(env.Format, res, func() output.Table {
+				return kvTable(res, []string{"rotated", "old_handle", "new_handle", "warning"})
+			})
+		},
+	}
+	cmd.Flags().StringVar(&enclaveID, "enclave", "", "enclave the app runs on (default: the only compatible one)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "rotate without an interactive confirmation")
+	return cmd
+}
+
 // argOr returns args[i] when present, else def.
 func argOr(args []string, i int, def string) string {
 	if i < len(args) {
