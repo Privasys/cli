@@ -860,11 +860,14 @@ func newVersionsPendingCmd() *cobra.Command {
 
 func newVersionsPromoteCmd() *cobra.Command {
 	var pendingID int
+	var approvalTokens []string
 	c := &cobra.Command{
 		Use:   "promote <app> [version]",
 		Short: "Promote (approve) a staged measurement so the vault releases the data key to it (owner-only)",
-		Long:  "Authorises the new measurement. This is the act that lets the upgraded enclave/app reconstruct the data-encryption key. Only the app owner can promote; the platform cannot.",
-		Args:  cobra.RangeArgs(1, 2),
+		Long: `Authorises the new measurement. This is the act that lets the upgraded enclave/app reconstruct the data-encryption key. Only the app owner can promote; the platform cannot.
+
+If the app opted into separation-of-duties co-sign, pass a fresh co-sign token from a SECOND team approver with --approval-token (repeatable).`,
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
 			if err != nil {
@@ -882,7 +885,7 @@ func newVersionsPromoteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, err := client.PromoteProfile(cmd.Context(), appID, vid, pendingID)
+			res, err := client.PromoteProfile(cmd.Context(), appID, vid, pendingID, approvalTokens...)
 			if err != nil {
 				return err
 			}
@@ -890,6 +893,51 @@ func newVersionsPromoteCmd() *cobra.Command {
 		},
 	}
 	c.Flags().IntVar(&pendingID, "pending", 0, "pending profile id (stable across vaults; default 0)")
+	c.Flags().StringArrayVar(&approvalTokens, "approval-token", nil, "co-sign approval token from a second approver (repeatable; only for co-sign apps)")
+	return c
+}
+
+func newAppsCosignCmd() *cobra.Command {
+	var enable, disable bool
+	c := &cobra.Command{
+		Use:   "cosign <app> (--enable | --disable)",
+		Short: "Toggle separation-of-duties co-sign on promote (owner-only)",
+		Long: `When enabled, promoting a new measurement requires a fresh approval token
+from a SECOND team approver (approver != proposer). Takes effect on the next
+vault key reservation/re-key that re-authors the policy.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if enable == disable {
+				return fmt.Errorf("pass exactly one of --enable or --disable")
+			}
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
+			app, err := client.SetVaultCosign(cmd.Context(), appID, enable)
+			if err != nil {
+				return err
+			}
+			if !env.Quiet {
+				state := "disabled"
+				if enable {
+					state = "enabled"
+				}
+				output.Success(cmd.ErrOrStderr(), "co-sign on promote %s for %s", state, output.Str(app, "name"))
+			}
+			return nil
+		},
+	}
+	c.Flags().BoolVar(&enable, "enable", false, "require co-sign on promote")
+	c.Flags().BoolVar(&disable, "disable", false, "do not require co-sign on promote")
 	return c
 }
 

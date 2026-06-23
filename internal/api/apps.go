@@ -173,11 +173,32 @@ func (c *Client) ListPending(ctx context.Context, id, versionID string) (map[str
 
 // PromoteProfile promotes (approves) a staged profile, authorizing the new
 // measurement so the vault releases the data key to it. Owner-only.
-func (c *Client) PromoteProfile(ctx context.Context, id, versionID string, pendingID int) (map[string]interface{}, error) {
+//
+// approvalTokens carries any separation-of-duties co-sign JWTs the policy
+// requires (item 3 / G.2): each must be a fresh approval token issued for the
+// role-based Manager(0) by a SECOND team approver. Empty for apps that have not
+// opted into co-sign (the default).
+func (c *Client) PromoteProfile(ctx context.Context, id, versionID string, pendingID int, approvalTokens ...string) (map[string]interface{}, error) {
 	var out map[string]interface{}
+	body := map[string]interface{}{"pending_id": pendingID}
+	if len(approvalTokens) > 0 {
+		body["approval_tokens"] = approvalTokens
+	}
 	if err := c.do(ctx, http.MethodPost,
 		"/api/v1/apps/"+id+"/versions/"+versionID+"/promote",
-		map[string]int{"pending_id": pendingID}, &out); err != nil {
+		body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SetVaultCosign toggles separation-of-duties co-sign on promote for an app
+// (item 3 / G.2). Owner-only.
+func (c *Client) SetVaultCosign(ctx context.Context, id string, require bool) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPatch,
+		"/api/v1/apps/"+id+"/vault-cosign",
+		map[string]bool{"require_cosign": require}, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
