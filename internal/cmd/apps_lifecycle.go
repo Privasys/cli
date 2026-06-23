@@ -662,6 +662,71 @@ func shortDate(s string) string {
 	return ""
 }
 
+// newAppsMigrateConstellationCmd moves a vault-backed app's key onto a new
+// constellation without re-encrypting data (graceful vault rotation).
+func newAppsMigrateConstellationCmd() *cobra.Command {
+	var target string
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "migrate-constellation <app>",
+		Short: "Move a vault-backed app's data key onto a new vault constellation (online, no re-encrypt)",
+		Long: `Migrates the vault key that wraps your app's encrypted volume from its current
+constellation onto another one — the safe form of a vault (MRENCLAVE) rotation.
+The platform reserves a new key on the target constellation, re-keys the volume's
+LUKS slots from the old key to the new (both open the volume across the switch, so
+no failure can lock your data), advances the pointer, and retires the old key on
+the old constellation. The data on disk is never re-encrypted and the app keeps
+running. Defaults to the currently-active constellation.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
+			if !yes {
+				ok, cErr := confirm(cmd, env, fmt.Sprintf("Migrate %s's data key to the %s constellation? The app keeps running and data is preserved.", args[0], ifElse(target == "", "active", target)))
+				if cErr != nil {
+					return cErr
+				}
+				if !ok {
+					return fmt.Errorf("aborted")
+				}
+			}
+			res, err := client.MigrateConstellation(cmd.Context(), appID, target)
+			if err != nil {
+				return err
+			}
+			if !env.Quiet && env.Format == "table" {
+				if w := output.Str(res, "warning"); w != "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", w)
+				}
+			}
+			return output.Emit(env.Format, res, func() output.Table {
+				return kvTable(res, []string{"migrated", "from_constellation", "to_constellation", "old_handle", "new_handle", "reason", "warning"})
+			})
+		},
+	}
+	cmd.Flags().StringVar(&target, "to", "", "target constellation id (default: the active constellation)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "migrate without an interactive confirmation")
+	return cmd
+}
+
+// ifElse returns a when cond, else b.
+func ifElse(cond bool, a, b string) string {
+	if cond {
+		return a
+	}
+	return b
+}
+
 // argOr returns args[i] when present, else def.
 func argOr(args []string, i int, def string) string {
 	if i < len(args) {

@@ -208,6 +208,22 @@ func (c *Client) RotateKey(ctx context.Context, id, versionID, enclaveID string)
 	return out, nil
 }
 
+// MigrateConstellation moves the app's vault-backed volume key onto a new
+// constellation without re-encrypting data (graceful vault rotation). Empty
+// targetConstellationID = the active constellation. Owner-only.
+func (c *Client) MigrateConstellation(ctx context.Context, id, targetConstellationID string) (map[string]interface{}, error) {
+	body := map[string]string{}
+	if targetConstellationID != "" {
+		body["target_constellation_id"] = targetConstellationID
+	}
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost,
+		"/api/v1/apps/"+id+"/migrate-constellation", body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ListDeployments returns an app's deployments.
 func (c *Client) ListDeployments(ctx context.Context, id string) ([]map[string]interface{}, error) {
 	var raw json.RawMessage
