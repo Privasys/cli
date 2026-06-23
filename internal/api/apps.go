@@ -127,11 +127,12 @@ func (c *Client) ListVersions(ctx context.Context, id string) ([]map[string]inte
 	return unwrapList(raw, "versions")
 }
 
-// CreateVersion records a new version from a commit URL (build is triggered).
-func (c *Client) CreateVersion(ctx context.Context, id, commitURL string) (map[string]interface{}, error) {
+// CreateVersion records a new version. The body is source-aware (the server
+// branches on the app's source_type): {commit_url} for github, {image} for
+// package, {channel} for cloud_image, plus an optional {version} semver.
+func (c *Client) CreateVersion(ctx context.Context, id string, body map[string]string) (map[string]interface{}, error) {
 	var out map[string]interface{}
-	if err := c.do(ctx, http.MethodPost, "/api/v1/apps/"+id+"/versions",
-		map[string]string{"commit_url": commitURL}, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/api/v1/apps/"+id+"/versions", body, &out); err != nil {
 		return nil, err
 	}
 	return out, nil

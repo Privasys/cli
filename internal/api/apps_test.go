@@ -81,7 +81,7 @@ func TestVersionsAndDeploy(t *testing.T) {
 	if err != nil || len(vs) != 2 {
 		t.Fatalf("versions: %v %v", vs, err)
 	}
-	v, err := c.CreateVersion(ctx, "app-1", "https://github.com/x/y/commit/abc")
+	v, err := c.CreateVersion(ctx, "app-1", map[string]string{"commit_url": "https://github.com/x/y/commit/abc"})
 	if err != nil || v["id"] != "v3" {
 		t.Fatalf("createVersion: %v %v", v, err)
 	}

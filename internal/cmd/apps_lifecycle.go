@@ -169,46 +169,96 @@ func newAppsVersionsCmd() *cobra.Command {
 					rows := make([][]string, 0, len(vs))
 					for _, v := range vs {
 						rows = append(rows, []string{
-							output.Str(v, "version_number"), output.Str(v, "id"),
-							output.Str(v, "github_commit"), output.Str(v, "status"),
+							versionLabel(v), output.Str(v, "id"), output.Str(v, "status"),
 						})
 					}
-					return output.Table{Headers: []string{"VERSION", "ID", "COMMIT", "STATUS"}, Rows: rows}
+					return output.Table{Headers: []string{"VERSION", "ID", "STATUS"}, Rows: rows}
 				})
 			},
 		},
-		&cobra.Command{
-			Use:   "create <app-id> --commit-url <url>",
-			Short: "Record a new version from a commit (triggers a build)",
-			Args:  cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				env, err := loadEnv(cmd)
-				if err != nil {
-					return err
-				}
-				commitURL, _ := cmd.Flags().GetString("commit-url")
-				if commitURL == "" {
-					return fmt.Errorf("--commit-url is required")
-				}
-				client, err := apiClient(cmd, env)
-				if err != nil {
-					return err
-				}
-				v, err := client.CreateVersion(cmd.Context(), args[0], commitURL)
-				if err != nil {
-					return err
-				}
-				return output.Emit(env.Format, v, func() output.Table {
-					return kvTable(v, []string{"version_number", "id", "github_commit", "status"})
-				})
-			},
-		},
+		newVersionsCreateCmd(),
 		newVersionsStageCmd(),
 		newVersionsPendingCmd(),
 		newVersionsPromoteCmd(),
 		newVersionsRevokeCmd(),
 	)
-	c.PersistentFlags().String("commit-url", "", "GitHub commit URL")
+	return c
+}
+
+// versionCreateBody builds the source-aware create body from the flags, erroring
+// if zero or more than one source flag is set. version (semver) is optional.
+func versionCreateBody(cmd *cobra.Command) (map[string]string, error) {
+	commitURL, _ := cmd.Flags().GetString("commit-url")
+	image, _ := cmd.Flags().GetString("image")
+	channel, _ := cmd.Flags().GetString("channel")
+	version, _ := cmd.Flags().GetString("version")
+	body := map[string]string{}
+	set := 0
+	if commitURL != "" {
+		body["commit_url"] = commitURL
+		set++
+	}
+	if image != "" {
+		body["image"] = image
+		set++
+	}
+	if channel != "" {
+		body["channel"] = channel
+		set++
+	}
+	if set == 0 {
+		return nil, fmt.Errorf("one of --commit-url (github), --image (package), or --channel (cloud_image) is required")
+	}
+	if set > 1 {
+		return nil, fmt.Errorf("pass only one of --commit-url / --image / --channel (matching the app's source)")
+	}
+	if version != "" {
+		body["version"] = version
+	}
+	return body, nil
+}
+
+func newVersionsCreateCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "create <app> [--commit-url <url> | --image <ref> | --channel <ch>] [--version vX.Y.Z]",
+		Short: "Record a new version (github commit, package image, or cloud-image channel)",
+		Long: `Ships a new version of an app. Pass the field matching the app's source:
+  --commit-url  github apps (verifies a GPG-signed commit, triggers a build)
+  --image       package apps (a pre-built container image ref)
+  --channel     cloud_image apps (re-pin the latest cached disk for a channel)
+Optionally set --version to a strictly-incrementing semver (vX.Y.Z); omitted
+auto-bumps the patch.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			body, err := versionCreateBody(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
+			v, err := client.CreateVersion(cmd.Context(), appID, body)
+			if err != nil {
+				return err
+			}
+			return output.Emit(env.Format, v, func() output.Table {
+				return kvTable(v, []string{"semver", "version_number", "id", "github_commit", "container_image", "status"})
+			})
+		},
+	}
+	c.Flags().String("commit-url", "", "GitHub commit URL (github apps)")
+	c.Flags().String("image", "", "container image ref (package apps)")
+	c.Flags().String("channel", "", "cloud-image channel (cloud_image apps)")
+	c.Flags().String("version", "", "semver to assign (vX.Y.Z; default auto-bump patch)")
 	return c
 }
 
@@ -331,6 +381,142 @@ control or for scripting.`,
 	return cmd
 }
 
+// newAppsUpdateCmd is the one-shot, approve-before-deploy upgrade: ship a new
+// version (optional), approve the measurement for a vault-backed app, then cut
+// over (the server stops the old version before starting the new one).
+func newAppsUpdateCmd() *cobra.Command {
+	var enclaveID string
+	var pendingID int
+	var yes, watch bool
+	cmd := &cobra.Command{
+		Use:   "update <app> [--image <ref> | --commit-url <url> | --channel <ch>] [--version vX.Y.Z]",
+		Short: "Ship + approve + deploy a new version in one step (approve-before-deploy)",
+		Long: `Guided end-to-end upgrade in the correct order:
+  1. ship the new version (from --image/--commit-url/--channel; omit to use the latest ready one)
+  2. for a vault-backed app: stage the new measurement, show it, and promote it after your confirm
+  3. deploy — the server stops the old version before starting the new one (no overlap)
+
+This is the safe path: the data key is authorised BEFORE the cutover, so the new
+version loads cleanly with no locked-data window.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			appID, err := resolveAppID(ctx, client, args[0])
+			if err != nil {
+				return err
+			}
+			app, err := client.GetApp(ctx, appID)
+			if err != nil {
+				return err
+			}
+
+			// 1. Ship a new version if a source flag was given; else use the latest.
+			vid := ""
+			if hasVersionSource(cmd) {
+				body, berr := versionCreateBody(cmd)
+				if berr != nil {
+					return berr
+				}
+				v, cerr := client.CreateVersion(ctx, appID, body)
+				if cerr != nil {
+					return cerr
+				}
+				vid = output.Str(v, "id")
+				if !env.Quiet {
+					output.Success(cmd.ErrOrStderr(), "shipped %s", versionLabel(v))
+				}
+			} else {
+				vid, err = resolveVersionRef(ctx, client, appID, "")
+				if err != nil {
+					return err
+				}
+			}
+
+			enc, err := resolveEnclaveRef(ctx, client, appID, enclaveID)
+			if err != nil {
+				return err
+			}
+
+			// 2. Approve (vault-backed apps only): stage -> show -> confirm -> promote.
+			// A handle is present only once the app has been deployed before, i.e.
+			// this is an upgrade; the first deploy fills the key and needs no approval.
+			if output.Str(app, "vault_key_handle") != "" {
+				staged, serr := client.StageProfile(ctx, appID, vid, enc)
+				if serr != nil {
+					return serr
+				}
+				if !env.Quiet && env.Format == "table" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "staged %v/%v vaults\n", staged["staged"], staged["quorum"])
+				}
+				pend, perr := client.ListPending(ctx, appID, vid)
+				if perr != nil {
+					return perr
+				}
+				if !env.Quiet && env.Format == "table" {
+					if buf, mErr := json.MarshalIndent(pend, "", "  "); mErr == nil {
+						fmt.Fprintf(cmd.ErrOrStderr(), "Measurement to approve (check the digest against your build):\n%s\n", buf)
+					}
+				}
+				if !yes {
+					ok, cErr := confirm(cmd, env, fmt.Sprintf("Promote pending #%d for %s? This authorises the data key for the new version.", pendingID, args[0]))
+					if cErr != nil {
+						return cErr
+					}
+					if !ok {
+						return fmt.Errorf("aborted")
+					}
+				}
+				if _, prerr := client.PromoteProfile(ctx, appID, vid, pendingID); prerr != nil {
+					return prerr
+				}
+				if !env.Quiet {
+					output.Success(cmd.ErrOrStderr(), "approved")
+				}
+			}
+
+			// 3. Deploy. The server gate verifies the measurement is promoted and
+			// stops the running version before starting the new one (no overlap).
+			dep, derr := client.DeployVersion(ctx, appID, vid, enc)
+			if derr != nil {
+				return derr
+			}
+			if !watch {
+				return output.Emit(env.Format, dep, func() output.Table {
+					return kvTable(dep, []string{"id", "status", "enclave_host", "hostname"})
+				})
+			}
+			return watchDeployment(cmd, client, env, appID, output.Str(dep, "id"))
+		},
+	}
+	cmd.Flags().String("commit-url", "", "GitHub commit URL (github apps)")
+	cmd.Flags().String("image", "", "container image ref (package apps)")
+	cmd.Flags().String("channel", "", "cloud-image channel (cloud_image apps)")
+	cmd.Flags().String("version", "", "semver to assign (vX.Y.Z; default auto-bump patch)")
+	cmd.Flags().StringVar(&enclaveID, "enclave", "", "target enclave id (default: the only compatible one)")
+	cmd.Flags().IntVar(&pendingID, "pending", 0, "pending profile id to promote (default 0)")
+	cmd.Flags().BoolVar(&yes, "yes", false, "do not prompt before promoting")
+	cmd.Flags().BoolVar(&watch, "watch", false, "poll until the deployment is active or failed")
+	return cmd
+}
+
+// hasVersionSource reports whether any new-version source flag was provided.
+func hasVersionSource(cmd *cobra.Command) bool {
+	for _, f := range []string{"commit-url", "image", "channel"} {
+		if v, _ := cmd.Flags().GetString(f); v != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // newAppsRotateKeyCmd rotates a vault-backed app's volume encryption key.
 func newAppsRotateKeyCmd() *cobra.Command {
 	var enclaveID string
@@ -400,6 +586,80 @@ generation authorises).`,
 	cmd.Flags().StringVar(&enclaveID, "enclave", "", "enclave the app runs on (default: the only compatible one)")
 	cmd.Flags().BoolVar(&yes, "yes", false, "rotate without an interactive confirmation")
 	return cmd
+}
+
+// versionLabel renders a human version label: "<semver> · <src>:<short> · <date>"
+// (e.g. "v1.2.3 · git:a1b2c3d · 23 Jun 2026"). Shared by `versions list` and the
+// upgrade/deploy output (the enclave-upgrade plan, D). Falls back gracefully when
+// fields are missing.
+func versionLabel(v map[string]interface{}) string {
+	sv := output.Str(v, "semver")
+	if sv == "" {
+		if n := output.Str(v, "version_number"); n != "" {
+			sv = "v" + n
+		}
+	}
+	src, hash := versionSrcHash(v)
+	parts := make([]string, 0, 3)
+	if sv != "" {
+		parts = append(parts, sv)
+	}
+	if src != "" && hash != "" {
+		parts = append(parts, src+":"+hash)
+	}
+	if d := shortDate(output.Str(v, "created_at")); d != "" {
+		parts = append(parts, d)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// versionSrcHash returns the source prefix (git/pkg/img/wasm) and a short
+// identifier for a version.
+func versionSrcHash(v map[string]interface{}) (string, string) {
+	if c := output.Str(v, "github_commit"); c != "" {
+		return "git", shortHash(c)
+	}
+	img := output.Str(v, "container_image")
+	if strings.HasPrefix(img, "cloud-image:") {
+		segs := strings.Split(img, ":")
+		return "img", segs[len(segs)-1]
+	}
+	if img != "" {
+		return "pkg", shortImageRef(img)
+	}
+	if h := output.Str(v, "cwasm_hash"); h != "" {
+		return "wasm", shortHash(h)
+	}
+	return "", ""
+}
+
+func shortHash(h string) string {
+	h = strings.TrimPrefix(h, "sha256:")
+	if len(h) > 7 {
+		return h[:7]
+	}
+	return h
+}
+
+func shortImageRef(img string) string {
+	if i := strings.Index(img, "@sha256:"); i >= 0 {
+		return shortHash(img[i+len("@sha256:"):])
+	}
+	// No digest: show the tag (the ':' after the last path '/', so host:port is ignored).
+	if i := strings.LastIndex(img, ":"); i >= 0 && i > strings.LastIndex(img, "/") {
+		return img[i+1:]
+	}
+	return img
+}
+
+func shortDate(s string) string {
+	if s == "" {
+		return ""
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t.Format("2 Jan 2006")
+	}
+	return ""
 }
 
 // argOr returns args[i] when present, else def.
