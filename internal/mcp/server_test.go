@@ -117,7 +117,9 @@ func TestMCPUnknownTool(t *testing.T) {
 }
 
 func TestMCPMissingRequiredArg(t *testing.T) {
-	srv := NewServer(func(ctx context.Context) (Deps, error) { return Deps{Client: api.New("http://x", "t"), Authed: true}, nil }, "v1")
+	srv := NewServer(func(ctx context.Context) (Deps, error) {
+		return Deps{Client: api.New("http://x", "t"), Authed: true}, nil
+	}, "v1")
 	resps := run(t, srv, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"apps_describe","arguments":{}}}`)
 	res := resps[0]["result"].(map[string]interface{})
 	if res["isError"] != true {
