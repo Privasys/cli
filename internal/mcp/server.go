@@ -20,23 +20,32 @@ import (
 // protocolVersion is the MCP revision this server implements.
 const protocolVersion = "2024-11-05"
 
-// Deps is the authenticated context a tool handler needs. It is rebuilt per
-// call so tokens refresh transparently.
+// Deps is the per-call context a tool handler needs. It is rebuilt per call so
+// tokens refresh transparently. Issuer/Endpoint are always populated; Client +
+// Token are set and Authed is true only when the user is signed in (so
+// onboarding tools can run before there is a session).
 type Deps struct {
-	Client *api.Client
-	Token  string
-	Issuer string
+	Client   *api.Client
+	Token    string
+	Issuer   string
+	Endpoint string
+	Authed   bool
 }
 
-// DepsFunc returns a fresh authenticated Deps (or an error if not logged in).
+// DepsFunc returns a fresh Deps. It errors only on hard failures (config load),
+// not on "not signed in" — that surfaces as Authed=false.
 type DepsFunc func(ctx context.Context) (Deps, error)
 
 type tool struct {
 	Name        string
 	Description string
 	Schema      map[string]interface{}
-	Handler     func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error)
+	// noAuth lets a tool run without a signed-in session (onboarding tools).
+	noAuth  bool
+	Handler func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error)
 }
+
+var errNotAuthenticated = fmt.Errorf("not authenticated — use auth_begin then auth_poll to sign in (the user approves externally)")
 
 // Server serves MCP over the given reader/writer.
 type Server struct {
@@ -160,6 +169,9 @@ func (s *Server) callTool(ctx context.Context, req *rpcRequest) *rpcResponse {
 	if err != nil {
 		return toolResult(req.ID, nil, err)
 	}
+	if !t.noAuth && !d.Authed {
+		return toolResult(req.ID, nil, errNotAuthenticated)
+	}
 	res, err := t.Handler(ctx, d, p.Arguments)
 	return toolResult(req.ID, res, err)
 }
@@ -221,4 +233,7 @@ func strProp(desc string) map[string]interface{} {
 }
 func intProp(desc string) map[string]interface{} {
 	return map[string]interface{}{"type": "integer", "description": desc}
+}
+func boolProp(desc string) map[string]interface{} {
+	return map[string]interface{}{"type": "boolean", "description": desc}
 }

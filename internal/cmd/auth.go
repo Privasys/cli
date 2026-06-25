@@ -4,17 +4,14 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
 	"github.com/spf13/cobra"
 
 	"github.com/Privasys/cli/internal/auth"
-	"github.com/Privasys/cli/internal/config"
 	"github.com/Privasys/cli/internal/output"
 )
 
@@ -63,7 +60,7 @@ func newAuthLoginCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := saveUserCredential(env.Cfg.Issuer, tr); err != nil {
+			if err := auth.SaveUserCredential(env.Cfg.Issuer, tr); err != nil {
 				return err
 			}
 			sub := subjectOf(tr.AccessToken)
@@ -73,25 +70,6 @@ func newAuthLoginCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&noQR, "no-qr", false, "do not render the QR code")
 	return cmd
-}
-
-// pendingDevice persists an in-progress device authorization so `auth poll`
-// (Mode B) can complete it from a separate invocation.
-type pendingDevice struct {
-	Issuer     string    `json:"issuer"`
-	DeviceCode string    `json:"device_code"`
-	Verifier   string    `json:"verifier"`
-	UserCode   string    `json:"user_code"`
-	Interval   int       `json:"interval"`
-	ExpiresAt  time.Time `json:"expires_at"`
-}
-
-func pendingPath() (string, error) {
-	d, err := config.Dir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(d, "pending-device.json"), nil
 }
 
 func newAuthBeginCmd() *cobra.Command {
@@ -110,16 +88,11 @@ func newAuthBeginCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			pend := pendingDevice{
+			_ = auth.SavePending(auth.PendingDevice{
 				Issuer: env.Cfg.Issuer, DeviceCode: dr.DeviceCode, Verifier: verifier,
 				UserCode: dr.UserCode, Interval: dr.Interval,
 				ExpiresAt: time.Now().Add(time.Duration(dr.ExpiresIn) * time.Second),
-			}
-			if p, perr := pendingPath(); perr == nil {
-				if data, mErr := json.MarshalIndent(pend, "", "  "); mErr == nil {
-					_ = os.WriteFile(p, data, 0o600)
-				}
-			}
+			})
 			if qr && dr.QRPayload != "" {
 				if q, qErr := qrcode.New(dr.QRPayload, qrcode.Low); qErr == nil {
 					fmt.Println(q.ToSmallString(false))
@@ -159,16 +132,8 @@ func newAuthPollCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			p, err := pendingPath()
+			pend, err := auth.LoadPending()
 			if err != nil {
-				return err
-			}
-			data, err := os.ReadFile(p)
-			if err != nil {
-				return fmt.Errorf("no pending login (run `privasys auth begin` first)")
-			}
-			var pend pendingDevice
-			if err := json.Unmarshal(data, &pend); err != nil {
 				return err
 			}
 			ctx := cmd.Context()
@@ -187,10 +152,10 @@ func newAuthPollCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := saveUserCredential(pend.Issuer, tr); err != nil {
+			if err := auth.SaveUserCredential(pend.Issuer, tr); err != nil {
 				return err
 			}
-			_ = os.Remove(p)
+			auth.RemovePending()
 			_ = env
 			output.Success(cmd.OutOrStdout(), "Logged in%s", whom(subjectOf(tr.AccessToken)))
 			return nil
@@ -351,20 +316,6 @@ func newAuthLogoutCmd() *cobra.Command {
 }
 
 // --- helpers ---
-
-func saveUserCredential(issuer string, tr *auth.TokenResponse) error {
-	cred := &auth.Credential{
-		Issuer:          issuer,
-		ClientID:        auth.ClientID,
-		Subject:         subjectOf(tr.AccessToken),
-		Scope:           tr.Scope,
-		AccessToken:     tr.AccessToken,
-		IDToken:         tr.IDToken,
-		RefreshToken:    tr.RefreshToken,
-		AccessExpiresAt: time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second),
-	}
-	return auth.Save(cred)
-}
 
 func subjectOf(token string) string {
 	claims, err := auth.Claims(token)

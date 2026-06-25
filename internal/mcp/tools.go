@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/Privasys/cli/internal/auth"
 	"github.com/Privasys/cli/internal/ratls"
@@ -26,6 +27,100 @@ func (s *Server) registerTools() {
 			Description: "Show the authenticated identity (subject, roles, audience).",
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				return auth.Claims(d.Token)
+			},
+		},
+		{
+			Name:        "auth_status",
+			Description: "Report whether the user is signed in (and the identity if so). Use this first when onboarding.",
+			noAuth:      true,
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				if !d.Authed {
+					return map[string]interface{}{"authenticated": false}, nil
+				}
+				claims, _ := auth.Claims(d.Token)
+				return map[string]interface{}{"authenticated": true, "identity": claims}, nil
+			},
+		},
+		{
+			Name:        "auth_begin",
+			Description: "Start sign-in (OAuth device grant). Returns a verification URL + short user code to show the human; they approve EXTERNALLY in the Privasys Wallet or with a passkey. Then call auth_poll until authenticated. Never asks for or handles credentials.",
+			noAuth:      true,
+			Schema: obj(map[string]interface{}{
+				"agent": strProp("name of the agent requesting access, shown to the user (unverified)"),
+			}),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				dr, verifier, err := auth.BeginDevice(ctx, d.Issuer, auth.DefaultScope, argStr(args, "agent"))
+				if err != nil {
+					return nil, err
+				}
+				// The device_code + PKCE verifier stay in a 0600 file, never in
+				// the tool result (they would otherwise reach the model).
+				_ = auth.SavePending(auth.PendingDevice{
+					Issuer: d.Issuer, DeviceCode: dr.DeviceCode, Verifier: verifier,
+					UserCode: dr.UserCode, Interval: dr.Interval,
+					ExpiresAt: time.Now().Add(time.Duration(dr.ExpiresIn) * time.Second),
+				})
+				return map[string]interface{}{
+					"verification_uri":          dr.VerificationURI,
+					"verification_uri_complete": dr.VerificationURIComplete,
+					"user_code":                 dr.UserCode,
+					"expires_in":                dr.ExpiresIn,
+					"interval":                  dr.Interval,
+					"next":                      "Show the user verification_uri + user_code (or verification_uri_complete). After they approve, call auth_poll repeatedly until status is authenticated.",
+				}, nil
+			},
+		},
+		{
+			Name:        "auth_poll",
+			Description: "Poll the pending sign-in once. Returns {status:authenticated, identity} when the user has approved, or {status:pending}. Call repeatedly (respecting the interval) until authenticated.",
+			noAuth:      true,
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				pend, err := auth.LoadPending()
+				if err != nil {
+					return nil, err
+				}
+				tr, _, err := auth.PollOnce(ctx, pend.Issuer, pend.DeviceCode, pend.Verifier)
+				if err != nil {
+					return nil, err
+				}
+				if tr == nil {
+					return map[string]interface{}{"status": "pending"}, nil
+				}
+				if err := auth.SaveUserCredential(pend.Issuer, tr); err != nil {
+					return nil, err
+				}
+				auth.RemovePending()
+				claims, _ := auth.Claims(tr.AccessToken)
+				return map[string]interface{}{"status": "authenticated", "identity": claims}, nil
+			},
+		},
+		{
+			Name:        "billing_portal",
+			Description: "Get the Stripe billing portal URL for the user to manage their payment method and subscription EXTERNALLY. Surface the URL; never handle card data. Poll billing_status for the result.",
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				url, ok, err := d.Client.BillingPortal(ctx)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]interface{}{"url": url, "available": ok}, nil
+			},
+		},
+		{
+			Name:        "billing_subscribe",
+			Description: "Get a Stripe Checkout URL for the user to start the platform membership EXTERNALLY. 'kind' is membership (default) or credits. Surface the URL; poll billing_status until active. No card data touches the agent.",
+			Schema: obj(map[string]interface{}{
+				"kind": strProp("membership (default) or credits"),
+			}),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				kind := argStr(args, "kind")
+				if kind == "" {
+					kind = "membership"
+				}
+				url, ok, err := d.Client.Checkout(ctx, kind)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]interface{}{"checkout_url": url, "available": ok}, nil
 			},
 		},
 		{
@@ -58,6 +153,7 @@ func (s *Server) registerTools() {
 				"image":        strProp("container image ref (package source)"),
 				"display_name": strProp("human-friendly name"),
 				"description":  strProp("description"),
+				"storage":      boolProp("request encrypted, owner-controlled storage (for apps that hold user data)"),
 			}, "name", "source_type"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				name, err := requireStr(args, "name")
@@ -76,6 +172,9 @@ func (s *Server) registerTools() {
 				}
 				if v := argStr(args, "image"); v != "" {
 					body["container_image"] = v
+				}
+				if b, _ := args["storage"].(bool); b {
+					body["container_storage"] = true
 				}
 				// container_port is platform-allocated (app listens on $PORT).
 				return d.Client.CreateApp(ctx, body)
@@ -354,6 +453,65 @@ func (s *Server) registerTools() {
 					enc, _ = encs[0]["id"].(string)
 				}
 				return d.Client.RotateKey(ctx, id, vid, enc)
+			},
+		},
+		{
+			Name:        "apps_versions_create",
+			Description: "Ship a new version of an app. Pass the field matching the app's source: commit_url (github, GPG-signed commit), image (package, a container image ref), or channel (cloud_image). Optional version is a strictly-incrementing semver (vX.Y.Z); omitted auto-bumps the patch. Does not deploy.",
+			Schema: obj(map[string]interface{}{
+				"app_id":     strProp("the app id"),
+				"commit_url": strProp("GitHub commit URL (github source)"),
+				"image":      strProp("container image ref (package source)"),
+				"channel":    strProp("cloud-image channel (cloud_image source)"),
+				"version":    strProp("optional semver vX.Y.Z"),
+			}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				body := map[string]string{}
+				for _, k := range []string{"commit_url", "image", "channel", "version"} {
+					if v := argStr(args, k); v != "" {
+						body[k] = v
+					}
+				}
+				return d.Client.CreateVersion(ctx, id, body)
+			},
+		},
+		{
+			Name:        "apps_cosign",
+			Description: "Enable or disable separation-of-duties co-sign on promote for a vault-backed app: when on, a SECOND team approver must co-sign before an upgrade's data key is released. Owner-only.",
+			Schema: obj(map[string]interface{}{
+				"app_id": strProp("the app id"),
+				"enable": boolProp("true to require co-sign, false to disable"),
+			}, "app_id", "enable"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				enable, _ := args["enable"].(bool)
+				return d.Client.SetVaultCosign(ctx, id, enable)
+			},
+		},
+		{
+			Name:        "apps_migrate_constellation",
+			Description: "Migrate a vault-backed app's data key to a different vault constellation (advanced ops, e.g. region change). Owner-only. Surface the target to a human before running.",
+			Schema: obj(map[string]interface{}{
+				"app_id": strProp("the app id"),
+				"target": strProp("the target constellation id"),
+			}, "app_id", "target"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				target, err := requireStr(args, "target")
+				if err != nil {
+					return nil, err
+				}
+				return d.Client.MigrateConstellation(ctx, id, target)
 			},
 		},
 		{

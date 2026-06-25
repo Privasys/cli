@@ -67,7 +67,7 @@ func TestMCPToolCall(t *testing.T) {
 	defer backend.Close()
 
 	srv := NewServer(func(ctx context.Context) (Deps, error) {
-		return Deps{Client: api.New(backend.URL, "tok"), Token: "h.e30.s"}, nil
+		return Deps{Client: api.New(backend.URL, "tok"), Token: "h.e30.s", Authed: true}, nil
 	}, "v1")
 
 	resps := run(t, srv, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"apps_list","arguments":{}}}`)
@@ -81,6 +81,33 @@ func TestMCPToolCall(t *testing.T) {
 	}
 }
 
+func TestMCPNoAuthGate(t *testing.T) {
+	// Unauthenticated deps (Authed=false): onboarding tools run, others reject.
+	srv := NewServer(func(ctx context.Context) (Deps, error) {
+		return Deps{Issuer: "https://privasys.id", Endpoint: "http://x"}, nil
+	}, "v1")
+
+	// auth_status (noAuth) succeeds and reports not-authenticated.
+	resps := run(t, srv, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"auth_status","arguments":{}}}`)
+	res := resps[0]["result"].(map[string]interface{})
+	if res["isError"] == true {
+		t.Fatalf("auth_status should run unauthenticated: %v", res)
+	}
+	if txt := res["content"].([]interface{})[0].(map[string]interface{})["text"].(string); !strings.Contains(txt, "\"authenticated\": false") {
+		t.Errorf("auth_status should report not authenticated, got %v", txt)
+	}
+
+	// apps_list (auth-required) is rejected with the not-authenticated error.
+	resps = run(t, srv, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"apps_list","arguments":{}}}`)
+	res = resps[0]["result"].(map[string]interface{})
+	if res["isError"] != true {
+		t.Fatalf("apps_list should reject unauthenticated, got %v", res)
+	}
+	if txt := res["content"].([]interface{})[0].(map[string]interface{})["text"].(string); !strings.Contains(txt, "not authenticated") {
+		t.Errorf("expected not-authenticated message, got %v", txt)
+	}
+}
+
 func TestMCPUnknownTool(t *testing.T) {
 	srv := NewServer(func(ctx context.Context) (Deps, error) { return Deps{}, nil }, "v1")
 	resps := run(t, srv, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"nope","arguments":{}}}`)
@@ -90,7 +117,7 @@ func TestMCPUnknownTool(t *testing.T) {
 }
 
 func TestMCPMissingRequiredArg(t *testing.T) {
-	srv := NewServer(func(ctx context.Context) (Deps, error) { return Deps{Client: api.New("http://x", "t")}, nil }, "v1")
+	srv := NewServer(func(ctx context.Context) (Deps, error) { return Deps{Client: api.New("http://x", "t"), Authed: true}, nil }, "v1")
 	resps := run(t, srv, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"apps_describe","arguments":{}}}`)
 	res := resps[0]["result"].(map[string]interface{})
 	if res["isError"] != true {

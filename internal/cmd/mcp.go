@@ -25,13 +25,17 @@ func newMcpCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// Rebuild an authenticated client per call so tokens refresh.
+			// Rebuild per call so tokens refresh. Not-signed-in is not an error
+			// here (onboarding tools run before there is a session); it surfaces
+			// as Authed=false and only auth-required tools reject it.
 			deps := func(ctx context.Context) (mcp.Deps, error) {
-				token, err := auth.AccessToken(ctx, env.Cfg.Issuer)
-				if err != nil {
-					return mcp.Deps{}, err
+				d := mcp.Deps{Issuer: env.Cfg.Issuer, Endpoint: env.Cfg.Endpoint}
+				if token, err := auth.AccessToken(ctx, env.Cfg.Issuer); err == nil {
+					d.Token = token
+					d.Client = api.New(env.Cfg.Endpoint, token)
+					d.Authed = true
 				}
-				return mcp.Deps{Client: api.New(env.Cfg.Endpoint, token), Token: token, Issuer: env.Cfg.Issuer}, nil
+				return d, nil
 			}
 			srv := mcp.NewServer(deps, resolveVersion())
 			return srv.Serve(cmd.Context(), os.Stdin, os.Stdout)
