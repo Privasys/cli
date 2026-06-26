@@ -85,6 +85,72 @@ func newAppsCreateCmd() *cobra.Command {
 	return cmd
 }
 
+func newAppsStoreListingCmd() *cobra.Command {
+	var description, category, tagline, iconURL, privacyURL, tosURL, websiteURL, supportEmail, keywords string
+	var screenshots []string
+	cmd := &cobra.Command{
+		Use:   "store-listing <app>",
+		Short: "Set an app's App Store listing (Description + Category are required before deploy)",
+		Long:  "Sets the App Store listing fields for an app. A Description and a Category are required before the app can be deployed or published. Only the flags you pass are updated.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
+			fields := map[string]interface{}{}
+			for flag, key := range map[string]string{
+				"description": "store_description", "category": "store_category",
+				"tagline": "store_tagline", "icon-url": "store_icon_url",
+				"privacy-url": "store_privacy_url", "tos-url": "store_tos_url",
+				"website-url": "store_website_url", "support-email": "store_support_email",
+				"keywords": "store_keywords",
+			} {
+				if cmd.Flags().Changed(flag) {
+					v, _ := cmd.Flags().GetString(flag)
+					fields[key] = v
+				}
+			}
+			if cmd.Flags().Changed("screenshot") {
+				fields["store_screenshots"] = screenshots
+			}
+			if len(fields) == 0 {
+				return fmt.Errorf("nothing to set; pass at least --description and --category")
+			}
+			app, err := client.UpdateStoreListing(cmd.Context(), appID, fields)
+			if err != nil {
+				return err
+			}
+			if !env.Quiet {
+				output.Success(cmd.ErrOrStderr(), "Updated store listing for %s", args[0])
+			}
+			return output.Emit(env.Format, app, func() output.Table {
+				return kvTable(app, []string{"name", "id", "store_description", "store_category", "published"})
+			})
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&description, "description", "", "store description (required before deploy)")
+	f.StringVar(&category, "category", "", "store category (required before deploy)")
+	f.StringVar(&tagline, "tagline", "", "short tagline")
+	f.StringVar(&iconURL, "icon-url", "", "icon URL")
+	f.StringVar(&privacyURL, "privacy-url", "", "privacy policy URL")
+	f.StringVar(&tosURL, "tos-url", "", "terms-of-service URL")
+	f.StringVar(&websiteURL, "website-url", "", "website URL")
+	f.StringVar(&supportEmail, "support-email", "", "support email")
+	f.StringVar(&keywords, "keywords", "", "comma-separated keywords")
+	f.StringArrayVar(&screenshots, "screenshot", nil, "screenshot URL (repeatable)")
+	return cmd
+}
+
 func newAppsDeleteCmd() *cobra.Command {
 	var force bool
 	cmd := &cobra.Command{

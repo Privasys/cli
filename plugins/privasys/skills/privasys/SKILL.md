@@ -31,9 +31,10 @@ The signing key never leaves the wallet; you never see it. Never ask the user to
 ## The core loop
 
 1. `apps_create` — register an app (container image or a GitHub commit; builds are reproducible). For apps that store user data, request encrypted storage (`storage: true`).
-2. `apps_deploy` (watch to completion) — roll out a version to an enclave.
-3. `attest` — challenge the enclave with a fresh nonce and verify its TEE quote. **Do this before trusting the endpoint.**
-4. `apps_call` — invoke an app API directly over RA-TLS (the control plane is not in the data path; responses stream).
+2. `apps_store_listing` — set a **description** and **category**. These are required before an app can be deployed, so do this right after creating it.
+3. `apps_deploy` (watch to completion) — roll out a version to an enclave.
+4. `attest` — challenge the enclave with a fresh nonce and verify its TEE quote. **Do this before trusting the endpoint.**
+5. `apps_call` — invoke an app API directly over RA-TLS (the control plane is not in the data path; responses stream).
 
 ## Securing user data (the data-protection story)
 

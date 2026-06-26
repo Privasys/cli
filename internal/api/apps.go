@@ -65,6 +65,17 @@ func (c *Client) CreateApp(ctx context.Context, body map[string]interface{}) (ma
 	return out, nil
 }
 
+// UpdateStoreListing sets an app's App Store listing fields (PUT
+// /apps/{id}/store). A Description and Category are required before the app can
+// be deployed or published. Only the keys present in fields are sent.
+func (c *Client) UpdateStoreListing(ctx context.Context, id string, fields map[string]interface{}) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPut, "/api/v1/apps/"+id+"/store", fields, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DeleteApp deletes an app by id.
 func (c *Client) DeleteApp(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/api/v1/apps/"+id, nil, nil)

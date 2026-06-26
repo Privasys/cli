@@ -64,6 +64,7 @@ func newAppsCmd() *cobra.Command {
 		newAppsListCmd(),
 		newAppsDescribeCmd(),
 		newAppsCreateCmd(),
+		newAppsStoreListingCmd(),
 		newAppsDeleteCmd(),
 		newAppsUploadCmd(),
 		newAppsVersionsCmd(),

@@ -181,6 +181,36 @@ func (s *Server) registerTools() {
 			},
 		},
 		{
+			Name:        "apps_store_listing",
+			Description: "Set an app's App Store listing. A description and category are REQUIRED before the app can be deployed or published, so call this after apps_create and before apps_deploy.",
+			Schema: obj(map[string]interface{}{
+				"app_id":      strProp("the app id"),
+				"description": strProp("what the app does (required before deploy)"),
+				"category":    strProp("store category, e.g. 'Developer Tools' (required before deploy)"),
+				"tagline":     strProp("short one-line tagline"),
+				"keywords":    strProp("comma-separated keywords"),
+			}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				fields := map[string]interface{}{}
+				for arg, key := range map[string]string{
+					"description": "store_description", "category": "store_category",
+					"tagline": "store_tagline", "keywords": "store_keywords",
+				} {
+					if v := argStr(args, arg); v != "" {
+						fields[key] = v
+					}
+				}
+				if len(fields) == 0 {
+					return nil, errors.New("nothing to set; provide at least description and category")
+				}
+				return d.Client.UpdateStoreListing(ctx, id, fields)
+			},
+		},
+		{
 			Name:        "apps_versions",
 			Description: "List an app's versions.",
 			Schema:      obj(map[string]interface{}{"app_id": strProp("the app id")}, "app_id"),
