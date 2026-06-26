@@ -32,7 +32,7 @@ func TestLiveAppExportKey(t *testing.T) {
 	if endpoint == "" {
 		t.Skip("set PRIVASYS_E2E_ENDPOINT to the management-service base URL")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 16*time.Minute)
 	defer cancel()
 
 	tok, err := auth.AccessToken(ctx, issuer)
@@ -96,7 +96,7 @@ func TestLiveAppExportKey(t *testing.T) {
 		t.Fatalf("deploy: %v", err)
 	}
 	depID, _ := dep["id"].(string)
-	host := waitDeployed(t, ctx, client, appID, depID)
+	host := waitDeployed(t, ctx, client, issuer, appID, depID)
 	t.Logf("storage app deployed at %s; DEK provisioned", host)
 
 	// 3. Resolve the export target and export the DEK as the owner.
@@ -110,6 +110,10 @@ func TestLiveAppExportKey(t *testing.T) {
 		t.Skip("app DEK requires WebAuthn step-up; needs the wallet relay (out of scope for an ambient-session test)")
 	}
 
+	// Refresh the owner bearer (the deploy wait may have outlived the token TTL).
+	if fresh, ferr := auth.AccessToken(ctx, issuer); ferr == nil && fresh != "" {
+		tok = fresh
+	}
 	attTok, _ := auth.AccessTokenForAudience(ctx, issuer, "attestation-server")
 	key, res, err := secrets.Export(ctx, secrets.ExportParams{
 		Issuer: issuer, Bearer: tok, Sub: sub, Handle: target.Handle,

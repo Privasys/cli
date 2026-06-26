@@ -106,7 +106,7 @@ func TestLiveDeploy(t *testing.T) {
 	t.Logf("deployment %s started", depID)
 
 	// 4. Wait for the deployment to come up.
-	host := waitDeployed(t, ctx, client, appID, depID)
+	host := waitDeployed(t, ctx, client, issuer, appID, depID)
 	t.Logf("deployment active at %s", host)
 
 	// 5. Verify it by attestation (real RA-TLS challenge + quote check).
@@ -125,10 +125,16 @@ func TestLiveDeploy(t *testing.T) {
 }
 
 // waitDeployed polls until the deployment is active and returns its hostname.
-func waitDeployed(t *testing.T, ctx context.Context, client *api.Client, appID, depID string) string {
+// It refreshes the client's access token each poll so a long deploy outlives the
+// token TTL.
+func waitDeployed(t *testing.T, ctx context.Context, client *api.Client, issuer, appID, depID string) string {
 	t.Helper()
-	deadline := time.Now().Add(6 * time.Minute)
+	deadline := time.Now().Add(10 * time.Minute)
+	lastStatus := ""
 	for {
+		if tok, terr := auth.AccessToken(ctx, issuer); terr == nil && tok != "" {
+			client.Token = tok
+		}
 		deps, err := client.ListDeployments(ctx, appID)
 		if err != nil {
 			t.Fatalf("list deployments: %v", err)
@@ -137,7 +143,12 @@ func waitDeployed(t *testing.T, ctx context.Context, client *api.Client, appID, 
 			if id, _ := d["id"].(string); id != depID {
 				continue
 			}
-			switch st, _ := d["status"].(string); st {
+			st, _ := d["status"].(string)
+			if st != lastStatus {
+				t.Logf("deployment %s: status=%q", depID, st)
+				lastStatus = st
+			}
+			switch st {
 			case "active", "deployed", "running":
 				if h, err := client.ActiveDeploymentHost(ctx, appID); err == nil && h != "" {
 					return h
