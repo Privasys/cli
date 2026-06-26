@@ -5,6 +5,9 @@ package live
 
 import (
 	"context"
+	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,20 +41,30 @@ func TestLiveSecretsCreate(t *testing.T) {
 	}
 	attTok, _ := auth.AccessTokenForAudience(ctx, issuer, "attestation-server")
 
+	endpoints := secrets.DefaultEndpoints
+	mrenclave := secrets.DefaultMRENCLAVE
+	if v := os.Getenv("PRIVASYS_E2E_VAULTS"); v != "" {
+		endpoints = strings.Split(v, ",")
+	}
+	if v := os.Getenv("PRIVASYS_E2E_VAULT_MRENCLAVE"); v != "" {
+		mrenclave = v
+	}
+	threshold := 2
+	if v := os.Getenv("PRIVASYS_E2E_VAULT_THRESHOLD"); v != "" {
+		threshold, _ = strconv.Atoi(v)
+	}
+
 	name := "e2e-secret-" + randHex(4)
 	res, err := secrets.Create(ctx, secrets.CreateParams{
 		Issuer: issuer, Bearer: tok, Sub: sub,
 		Handle:     "users/" + sub + "/" + name,
 		Secret:     []byte("e2e-secret-value-" + name),
 		Exportable: true,
-		Endpoints: []string{
-			"141.94.219.130:8443", "141.94.219.130:8444",
-			"198.244.201.58:8443", "198.244.201.58:8444",
-		},
-		Threshold: 2,
-		MRENCLAVE: "7f45fa40256be86a6faf9b2b03ffa69984e8b9d8e4e016614d81a31221cbfcb2",
-		AttServer: "https://as.privasys.org/verify",
-		AttToken:  attTok,
+		Endpoints:  endpoints,
+		Threshold:  threshold,
+		MRENCLAVE:  mrenclave,
+		AttServer:  "https://as.privasys.org/verify",
+		AttToken:   attTok,
 	})
 	if err != nil {
 		t.Fatalf("secrets create: %v", err)
