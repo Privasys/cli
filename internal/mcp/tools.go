@@ -200,6 +200,7 @@ func (s *Server) registerTools() {
 					Handle:    "users/" + sub + "/" + name,
 					Endpoints: secrets.DefaultEndpoints, Threshold: 2,
 					MRENCLAVE: secrets.DefaultMRENCLAVE, AttServer: secrets.DefaultAttServer, AttToken: attTok,
+					RequireStepUp: true,
 					// The agent cannot approve WebAuthn step-up; the human does it in
 					// their wallet. Surfaced as a clear instruction until the wallet
 					// Vault-approvals relay lands.
@@ -218,6 +219,59 @@ func (s *Server) registerTools() {
 					return nil, werr
 				}
 				// Return path + fingerprint only — never the material.
+				return map[string]interface{}{
+					"path": out, "fingerprint": res.Fingerprint,
+					"handle": res.Handle, "vaults": res.Retrieved, "written": true,
+				}, nil
+			},
+		},
+		{
+			Name: "apps_export_key",
+			Description: "Export an app's data encryption key (owned by the signed-in app owner) to a LOCAL FILE. DANGEROUS: writes raw key material to disk. " +
+				"The key is NEVER returned to you — only the file path and a fingerprint. Confirm with the human first. " +
+				"Depending on policy this may require a WebAuthn step-up the owner approves in their wallet; you cannot approve it.",
+			Schema: obj(map[string]interface{}{
+				"app_id": strProp("the app id"),
+				"out":    strProp("local file path to write the raw key to (required)"),
+			}, "app_id", "out"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				appID, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				out, err := requireStr(args, "out")
+				if err != nil {
+					return nil, err
+				}
+				claims, err := auth.Claims(d.Token)
+				if err != nil {
+					return nil, err
+				}
+				sub, _ := claims["sub"].(string)
+				target, err := d.Client.GetVaultExportTarget(ctx, appID)
+				if err != nil {
+					return nil, err
+				}
+				attTok, _ := auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")
+				material, res, err := secrets.Export(ctx, secrets.ExportParams{
+					Issuer: d.Issuer, Bearer: d.Token, Sub: sub, Handle: target.Handle,
+					Endpoints: target.Endpoints, Threshold: target.Threshold,
+					MRENCLAVE: target.MRENCLAVE, AttServer: target.AttestationServer, AttToken: attTok,
+					RequireStepUp: target.RequireStepUp,
+					Assert: func(context.Context, []byte) ([]byte, error) {
+						return nil, errors.New("export needs WebAuthn step-up: the owner must approve it in the Privasys Wallet under Vault approvals")
+					},
+				})
+				if err != nil {
+					return nil, err
+				}
+				werr := os.WriteFile(out, material, 0o600)
+				for i := range material {
+					material[i] = 0
+				}
+				if werr != nil {
+					return nil, werr
+				}
 				return map[string]interface{}{
 					"path": out, "fingerprint": res.Fingerprint,
 					"handle": res.Handle, "vaults": res.Retrieved, "written": true,

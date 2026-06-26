@@ -162,16 +162,17 @@ func userKeyPolicyJSON(issuer, sub string, exportable bool) json.RawMessage {
 // Assert); the key material is reconstructed from the vault shares in memory and
 // returned only to the caller (never logged or printed).
 type ExportParams struct {
-	Issuer    string           // IdP origin
-	Bearer    string           // the user's access token (owner)
-	Sub       string           // the user's subject (owner of the key)
-	Handle    string           // vault key handle (users/<sub>/...)
-	Endpoints []string         // constellation vault endpoints (host:port)
-	Threshold int              // Shamir k (vaults needed to reconstruct)
-	MRENCLAVE string           // expected vault MRENCLAVE (hex)
-	AttServer string           // attestation server verify endpoint
-	AttToken  string           // aud=attestation-server bearer for quote verification
-	Assert    StepUpAssertFunc // produces the WebAuthn step-up assertion
+	Issuer        string           // IdP origin
+	Bearer        string           // the user's access token (owner)
+	Sub           string           // the user's subject (owner of the key)
+	Handle        string           // vault key handle (users/<sub>/...)
+	Endpoints     []string         // constellation vault endpoints (host:port)
+	Threshold     int              // Shamir k (vaults needed to reconstruct)
+	MRENCLAVE     string           // expected vault MRENCLAVE (hex)
+	AttServer     string           // attestation server verify endpoint
+	AttToken      string           // aud=attestation-server bearer for quote verification
+	RequireStepUp bool             // when set, drive an operation-bound WebAuthn step-up (Assert)
+	Assert        StepUpAssertFunc // produces the WebAuthn step-up assertion
 }
 
 // ExportResult summarises an export (no key material).

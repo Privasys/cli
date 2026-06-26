@@ -155,7 +155,7 @@ func TestLiveSecretsExport(t *testing.T) {
 		Issuer: issuer, Bearer: tok, Sub: sub, Handle: handle,
 		Endpoints: endpoints, Threshold: threshold, MRENCLAVE: mrenclave,
 		AttServer: "https://as.privasys.org/verify", AttToken: attTok,
-		Assert: wallet.AssertStepUp,
+		RequireStepUp: true, Assert: wallet.AssertStepUp,
 	})
 	if err != nil {
 		t.Fatalf("secrets export: %v", err)

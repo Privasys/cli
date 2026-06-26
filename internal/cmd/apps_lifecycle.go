@@ -18,6 +18,7 @@ import (
 	"github.com/Privasys/cli/internal/auth"
 	"github.com/Privasys/cli/internal/output"
 	"github.com/Privasys/cli/internal/ratls"
+	"github.com/Privasys/cli/internal/secrets"
 )
 
 func newAppsCreateCmd() *cobra.Command {
@@ -651,6 +652,93 @@ generation authorises).`,
 	}
 	cmd.Flags().StringVar(&enclaveID, "enclave", "", "enclave the app runs on (default: the only compatible one)")
 	cmd.Flags().BoolVar(&yes, "yes", false, "rotate without an interactive confirmation")
+	return cmd
+}
+
+// newAppsExportKeyCmd exports a vault-backed app's data encryption key to a
+// local file (the owner taking their key out — portability / escrow).
+func newAppsExportKeyCmd() *cobra.Command {
+	var out string
+	cmd := &cobra.Command{
+		Use:   "export-key <app>",
+		Short: "Export your app's data encryption key to a local file (DANGEROUS)",
+		Long: `Exports the vault-held key that protects your app's encrypted storage and writes
+the raw key to a local file. The vaults each return only their share; the key is
+reconstructed on your machine. This is YOUR key — export it for escrow, backup,
+or to move your data off-platform.
+
+DANGER: this writes raw key material to disk. The material is never printed and
+never leaves your machine through this CLI. Depending on policy, export may
+require a fresh WebAuthn step-up from your wallet/passkey.
+
+The file is written with 0600 permissions; the command prints only the path and
+a fingerprint, never the key.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if out == "" {
+				return fmt.Errorf("--out <file> is required (the key is written to a local file only)")
+			}
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			appID, err := resolveAppID(ctx, client, args[0])
+			if err != nil {
+				return err
+			}
+			target, err := client.GetVaultExportTarget(ctx, appID)
+			if err != nil {
+				return err
+			}
+			tok, err := auth.AccessToken(ctx, env.Cfg.Issuer)
+			if err != nil {
+				return err
+			}
+			claims, err := auth.Claims(tok)
+			if err != nil {
+				return err
+			}
+			sub, _ := claims["sub"].(string)
+			attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
+
+			material, res, err := secrets.Export(ctx, secrets.ExportParams{
+				Issuer: env.Cfg.Issuer, Bearer: tok, Sub: sub, Handle: target.Handle,
+				Endpoints: target.Endpoints, Threshold: target.Threshold,
+				MRENCLAVE: target.MRENCLAVE, AttServer: target.AttestationServer, AttToken: attTok,
+				RequireStepUp: target.RequireStepUp, Assert: walletStepUpApprover(),
+			})
+			if err != nil {
+				return err
+			}
+			werr := os.WriteFile(out, material, 0o600)
+			for i := range material {
+				material[i] = 0
+			}
+			if werr != nil {
+				return fmt.Errorf("write %s: %w", out, werr)
+			}
+			if !env.Quiet {
+				output.Success(cmd.ErrOrStderr(), "Wrote %s (%d/%d vaults, %s)",
+					out, res.Retrieved, res.Total, res.Fingerprint)
+			}
+			return output.Emit(env.Format, map[string]interface{}{
+				"handle": res.Handle, "path": out, "fingerprint": res.Fingerprint,
+				"vaults": res.Retrieved, "written": true,
+			}, func() output.Table {
+				return output.Table{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
+					{"handle", res.Handle},
+					{"path", out},
+					{"fingerprint", res.Fingerprint},
+				}}
+			})
+		},
+	}
+	cmd.Flags().StringVar(&out, "out", "", "write the raw key to this local file (required)")
 	return cmd
 }
 

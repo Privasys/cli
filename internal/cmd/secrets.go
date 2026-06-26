@@ -184,7 +184,8 @@ a fingerprint, never the key.`,
 			material, res, err := secrets.Export(ctx, secrets.ExportParams{
 				Issuer: env.Cfg.Issuer, Bearer: tok, Sub: sub, Handle: handle,
 				Endpoints: endpoints, Threshold: threshold, MRENCLAVE: mrenclave,
-				AttServer: attServer, AttToken: attTok, Assert: walletStepUpApprover(),
+				AttServer: attServer, AttToken: attTok,
+				RequireStepUp: true, Assert: walletStepUpApprover(),
 			})
 			if err != nil {
 				return err

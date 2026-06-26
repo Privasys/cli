@@ -76,6 +76,27 @@ func (c *Client) UpdateStoreListing(ctx context.Context, id string, fields map[s
 	return out, nil
 }
 
+// VaultExportTarget describes where an app's owner-exportable data key lives,
+// so the CLI can export it directly from the vaults over RA-TLS.
+type VaultExportTarget struct {
+	Handle            string   `json:"handle"`
+	Endpoints         []string `json:"endpoints"`
+	MRENCLAVE         string   `json:"mrenclave"`
+	AttestationServer string   `json:"attestation_server"`
+	Threshold         int      `json:"threshold"`
+	RequireStepUp     bool     `json:"require_step_up"`
+}
+
+// GetVaultExportTarget resolves the vault target for exporting an app's data
+// key (GET /apps/{id}/vault-export-target). Owner-only on the server.
+func (c *Client) GetVaultExportTarget(ctx context.Context, id string) (*VaultExportTarget, error) {
+	var out VaultExportTarget
+	if err := c.do(ctx, http.MethodGet, "/api/v1/apps/"+id+"/vault-export-target", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // DeleteApp deletes an app by id.
 func (c *Client) DeleteApp(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/api/v1/apps/"+id, nil, nil)

@@ -40,32 +40,38 @@ func Export(ctx context.Context, p ExportParams) ([]byte, *ExportResult, error) 
 		},
 	}
 
-	// 1. Read the key's current policy_version (a read; the owner bearer suffices,
-	//    no step-up) so the step-up token binds the right version.
-	reg := vault.VaultRegistration{ID: p.Endpoints[0], Endpoint: p.Endpoints[0], Status: "static"}
-	c, err := vault.Dial(ctx, reg, vault.DialOptions{
-		VaultPolicy: verify,
-		AuthToken:   vault.StaticToken(p.Bearer),
-	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("dial vault for key info: %w", err)
-	}
-	info, err := c.GetKeyInfo(ctx, p.Handle)
-	c.Close()
-	if err != nil {
-		return nil, nil, fmt.Errorf("get key info: %w", err)
+	// The owner authenticates with their bearer; when the key's policy gates
+	// ExportKey on a WebAuthn step-up, swap in a fresh, operation-bound step-up
+	// token (which also carries the owner sub, so it satisfies the owner
+	// principal AND the OidcStepUp condition in one token).
+	authTok := p.Bearer
+	if p.RequireStepUp {
+		// Read the key's current policy_version (a read; the owner bearer
+		// suffices) so the step-up token binds the right version.
+		reg := vault.VaultRegistration{ID: p.Endpoints[0], Endpoint: p.Endpoints[0], Status: "static"}
+		c, err := vault.Dial(ctx, reg, vault.DialOptions{
+			VaultPolicy: verify,
+			AuthToken:   vault.StaticToken(p.Bearer),
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("dial vault for key info: %w", err)
+		}
+		info, err := c.GetKeyInfo(ctx, p.Handle)
+		c.Close()
+		if err != nil {
+			return nil, nil, fmt.Errorf("get key info: %w", err)
+		}
+		stepTok, err := requestExportStepUp(ctx, p.Issuer, p.Bearer, p.Handle, info.PolicyVersion, p.Assert)
+		if err != nil {
+			return nil, nil, err
+		}
+		authTok = stepTok
 	}
 
-	// 2. Operation-bound WebAuthn step-up for THIS export.
-	stepTok, err := requestExportStepUp(ctx, p.Issuer, p.Bearer, p.Handle, info.PolicyVersion, p.Assert)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// 3. Export shares as the owner, presenting the step-up token, and reconstruct.
+	// Export shares as the owner and reconstruct.
 	con := vault.NewStaticConstellation(p.Endpoints, vault.DialOptions{
 		VaultPolicy: verify,
-		AuthToken:   vault.StaticToken(stepTok),
+		AuthToken:   vault.StaticToken(authTok),
 	})
 	secret, results, err := con.ExportKeyShares(ctx, p.Handle, p.Threshold)
 	if err != nil {
