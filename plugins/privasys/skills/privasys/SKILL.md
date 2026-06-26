@@ -43,6 +43,7 @@ The signing key never leaves the wallet; you never see it. Never ask the user to
 - `apps_rotate_key` rotates the key without re-encrypting the data; `apps_cosign` requires a second team approver on promote (separation of duties).
 - `apps export-key` lets the owner take their key out. **DANGER:** it writes the key to a *local file only*. Never request, echo, log, or pass the key material anywhere it could reach a model or service. Confirm with the human first.
 - `secrets_create` makes a user-owned key in the vault (Shamir-split; the platform never holds it). It generates random material — you never see or handle the secret bytes.
+- `secrets_export` writes a secret the owner owns to a **local file only** and returns just a path + fingerprint — never the key. It is **dangerous** (raw key to disk) and requires a fresh WebAuthn step-up the owner approves in their wallet; you cannot approve it. Confirm with the human first.
 
 ## The rule that matters
 

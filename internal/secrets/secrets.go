@@ -106,14 +106,39 @@ func generateClientCert(sub string) (*tls.Certificate, string, error) {
 	return cert, base64.RawURLEncoding.EncodeToString(sum[:]), nil
 }
 
+// stepUpFreshSeconds is how recently the owner must have completed a WebAuthn
+// step-up for the vault to honour an ExportKey. Keep it short: export is the
+// dangerous read.
+const stepUpFreshSeconds = 300
+
 // userKeyPolicyJSON builds the per-key policy as the JSON the vault expects:
-// owner = Oidc{privasys.id, sub}; the owner may export, delete and update; the
-// owner principal is immutable. Hand-built (no SDK import) so this stays in the
-// plain-Go path.
+// owner = Oidc{privasys.id, sub}; the owner may delete and update; the owner
+// principal is immutable. When exportable, ExportKey is its own rule gated on a
+// fresh, operation-bound WebAuthn step-up (Condition::OidcStepUp), so a leaked
+// owner bearer alone cannot export — the owner must additionally prove a fresh
+// wallet assertion bound to this exact export. Hand-built (no SDK import) so
+// this stays in the plain-Go path.
 func userKeyPolicyJSON(issuer, sub string, exportable bool) json.RawMessage {
-	ops := []string{"DeleteKey", "UpdatePolicy"}
+	operations := []interface{}{
+		map[string]interface{}{
+			"ops":        []string{"DeleteKey", "UpdatePolicy"},
+			"principals": []string{"Owner"},
+		},
+	}
 	if exportable {
-		ops = append([]string{"ExportKey"}, ops...)
+		operations = append(operations, map[string]interface{}{
+			"ops":        []string{"ExportKey"},
+			"principals": []string{"Owner"},
+			"requires": []interface{}{
+				map[string]interface{}{
+					"OidcStepUp": map[string]interface{}{
+						"required_amr":      []string{"webauthn"},
+						"operation_bound":   true,
+						"fresh_for_seconds": stepUpFreshSeconds,
+					},
+				},
+			},
+		})
 	}
 	policy := map[string]interface{}{
 		"version": 1,
@@ -122,13 +147,44 @@ func userKeyPolicyJSON(issuer, sub string, exportable bool) json.RawMessage {
 				"Oidc": map[string]interface{}{"issuer": issuer, "sub": sub},
 			},
 		},
-		"operations": []interface{}{
-			map[string]interface{}{"ops": ops, "principals": []string{"Owner"}},
-		},
+		"operations": operations,
 		"mutability": map[string]interface{}{"immutable": []string{"Owner"}},
 	}
 	b, _ := json.Marshal(policy)
 	return b
+}
+
+// ExportParams carries everything needed to export a user secret. Authn is the
+// owner OIDC bearer plus a fresh, operation-bound WebAuthn step-up (driven via
+// Assert); the key material is reconstructed from the vault shares in memory and
+// returned only to the caller (never logged or printed).
+type ExportParams struct {
+	Issuer    string           // IdP origin
+	Bearer    string           // the user's access token (owner)
+	Sub       string           // the user's subject (owner of the key)
+	Handle    string           // vault key handle (users/<sub>/...)
+	Endpoints []string         // constellation vault endpoints (host:port)
+	Threshold int              // Shamir k (vaults needed to reconstruct)
+	MRENCLAVE string           // expected vault MRENCLAVE (hex)
+	AttServer string           // attestation server verify endpoint
+	AttToken  string           // aud=attestation-server bearer for quote verification
+	Assert    StepUpAssertFunc // produces the WebAuthn step-up assertion
+}
+
+// ExportResult summarises an export (no key material).
+type ExportResult struct {
+	Handle      string `json:"handle"`
+	Retrieved   int    `json:"retrieved"` // vaults that returned a share
+	Total       int    `json:"total"`
+	Threshold   int    `json:"threshold"`
+	Fingerprint string `json:"fingerprint"` // sha256: of the reconstructed key
+}
+
+// fingerprint returns a non-reversible identifier for key material so a caller
+// can confirm WHICH key was exported without revealing it.
+func fingerprint(material []byte) string {
+	sum := sha256.Sum256(material)
+	return "sha256:" + base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 // grantRequest mirrors the IdP's POST /vault/key-creation-grant body.

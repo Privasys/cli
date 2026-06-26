@@ -23,29 +23,42 @@ func TestUserKeyPolicyJSON(t *testing.T) {
 	if owner["issuer"] != "https://privasys.id" || owner["sub"] != "user-1" {
 		t.Fatalf("owner principal = %v", owner)
 	}
-	ops := p["operations"].([]interface{})[0].(map[string]interface{})
-	if got := ops["principals"].([]interface{})[0]; got != "Owner" {
-		t.Fatalf("operation principal = %v, want \"Owner\"", got)
-	}
-	foundExport := false
-	for _, o := range ops["ops"].([]interface{}) {
-		if o == "ExportKey" {
-			foundExport = true
+	// ExportKey lives in its own rule, gated on a fresh, operation-bound
+	// WebAuthn step-up.
+	var exportRule map[string]interface{}
+	for _, o := range p["operations"].([]interface{}) {
+		rule := o.(map[string]interface{})
+		for _, op := range rule["ops"].([]interface{}) {
+			if op == "ExportKey" {
+				exportRule = rule
+			}
 		}
 	}
-	if !foundExport {
-		t.Error("exportable policy should grant the owner ExportKey")
+	if exportRule == nil {
+		t.Fatal("exportable policy should grant the owner ExportKey")
+	}
+	if got := exportRule["principals"].([]interface{})[0]; got != "Owner" {
+		t.Fatalf("export principal = %v, want \"Owner\"", got)
+	}
+	stepUp := exportRule["requires"].([]interface{})[0].(map[string]interface{})["OidcStepUp"].(map[string]interface{})
+	if stepUp["operation_bound"] != true {
+		t.Error("export step-up must be operation_bound")
+	}
+	if amr := stepUp["required_amr"].([]interface{})[0]; amr != "webauthn" {
+		t.Errorf("export step-up amr = %v, want webauthn", amr)
 	}
 	if im := p["mutability"].(map[string]interface{})["immutable"].([]interface{})[0]; im != "Owner" {
 		t.Errorf("owner principal must be immutable, got %v", im)
 	}
 
-	// A non-exportable policy must not grant ExportKey.
+	// A non-exportable policy must not grant ExportKey anywhere.
 	var p2 map[string]interface{}
 	_ = json.Unmarshal(userKeyPolicyJSON("https://privasys.id", "u", false), &p2)
-	for _, o := range p2["operations"].([]interface{})[0].(map[string]interface{})["ops"].([]interface{}) {
-		if o == "ExportKey" {
-			t.Error("non-exportable policy must not grant ExportKey")
+	for _, o := range p2["operations"].([]interface{}) {
+		for _, op := range o.(map[string]interface{})["ops"].([]interface{}) {
+			if op == "ExportKey" {
+				t.Error("non-exportable policy must not grant ExportKey")
+			}
 		}
 	}
 }

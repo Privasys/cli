@@ -37,6 +37,7 @@ type Wallet struct {
 	cred       virtualwebauthn.Credential
 	userHandle []byte
 	hc         *http.Client
+	rp         virtualwebauthn.RelyingParty // set at registration; reused for assertions
 }
 
 // New creates a fresh wallet identity (a new P-256 credential + user handle).
@@ -135,7 +136,26 @@ func (w *Wallet) register(ctx context.Context, idpURL string, rp virtualwebauthn
 		return fmt.Errorf("register/complete: %w", err)
 	}
 	w.auth.AddCredential(w.cred)
+	w.rp = rp
 	return nil
+}
+
+// AssertStepUp signs a WebAuthn assertion for the given options with this
+// wallet's credential. It matches secrets.StepUpAssertFunc, so the CLI's export
+// flow can hand it the IdP's /fido2/vault-approval/begin options and get back
+// the assertion body the /complete step expects — exactly what the Privasys
+// Wallet's "Vault approvals" screen will do for a human. The wallet must have
+// registered first (ApproveDevice), so its credential exists for the user.
+func (w *Wallet) AssertStepUp(_ context.Context, optionsJSON []byte) ([]byte, error) {
+	if w.rp.ID == "" {
+		return nil, fmt.Errorf("wallet has no registered credential; call ApproveDevice first")
+	}
+	opts, err := virtualwebauthn.ParseAssertionOptions(string(optionsJSON))
+	if err != nil {
+		return nil, fmt.Errorf("parse assertion options: %w", err)
+	}
+	resp := virtualwebauthn.CreateAssertionResponse(w.rp, w.auth, w.cred, *opts)
+	return []byte(resp), nil
 }
 
 // --- HTTP helpers ---
