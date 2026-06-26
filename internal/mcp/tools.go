@@ -6,12 +6,14 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"time"
 
 	"github.com/Privasys/cli/internal/auth"
 	"github.com/Privasys/cli/internal/ratls"
+	"github.com/Privasys/cli/internal/secrets"
 )
 
 var (
@@ -121,6 +123,48 @@ func (s *Server) registerTools() {
 					return nil, err
 				}
 				return map[string]interface{}{"checkout_url": url, "available": ok}, nil
+			},
+		},
+		{
+			Name:        "secrets_create",
+			Description: "Create a user-owned secret (key) in the vault constellation for the signed-in user. Generates RANDOM material — the agent never sees or handles the secret bytes; the owner can export it later. The key is Shamir-split across the vaults; the platform never holds it.",
+			Schema: obj(map[string]interface{}{
+				"name":         strProp("secret name (created under your own namespace)"),
+				"random_bytes": intProp("bytes of randomness to generate (default 32)"),
+				"exportable":   boolProp("allow the owner to export it later (default true)"),
+			}, "name"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				name, err := requireStr(args, "name")
+				if err != nil {
+					return nil, err
+				}
+				claims, err := auth.Claims(d.Token)
+				if err != nil {
+					return nil, err
+				}
+				sub, _ := claims["sub"].(string)
+				if sub == "" {
+					return nil, errors.New("could not determine your subject from the session")
+				}
+				n := argInt(args, "random_bytes")
+				if n <= 0 {
+					n = 32
+				}
+				material := make([]byte, n)
+				if _, err := rand.Read(material); err != nil {
+					return nil, err
+				}
+				exportable := true
+				if v, ok := args["exportable"].(bool); ok {
+					exportable = v
+				}
+				attTok, _ := auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")
+				return secrets.Create(ctx, secrets.CreateParams{
+					Issuer: d.Issuer, Bearer: d.Token, Sub: sub,
+					Handle: "users/" + sub + "/" + name, Secret: material, Exportable: exportable,
+					Endpoints: secrets.DefaultEndpoints, Threshold: 2,
+					MRENCLAVE: secrets.DefaultMRENCLAVE, AttServer: secrets.DefaultAttServer, AttToken: attTok,
+				})
 			},
 		},
 		{

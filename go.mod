@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	enclave-os-mini/clients/go v0.0.0
+	github.com/Privasys/enclave-vaults-client/go v0.0.0-00010101000000-000000000000
 	github.com/descope/virtualwebauthn v1.0.5
 	github.com/go-webauthn/webauthn v0.17.4
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
@@ -34,3 +35,5 @@ require (
 	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
 )
+
+replace github.com/Privasys/enclave-vaults-client/go => ../enclave-vaults-client/go

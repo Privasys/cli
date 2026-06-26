@@ -39,6 +39,12 @@ jobs:
           repository: Privasys/ra-tls-clients
           path: ra-tls-clients
 
+      - name: Checkout enclave-vaults-client (sibling for the go.mod replace)
+        uses: actions/checkout@v5
+        with:
+          repository: Privasys/enclave-vaults-client
+          path: enclave-vaults-client
+
       - name: Install Go RA-TLS fork
         run: |
           curl -sL "https://github.com/Privasys/go/releases/download/${GO_RATLS_VERSION}/go-ratls-${GO_RATLS_VERSION}-linux-amd64.tar.gz" \
