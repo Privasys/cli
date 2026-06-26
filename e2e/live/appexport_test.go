@@ -96,33 +96,50 @@ func TestLiveAppExportKey(t *testing.T) {
 		t.Fatalf("deploy: %v", err)
 	}
 	depID, _ := dep["id"].(string)
-	host := waitDeployed(t, ctx, client, issuer, appID, depID)
-	t.Logf("storage app deployed at %s; DEK provisioned", host)
+	t.Logf("deployment %s started; polling for the DEK to become exportable", depID)
 
-	// 3. Resolve the export target and export the DEK as the owner.
-	target, err := client.GetVaultExportTarget(ctx, appID)
-	if err != nil {
-		t.Fatalf("vault-export-target: %v", err)
-	}
-	t.Logf("export target: handle=%s vaults=%d threshold=%d step_up=%v",
-		target.Handle, len(target.Endpoints), target.Threshold, target.RequireStepUp)
-	if target.RequireStepUp {
-		t.Skip("app DEK requires WebAuthn step-up; needs the wallet relay (out of scope for an ambient-session test)")
-	}
-
-	// Refresh the owner bearer (the deploy wait may have outlived the token TTL).
-	if fresh, ferr := auth.AccessToken(ctx, issuer); ferr == nil && fresh != "" {
-		tok = fresh
-	}
-	attTok, _ := auth.AccessTokenForAudience(ctx, issuer, "attestation-server")
-	key, res, err := secrets.Export(ctx, secrets.ExportParams{
-		Issuer: issuer, Bearer: tok, Sub: sub, Handle: target.Handle,
-		Endpoints: target.Endpoints, Threshold: target.Threshold,
-		MRENCLAVE: target.MRENCLAVE, AttServer: target.AttestationServer, AttToken: attTok,
-		RequireStepUp: target.RequireStepUp,
-	})
-	if err != nil {
-		t.Fatalf("apps export-key: %v", err)
+	// 3. Export the DEK as the owner. The DEK is created during encrypted-volume
+	// setup (well before the container is "active"), so we poll the export rather
+	// than waiting for "active" — which depends on the app image's health check,
+	// not on the data key. Refresh the bearer each attempt (long deploys outlive
+	// the token TTL).
+	deadline := time.Now().Add(6 * time.Minute)
+	var key []byte
+	var res *secrets.ExportResult
+	var lastErr error
+	for {
+		if fresh, ferr := auth.AccessToken(ctx, issuer); ferr == nil && fresh != "" {
+			tok = fresh
+			client.Token = tok
+		}
+		target, terr := client.GetVaultExportTarget(ctx, appID)
+		if terr != nil {
+			lastErr = terr
+		} else if target.RequireStepUp {
+			t.Skip("app DEK requires WebAuthn step-up; needs the wallet relay (out of scope for an ambient-session test)")
+		} else {
+			attTok, _ := auth.AccessTokenForAudience(ctx, issuer, "attestation-server")
+			k, r, eerr := secrets.Export(ctx, secrets.ExportParams{
+				Issuer: issuer, Bearer: tok, Sub: sub, Handle: target.Handle,
+				Endpoints: target.Endpoints, Threshold: target.Threshold,
+				MRENCLAVE: target.MRENCLAVE, AttServer: target.AttestationServer, AttToken: attTok,
+				RequireStepUp:  target.RequireStepUp,
+				GenerationSize: secrets.AppDEKGenerationSize,
+			})
+			if eerr == nil {
+				key, res = k, r
+				break
+			}
+			lastErr = eerr
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("DEK never became exportable: %v", lastErr)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("context cancelled: %v", ctx.Err())
+		case <-time.After(10 * time.Second):
+		}
 	}
 	if len(key) == 0 {
 		t.Fatal("exported an empty key")

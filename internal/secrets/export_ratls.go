@@ -68,12 +68,20 @@ func Export(ctx context.Context, p ExportParams) ([]byte, *ExportResult, error) 
 		authTok = stepTok
 	}
 
-	// Export shares as the owner and reconstruct.
+	// Export shares as the owner and reconstruct. App volume DEKs are stored as
+	// generation-prefixed shares (the manager's KEK-rotation layout); user
+	// secrets are raw shares.
 	con := vault.NewStaticConstellation(p.Endpoints, vault.DialOptions{
 		VaultPolicy: verify,
 		AuthToken:   vault.StaticToken(authTok),
 	})
-	secret, results, err := con.ExportKeyShares(ctx, p.Handle, p.Threshold)
+	var secret []byte
+	var results []vault.EndpointResult
+	if p.GenerationSize > 0 {
+		secret, results, err = con.ExportKeyGenerationShares(ctx, p.Handle, p.Threshold, p.GenerationSize)
+	} else {
+		secret, results, err = con.ExportKeyShares(ctx, p.Handle, p.Threshold)
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("export key shares: %w", err)
 	}

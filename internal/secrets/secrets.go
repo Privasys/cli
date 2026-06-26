@@ -157,6 +157,11 @@ func userKeyPolicyJSON(issuer, sub string, exportable bool) json.RawMessage {
 	return b
 }
 
+// AppDEKGenerationSize is the byte length of the generation prefix the
+// enclave-os manager prepends to each app volume-DEK share (its `generationSize`
+// const). App-DEK exports set ExportParams.GenerationSize to this.
+const AppDEKGenerationSize = 16
+
 // ExportParams carries everything needed to export a user secret. Authn is the
 // owner OIDC bearer plus a fresh, operation-bound WebAuthn step-up (driven via
 // Assert); the key material is reconstructed from the vault shares in memory and
@@ -173,6 +178,10 @@ type ExportParams struct {
 	AttToken      string           // aud=attestation-server bearer for quote verification
 	RequireStepUp bool             // when set, drive an operation-bound WebAuthn step-up (Assert)
 	Assert        StepUpAssertFunc // produces the WebAuthn step-up assertion
+	// GenerationSize > 0 means the per-vault material is generation-prefixed
+	// (`generation(GenerationSize) || share`), the layout the enclave-os manager
+	// uses for app volume DEKs. 0 (default) = raw shares (user secrets).
+	GenerationSize int
 }
 
 // ExportResult summarises an export (no key material).

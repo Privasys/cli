@@ -711,6 +711,7 @@ a fingerprint, never the key.`,
 				Endpoints: target.Endpoints, Threshold: target.Threshold,
 				MRENCLAVE: target.MRENCLAVE, AttServer: target.AttestationServer, AttToken: attTok,
 				RequireStepUp: target.RequireStepUp, Assert: walletStepUpApprover(),
+				GenerationSize: secrets.AppDEKGenerationSize,
 			})
 			if err != nil {
 				return err

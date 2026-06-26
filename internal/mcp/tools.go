@@ -257,7 +257,8 @@ func (s *Server) registerTools() {
 					Issuer: d.Issuer, Bearer: d.Token, Sub: sub, Handle: target.Handle,
 					Endpoints: target.Endpoints, Threshold: target.Threshold,
 					MRENCLAVE: target.MRENCLAVE, AttServer: target.AttestationServer, AttToken: attTok,
-					RequireStepUp: target.RequireStepUp,
+					RequireStepUp:  target.RequireStepUp,
+					GenerationSize: secrets.AppDEKGenerationSize,
 					Assert: func(context.Context, []byte) ([]byte, error) {
 						return nil, errors.New("export needs WebAuthn step-up: the owner must approve it in the Privasys Wallet under Vault approvals")
 					},
