@@ -49,7 +49,10 @@ var DefaultEndpoints = []string{
 }
 
 const (
-	DefaultMRENCLAVE = "7f45fa40256be86a6faf9b2b03ffa69984e8b9d8e4e016614d81a31221cbfcb2"
+	// vault-v0.24.0 (grant + operation-bound export step-up), live on the 4 prod
+	// vaults (Paris + London, 8443/8444) since 2026-06-26. Bump this on each prod
+	// vault MRENCLAVE cutover.
+	DefaultMRENCLAVE = "f463b560dfaa4e30fe01165e4feb733eb94463143b0096afd18f83dd7008a9c5"
 	DefaultAttServer = "https://as.privasys.org/verify"
 )
 
