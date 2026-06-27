@@ -32,6 +32,7 @@ func newAuthCmd() *cobra.Command {
 
 func newAuthLoginCmd() *cobra.Command {
 	var noQR bool
+	var force bool
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "Log in with the Privasys Wallet (QR) — the default flow",
@@ -42,6 +43,19 @@ func newAuthLoginCmd() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
+
+			// Short-circuit when a valid (or silently refreshable) session
+			// already exists, so re-running `login` doesn't start a fresh wallet
+			// approval the user then has to complete for nothing. `--force`
+			// re-authenticates regardless.
+			if !force {
+				if tok, aerr := auth.AccessToken(ctx, env.Cfg.Issuer); aerr == nil && tok != "" {
+					output.Success(cmd.OutOrStdout(),
+						"Already logged in%s (use --force to re-authenticate)", whom(subjectOf(tok)))
+					return nil
+				}
+			}
+
 			dr, verifier, err := auth.BeginDevice(ctx, env.Cfg.Issuer, auth.DefaultScope, "")
 			if err != nil {
 				return err
@@ -69,6 +83,7 @@ func newAuthLoginCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&noQR, "no-qr", false, "do not render the QR code")
+	cmd.Flags().BoolVar(&force, "force", false, "re-authenticate even if already logged in")
 	return cmd
 }
 
