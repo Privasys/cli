@@ -61,6 +61,7 @@ func NewRoot() *cobra.Command {
 		newAgentsCmd(),
 		newSecretsCmd(),
 		newVaultCmd(),
+		newRegistryCmd(),
 		newVersionCmd(),
 	)
 	return root
