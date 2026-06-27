@@ -36,6 +36,45 @@ The signing key never leaves the wallet; you never see it. Never ask the user to
 4. `attest` — challenge the enclave with a fresh nonce and verify its TEE quote. **Do this before trusting the endpoint.**
 5. `apps_call` — invoke an app API directly over RA-TLS (the control plane is not in the data path; responses stream).
 
+## Running the user's own backend confidentially
+
+Most users already have a backend (or want to write one). Your job is to make
+their container run confidentially — you do **not** rewrite their app. Any
+container works if it follows three rules; check/adjust the user's Dockerfile and
+app for them:
+
+1. **Listen on `$PORT`.** The platform runs containers on the host network and
+   injects a unique `$PORT`; the app must bind it (a hardcoded port fails the
+   health probe). Fix code that hardcodes a port to read `$PORT`.
+2. **Persist state to `/data`.** `/data` is the per-app encrypted volume (key
+   from the vault, reconstructed in the enclave). Point databases/state there
+   (e.g. Postgres `PGDATA=/data/pgdata`). Anything elsewhere is ephemeral.
+3. **Serve `GET /health` → 200** on `$PORT` (the readiness probe).
+
+Then add a `privasys.json` describing the app's endpoints as tools (so the API
+becomes callable as MCP tools over RA-TLS). See the reference app
+`container-app-confidential-postgres` for a correct example.
+
+### Protecting the user's IP (private images)
+
+A user who guards their IP keeps their **source private** and builds the image
+themselves (their own reproducible build), pushing a **digest-pinned image to a
+private registry**. Privasys then runs that image confidentially and attests its
+digest — **without ever seeing the source, the image bytes, or the registry
+credentials**. The flow:
+
+1. (Human) builds + pushes the private image; gives you the `…@sha256:<digest>`.
+2. `apps_create` with the image ref + `storage: true`; `apps_store_listing`.
+3. **(Human) registers the pull credential:** ask them to run
+   `privasys registry add <app> --token <PAT>` (or `--username/--password`). The
+   token goes straight into the vault; only the attested in-enclave manager can
+   read it, to pull their image. **Never ask for, accept, echo, or pass the
+   registry token yourself** — it is the user's secret, exactly like a password.
+4. `apps_deploy` → the in-enclave manager fetches the credential + data key from
+   the vault, pulls the private image, and runs it. `attest`, then `apps_call`.
+
+If the user is fine with a public image, skip step 3.
+
 ## Securing user data (the data-protection story)
 
 - Encrypted storage is sealed with a **data key that belongs to the user**, generated inside the confidential hardware; the platform never sees it. See `references/data-protection.md`.

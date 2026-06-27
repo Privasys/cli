@@ -226,6 +226,88 @@ func (s *Server) registerTools() {
 			},
 		},
 		{
+			Name:        "vault_create",
+			Description: "Create a user vault (a key container) billed to the signed-in account. Keys + secrets live under it.",
+			Schema:      obj(map[string]interface{}{"name": strProp("vault name")}, "name"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				name, err := requireStr(args, "name")
+				if err != nil {
+					return nil, err
+				}
+				return d.Client.CreateVault(ctx, name)
+			},
+		},
+		{
+			Name:        "vault_list",
+			Description: "List the caller's vaults.",
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				return d.Client.ListVaults(ctx)
+			},
+		},
+		{
+			Name:        "vault_key_create",
+			Description: "Create a key in one of your vaults. Generates RANDOM material — you never see or handle the bytes; the platform never holds it (Shamir-split across the constellation). The owner can export it later.",
+			Schema: obj(map[string]interface{}{
+				"vault_id":   strProp("the vault id"),
+				"name":       strProp("key name (under the vault)"),
+				"exportable": boolProp("allow the owner to export it later (default true)"),
+			}, "vault_id", "name"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				vaultID, err := requireStr(args, "vault_id")
+				if err != nil {
+					return nil, err
+				}
+				name, err := requireStr(args, "name")
+				if err != nil {
+					return nil, err
+				}
+				claims, err := auth.Claims(d.Token)
+				if err != nil {
+					return nil, err
+				}
+				sub, _ := claims["sub"].(string)
+				exportable := true
+				if v, ok := args["exportable"].(bool); ok {
+					exportable = v
+				}
+				material := make([]byte, 32)
+				if _, err := rand.Read(material); err != nil {
+					return nil, err
+				}
+				attTok, _ := auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")
+				return secrets.CreateInVault(ctx, secrets.VaultCreateParams{
+					Sub: sub, Secret: material, Exportable: exportable, AttToken: attTok,
+					MintGrant: func(ctx context.Context, cnf string) (string, secrets.VaultAddressing, error) {
+						r, err := d.Client.MintVaultKeyGrant(ctx, vaultID, name, "", cnf, exportable)
+						if err != nil {
+							return "", secrets.VaultAddressing{}, err
+						}
+						handle, _ := r.Key["handle"].(string)
+						return r.Grant, secrets.VaultAddressing{
+							Handle:    handle,
+							Endpoints: r.Constellation.Endpoints,
+							MRENCLAVE: r.Constellation.MRENCLAVE,
+							AttServer: r.Constellation.AttestationServer,
+							Threshold: r.Constellation.Threshold,
+						}, nil
+					},
+				})
+			},
+		},
+		{
+			Name: "registry_status",
+			Description: "Report whether an app has a private-registry pull credential configured. Read-only. " +
+				"NOTE: registering the credential is a HUMAN step — ask the user to run `privasys registry add <app> --token …`; never handle their registry token yourself.",
+			Schema: obj(map[string]interface{}{"app_id": strProp("the app id")}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				appID, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				return d.Client.GetRegistrySecret(ctx, appID)
+			},
+		},
+		{
 			Name: "apps_export_key",
 			Description: "Export an app's data encryption key (owned by the signed-in app owner) to a LOCAL FILE. DANGEROUS: writes raw key material to disk. " +
 				"The key is NEVER returned to you — only the file path and a fingerprint. Confirm with the human first. " +
