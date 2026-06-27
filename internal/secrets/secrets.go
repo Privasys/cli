@@ -71,6 +71,29 @@ type CreateParams struct {
 	AttToken   string   // aud=attestation-server bearer for quote verification
 }
 
+// VaultAddressing is the constellation a vault key is created on, returned by
+// the platform alongside the grant.
+type VaultAddressing struct {
+	Handle    string
+	Endpoints []string
+	MRENCLAVE string
+	AttServer string
+	Threshold int
+}
+
+// VaultCreateParams creates a key in a user-facing vault using a grant the
+// platform mints (the platform authors the policy + catalogues the key; the
+// agent creates the material). The platform never sees the material.
+type VaultCreateParams struct {
+	Sub        string // the key owner's subject
+	Secret     []byte // the key material
+	Exportable bool
+	AttToken   string // aud=attestation-server bearer for quote verification
+	// MintGrant asks the platform to mint a grant for a key bound to the agent's
+	// holder-of-key cnf, returning the grant and the constellation addressing.
+	MintGrant func(ctx context.Context, cnf string) (grant string, addr VaultAddressing, err error)
+}
+
 // Result summarises a created secret (no key material).
 type Result struct {
 	Handle     string `json:"handle"`

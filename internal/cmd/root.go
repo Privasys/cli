@@ -60,6 +60,7 @@ func NewRoot() *cobra.Command {
 		newMcpCmd(),
 		newAgentsCmd(),
 		newSecretsCmd(),
+		newVaultCmd(),
 		newVersionCmd(),
 	)
 	return root

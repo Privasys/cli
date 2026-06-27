@@ -80,3 +80,67 @@ func Create(ctx context.Context, p CreateParams) (*Result, error) {
 	}
 	return res, nil
 }
+
+// CreateInVault creates a Shamir-split key in a user-facing vault. The platform
+// authors the policy, catalogues the key, and mints a grant bound to the agent's
+// holder-of-key leaf; this then creates the material directly on the
+// constellation. The platform never sees the material.
+func CreateInVault(ctx context.Context, p VaultCreateParams) (*Result, error) {
+	if len(p.Secret) == 0 {
+		return nil, fmt.Errorf("empty secret material")
+	}
+	cert, cnf, err := generateClientCert(p.Sub)
+	if err != nil {
+		return nil, fmt.Errorf("client cert: %w", err)
+	}
+	grant, addr, err := p.MintGrant(ctx, cnf)
+	if err != nil {
+		return nil, err
+	}
+	if len(addr.Endpoints) == 0 {
+		return nil, fmt.Errorf("the platform returned no vault endpoints")
+	}
+	threshold := addr.Threshold
+	if threshold < 1 {
+		threshold = 2
+	}
+	mre, err := hex.DecodeString(addr.MRENCLAVE)
+	if err != nil || len(mre) != 32 {
+		return nil, fmt.Errorf("vault mrenclave must be 32 bytes of hex")
+	}
+	verify := &ratls.VerificationPolicy{
+		TEE:        ratls.TeeTypeSGX,
+		MRENCLAVE:  mre,
+		ReportData: ratls.ReportDataDeterministic,
+		QuoteVerification: &ratls.QuoteVerificationConfig{
+			Endpoint: addr.AttServer,
+			Token:    p.AttToken,
+		},
+	}
+	con := vault.NewStaticConstellation(addr.Endpoints, vault.DialOptions{
+		ClientCert:  cert,
+		VaultPolicy: verify,
+	})
+	results, _, err := con.CreateKeyShares(ctx, addr.Handle, p.Secret, threshold, grant)
+	if err != nil {
+		return nil, fmt.Errorf("create key shares: %w", err)
+	}
+	created := 0
+	var firstErr error
+	for _, r := range results {
+		if r.Success {
+			created++
+		} else if firstErr == nil && r.Err != nil {
+			firstErr = r.Err
+		}
+	}
+	res := &Result{
+		Handle: addr.Handle, Created: created, Total: len(results),
+		Threshold: threshold, Exportable: p.Exportable, Thumbprint: cnf,
+	}
+	if created < threshold {
+		return res, fmt.Errorf("only %d of %d vaults accepted the key (need %d): %v",
+			created, len(results), threshold, firstErr)
+	}
+	return res, nil
+}
