@@ -5,7 +5,9 @@ package cmd
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -126,24 +128,28 @@ func newVaultKeyCmd() *cobra.Command {
 		Use:   "key",
 		Short: "Create, list and remove keys in a vault",
 	}
-	c.AddCommand(newVaultKeyCreateCmd(), newVaultKeyListCmd(), newVaultKeyRmCmd())
+	c.AddCommand(newVaultKeyCreateCmd(), newVaultKeyListCmd(), newVaultKeyRmCmd(),
+		newVaultKeySignCmd(), newVaultKeyPublicCmd())
 	return c
 }
 
 func newVaultKeyCreateCmd() *cobra.Command {
-	var value, fromFile string
+	var value, fromFile, keyType string
 	var randomBytes int
 	var exportable bool
 	cmd := &cobra.Command{
 		Use:   "create <vault-id> <name>",
-		Short: "Create a Shamir-split key in a vault",
+		Short: "Create a key in a vault (secret or signing key)",
 		Long: `Creates a key in a vault. You authenticate; the platform verifies you may use
 the vault, authors the key's owner-bound policy and mints a short-lived,
 holder-of-key-bound grant; the CLI then creates the material directly on the
 constellation. The platform never sees the key material.
 
-Provide the material with --value or --from-file, or omit both to generate
---random-bytes of randomness.`,
+--type secret (default): a Shamir-split secret across the constellation. Provide
+  it with --value or --from-file, or omit both to generate --random-bytes.
+--type p256: a managed ECDSA P-256 signing key — generated client-side, created
+  whole on one vault, signed in-enclave (the private key never leaves), and
+  non-exportable by default. Use 'vault key sign' / 'vault key public'.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
@@ -163,7 +169,7 @@ Provide the material with --value or --from-file, or omit both to generate
 			if sub == "" {
 				return fmt.Errorf("could not determine your subject from the session")
 			}
-			secret, err := resolveSecretMaterial(value, fromFile, randomBytes)
+			vaultKeyType, signing, err := resolveVaultKeyType(keyType)
 			if err != nil {
 				return err
 			}
@@ -173,42 +179,79 @@ Provide the material with --value or --from-file, or omit both to generate
 			if err != nil {
 				return err
 			}
-
 			vaultID, name := args[0], args[1]
-			res, err := secrets.CreateInVault(ctx, secrets.VaultCreateParams{
-				Sub: sub, Secret: secret, Exportable: exportable, AttToken: attTok,
-				MintGrant: func(ctx context.Context, cnf string) (string, secrets.VaultAddressing, error) {
-					return mintVaultKeyGrant(ctx, client, vaultID, name, cnf, exportable)
-				},
-			})
+
+			// A managed signing key is non-exportable (in-enclave sign only).
+			exp := exportable
+			if signing {
+				exp = false
+			}
+			mint := func(ctx context.Context, cnf string) (string, secrets.VaultAddressing, error) {
+				return mintVaultKeyGrant(ctx, client, vaultID, name, vaultKeyType, cnf, exp)
+			}
+
+			var res *secrets.Result
+			if signing {
+				res, err = secrets.CreateSigningKeyInVault(ctx, secrets.VaultCreateParams{
+					Sub: sub, Exportable: exp, AttToken: attTok, MintGrant: mint,
+				})
+			} else {
+				var secret []byte
+				if secret, err = resolveSecretMaterial(value, fromFile, randomBytes); err == nil {
+					res, err = secrets.CreateInVault(ctx, secrets.VaultCreateParams{
+						Sub: sub, Secret: secret, Exportable: exp, AttToken: attTok, MintGrant: mint,
+					})
+				}
+			}
 			if err != nil {
 				return err
 			}
 			if !env.Quiet {
-				output.Success(cmd.ErrOrStderr(), "Created key %s (%d/%d vaults, threshold %d)",
-					res.Handle, res.Created, res.Total, res.Threshold)
+				if signing {
+					output.Success(cmd.ErrOrStderr(), "Created P-256 signing key %s on %s", res.Handle, res.Endpoint)
+				} else {
+					output.Success(cmd.ErrOrStderr(), "Created key %s (%d/%d vaults, threshold %d)",
+						res.Handle, res.Created, res.Total, res.Threshold)
+				}
 			}
 			return output.Emit(env.Format, res, func() output.Table {
-				return output.Table{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
-					{"handle", res.Handle},
-					{"vaults", fmt.Sprintf("%d/%d (threshold %d)", res.Created, res.Total, res.Threshold)},
-					{"exportable", fmt.Sprintf("%t", res.Exportable)},
-				}}
+				rows := [][]string{{"handle", res.Handle}}
+				if signing {
+					rows = append(rows, []string{"type", vaultKeyType}, []string{"vault", res.Endpoint})
+				} else {
+					rows = append(rows, []string{"vaults", fmt.Sprintf("%d/%d (threshold %d)", res.Created, res.Total, res.Threshold)})
+				}
+				rows = append(rows, []string{"exportable", fmt.Sprintf("%t", res.Exportable)})
+				return output.Table{Headers: []string{"FIELD", "VALUE"}, Rows: rows}
 			})
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&value, "value", "", "key value (a string)")
-	f.StringVar(&fromFile, "from-file", "", "read the key bytes from a file")
+	f.StringVar(&keyType, "type", "secret", "key type: secret | p256")
+	f.StringVar(&value, "value", "", "secret value (a string); --type secret only")
+	f.StringVar(&fromFile, "from-file", "", "read the secret bytes from a file; --type secret only")
 	f.IntVar(&randomBytes, "random-bytes", 32, "generate this many random bytes when no value/file is given")
-	f.BoolVar(&exportable, "exportable", true, "allow the owner to export the key later")
+	f.BoolVar(&exportable, "exportable", true, "allow the owner to export a secret later (signing keys are never exportable by default)")
 	return cmd
+}
+
+// resolveVaultKeyType maps the --type flag to the vault KeyType + whether it is
+// an in-enclave signing key.
+func resolveVaultKeyType(t string) (vaultKeyType string, signing bool, err error) {
+	switch t {
+	case "", "secret", "raw", "RawShare":
+		return "", false, nil // "" => the platform defaults to RawShare
+	case "p256", "P256", "P256SigningKey", "ecdsa-p256":
+		return "P256SigningKey", true, nil
+	default:
+		return "", false, fmt.Errorf("unknown --type %q (want: secret | p256)", t)
+	}
 }
 
 // mintVaultKeyGrant asks the platform to mint the grant for a new key and maps
 // the response into the addressing the agent needs.
-func mintVaultKeyGrant(ctx context.Context, client *api.Client, vaultID, name, cnf string, exportable bool) (string, secrets.VaultAddressing, error) {
-	r, err := client.MintVaultKeyGrant(ctx, vaultID, name, "", cnf, exportable)
+func mintVaultKeyGrant(ctx context.Context, client *api.Client, vaultID, name, keyType, cnf string, exportable bool) (string, secrets.VaultAddressing, error) {
+	r, err := client.MintVaultKeyGrant(ctx, vaultID, name, keyType, cnf, exportable)
 	if err != nil {
 		return "", secrets.VaultAddressing{}, err
 	}
@@ -220,6 +263,137 @@ func mintVaultKeyGrant(ctx context.Context, client *api.Client, vaultID, name, c
 		AttServer: r.Constellation.AttestationServer,
 		Threshold: r.Constellation.Threshold,
 	}, nil
+}
+
+// vaultKeyAddressing builds the params to dial the constellation for an
+// owner-authenticated op (sign / public) on an existing key.
+func vaultKeyAddressing(ctx context.Context, cmd *cobra.Command, env *Env, client *api.Client, vaultID, name string) (secrets.VaultOpParams, error) {
+	dir, err := client.VaultDirectory(ctx)
+	if err != nil {
+		return secrets.VaultOpParams{}, err
+	}
+	// The vault audience the owner principal is checked against.
+	ownerTok, err := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "privasys-platform")
+	if err != nil {
+		return secrets.VaultOpParams{}, err
+	}
+	attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
+	return secrets.VaultOpParams{
+		Handle:     "vaults/" + vaultID + "/" + name,
+		Endpoints:  dir.Endpoints,
+		MRENCLAVE:  dir.MRENCLAVE,
+		AttServer:  dir.AttestationServer,
+		AttToken:   attTok,
+		OwnerToken: ownerTok,
+	}, nil
+}
+
+func newVaultKeySignCmd() *cobra.Command {
+	var fromFile string
+	cmd := &cobra.Command{
+		Use:   "sign <vault-id> <name> [message]",
+		Short: "Sign a message with a vault signing key (in-enclave; key never leaves)",
+		Args:  cobra.RangeArgs(2, 3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			msg, err := resolveSignMessage(args, fromFile)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			p, err := vaultKeyAddressing(cmd.Context(), cmd, env, client, args[0], args[1])
+			if err != nil {
+				return err
+			}
+			res, err := secrets.SignInVault(cmd.Context(), p, msg)
+			if err != nil {
+				return err
+			}
+			sigB64 := base64.StdEncoding.EncodeToString(res.Signature)
+			if !env.Quiet {
+				output.Success(cmd.ErrOrStderr(), "Signed (%s) on %s", res.Alg, res.Vault)
+			}
+			return output.Emit(env.Format, map[string]any{"alg": res.Alg, "vault": res.Vault, "signature_b64": sigB64}, func() output.Table {
+				return output.Table{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
+					{"alg", res.Alg},
+					{"signature", sigB64},
+				}}
+			})
+		},
+	}
+	cmd.Flags().StringVar(&fromFile, "from-file", "", "read the message bytes from a file")
+	return cmd
+}
+
+func resolveSignMessage(args []string, fromFile string) ([]byte, error) {
+	if fromFile != "" {
+		return os.ReadFile(fromFile)
+	}
+	if len(args) == 3 {
+		return []byte(args[2]), nil
+	}
+	return nil, fmt.Errorf("provide a message argument or --from-file")
+}
+
+func newVaultKeyPublicCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "public <vault-id> <name>",
+		Short: "Print a vault key's public half as a JWK",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			p, err := vaultKeyAddressing(cmd.Context(), cmd, env, client, args[0], args[1])
+			if err != nil {
+				return err
+			}
+			res, err := secrets.GetPublicKeyInVault(cmd.Context(), p)
+			if err != nil {
+				return err
+			}
+			jwk, err := jwkFromPublicKey(res.KeyType, res.PublicKey)
+			if err != nil {
+				return err
+			}
+			return output.Emit(env.Format, jwk, func() output.Table {
+				rows := [][]string{{"kty", fmt.Sprintf("%v", jwk["kty"])}, {"crv", fmt.Sprintf("%v", jwk["crv"])}}
+				rows = append(rows, []string{"x", fmt.Sprintf("%v", jwk["x"])}, []string{"y", fmt.Sprintf("%v", jwk["y"])})
+				return output.Table{Headers: []string{"FIELD", "VALUE"}, Rows: rows}
+			})
+		},
+	}
+	return cmd
+}
+
+// jwkFromPublicKey encodes a vault public key as a JWK. A P-256 signing key's
+// public material is the SEC1 uncompressed point (0x04 || X(32) || Y(32)).
+func jwkFromPublicKey(keyType string, pub []byte) (map[string]any, error) {
+	switch keyType {
+	case "P256SigningKey":
+		if len(pub) != 65 || pub[0] != 0x04 {
+			return nil, fmt.Errorf("expected a 65-byte uncompressed P-256 point, got %d bytes", len(pub))
+		}
+		return map[string]any{
+			"kty": "EC",
+			"crv": "P-256",
+			"x":   base64.RawURLEncoding.EncodeToString(pub[1:33]),
+			"y":   base64.RawURLEncoding.EncodeToString(pub[33:65]),
+		}, nil
+	default:
+		return nil, fmt.Errorf("key type %q has no public key", keyType)
+	}
 }
 
 func newVaultKeyListCmd() *cobra.Command {

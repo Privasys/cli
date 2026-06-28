@@ -102,7 +102,40 @@ type Result struct {
 	Threshold  int    `json:"threshold"`
 	Exportable bool   `json:"exportable"`
 	Thumbprint string `json:"cnf_x5t_s256"`
+	Endpoint   string `json:"endpoint,omitempty"` // single-enclave keys: the holding vault
 }
+
+// VaultOpParams addresses an existing key in the constellation for an
+// owner-authenticated in-enclave operation (Sign / GetKeyInfo). The owner
+// authenticates with their OIDC bearer (the key policy's owner principal); no
+// holder-of-key cert is needed once the key exists.
+type VaultOpParams struct {
+	Handle     string   // the key handle (vaults/<vault-id>/<name>)
+	Endpoints  []string // constellation vault endpoints to try (the holder is one of them)
+	MRENCLAVE  string   // expected vault MRENCLAVE (hex)
+	AttServer  string   // attestation server verify endpoint
+	AttToken   string   // aud=attestation-server bearer for quote verification
+	OwnerToken string   // the owner's OIDC bearer (aud = the vault audience)
+}
+
+// SignResult is an in-enclave signature (the private key never left the vault).
+type SignResult struct {
+	Signature []byte `json:"-"`
+	Alg       string `json:"alg"`
+	Vault     string `json:"vault"`
+}
+
+// PublicKeyResult is a key's public half (signing keys).
+type PublicKeyResult struct {
+	KeyType   string `json:"key_type"`
+	PublicKey []byte `json:"-"`
+	Vault     string `json:"vault"`
+}
+
+// staticToken is an AuthTokenSource over a fixed bearer (the owner's token).
+type staticToken string
+
+func (t staticToken) Token(context.Context) (string, error) { return string(t), nil }
 
 // generateClientCert makes an ephemeral P-256 self-signed leaf used as the
 // holder-of-key client certificate. It returns the cert and its base64url
