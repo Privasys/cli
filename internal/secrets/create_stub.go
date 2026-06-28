@@ -47,3 +47,7 @@ func WrapInVault(ctx context.Context, p VaultOpParams, plaintext, aad []byte) (c
 func UnwrapInVault(ctx context.Context, p VaultOpParams, ciphertext, iv, aad []byte) (plaintext []byte, vaultEp string, err error) {
 	return nil, "", errors.New("unwrap requires the RA-TLS build of the CLI (use a released binary)")
 }
+
+func DestroyKeyInVault(ctx context.Context, p VaultOpParams) (deletedOn []string, err error) {
+	return nil, errors.New("destroying key material requires the RA-TLS build of the CLI (use a released binary)")
+}

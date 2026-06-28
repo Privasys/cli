@@ -129,6 +129,41 @@ func WrapInVault(ctx context.Context, p VaultOpParams, plaintext, aad []byte) (c
 	return nil, nil, "", fmt.Errorf("no vault could wrap with %q: %v", p.Handle, lastErr)
 }
 
+// DestroyKeyInVault deletes a key's material from the constellation,
+// authenticating as the owner. It tries every endpoint (a Shamir secret lives on
+// all; a single-enclave operational key on one), ignoring "not found", so it is
+// idempotent. Returns the endpoints the key was deleted from.
+func DestroyKeyInVault(ctx context.Context, p VaultOpParams) (deletedOn []string, err error) {
+	verify, verr := verifyPolicy(p.MRENCLAVE, p.AttServer, p.AttToken)
+	if verr != nil {
+		return nil, verr
+	}
+	opts := vault.DialOptions{AuthToken: staticToken(p.OwnerToken), VaultPolicy: verify}
+	var deleted []string
+	var lastErr error
+	for _, ep := range p.Endpoints {
+		c, derr := vault.Dial(ctx, vaultReg(ep), opts)
+		if derr != nil {
+			lastErr = derr
+			continue
+		}
+		derr = c.DeleteKey(ctx, p.Handle)
+		c.Close()
+		if derr != nil {
+			if strings.Contains(derr.Error(), "not found") {
+				continue
+			}
+			lastErr = derr
+			continue
+		}
+		deleted = append(deleted, ep)
+	}
+	if len(deleted) == 0 && lastErr != nil {
+		return nil, fmt.Errorf("delete key material for %q: %v", p.Handle, lastErr)
+	}
+	return deleted, nil
+}
+
 // UnwrapInVault decrypts ciphertext under an AES-256-GCM key in-enclave.
 func UnwrapInVault(ctx context.Context, p VaultOpParams, ciphertext, iv, aad []byte) (plaintext []byte, vaultEp string, err error) {
 	verify, verr := verifyPolicy(p.MRENCLAVE, p.AttServer, p.AttToken)

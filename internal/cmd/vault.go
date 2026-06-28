@@ -537,10 +537,15 @@ func newVaultKeyListCmd() *cobra.Command {
 }
 
 func newVaultKeyRmCmd() *cobra.Command {
+	var catalogueOnly bool
 	cmd := &cobra.Command{
 		Use:   "rm <vault-id> <name>",
-		Short: "Remove a key's catalogue entry from a vault",
-		Args:  cobra.ExactArgs(2),
+		Short: "Delete a key — destroys the material on the constellation, then the catalogue entry",
+		Long: `Deletes a key. By default it cryptographically destroys the key material on
+the constellation (owner-authenticated DeleteKey, idempotent) and then removes
+the catalogue entry. Use --catalogue-only to forget the key in your listing
+without destroying the material on the vaults.`,
+		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
 			if err != nil {
@@ -550,16 +555,34 @@ func newVaultKeyRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			deletedOn := []string{}
+			if !catalogueOnly {
+				p, err := vaultKeyAddressing(cmd.Context(), cmd, env, client, args[0], args[1])
+				if err != nil {
+					return err
+				}
+				if deletedOn, err = secrets.DestroyKeyInVault(cmd.Context(), p); err != nil {
+					return fmt.Errorf("destroy key material: %w", err)
+				}
+			}
 			if err := client.DeleteVaultKey(cmd.Context(), args[0], args[1]); err != nil {
 				return err
 			}
 			if !env.Quiet {
-				output.Success(cmd.ErrOrStderr(), "Removed key %s from vault %s", args[1], args[0])
+				if catalogueOnly {
+					output.Success(cmd.ErrOrStderr(), "Removed key %s from the catalogue (material left on the vaults)", args[1])
+				} else {
+					output.Success(cmd.ErrOrStderr(), "Deleted key %s (material destroyed on %d vault(s))", args[1], len(deletedOn))
+				}
 			}
-			return output.Emit(env.Format, map[string]any{"deleted": true}, func() output.Table {
-				return output.Table{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{{"deleted", "true"}}}
+			return output.Emit(env.Format, map[string]any{"deleted": true, "destroyed_on": deletedOn}, func() output.Table {
+				return output.Table{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
+					{"deleted", "true"},
+					{"material_destroyed_on", fmt.Sprintf("%d vault(s)", len(deletedOn))},
+				}}
 			})
 		},
 	}
+	cmd.Flags().BoolVar(&catalogueOnly, "catalogue-only", false, "remove the catalogue entry only; leave the material on the vaults")
 	return cmd
 }
