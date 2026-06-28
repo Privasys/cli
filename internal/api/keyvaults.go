@@ -81,3 +81,16 @@ func (c *Client) MintVaultKeyGrant(ctx context.Context, vaultID, name, keyType, 
 	}
 	return &out, nil
 }
+
+// RotateVaultKeyGrant asks the platform to create a new primary version of an
+// existing key (same type + policy), returning a grant bound to cnf for the new
+// version's handle plus the constellation addressing.
+func (c *Client) RotateVaultKeyGrant(ctx context.Context, vaultID, name, cnf string) (*VaultKeyGrantResponse, error) {
+	body := map[string]interface{}{"cnf_x5t_s256": cnf}
+	var out VaultKeyGrantResponse
+	path := "/api/v1/keyvaults/" + url.PathEscape(vaultID) + "/keys/" + url.PathEscape(name) + "/rotate"
+	if err := c.do(ctx, http.MethodPost, path, body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}

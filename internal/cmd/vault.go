@@ -130,7 +130,7 @@ func newVaultKeyCmd() *cobra.Command {
 	}
 	c.AddCommand(newVaultKeyCreateCmd(), newVaultKeyListCmd(), newVaultKeyRmCmd(),
 		newVaultKeySignCmd(), newVaultKeyPublicCmd(),
-		newVaultKeyWrapCmd(), newVaultKeyUnwrapCmd())
+		newVaultKeyWrapCmd(), newVaultKeyUnwrapCmd(), newVaultKeyRotateCmd())
 	return c
 }
 
@@ -276,8 +276,50 @@ func mintVaultKeyGrant(ctx context.Context, client *api.Client, vaultID, name, k
 
 // vaultKeyAddressing builds the params to dial the constellation for an
 // owner-authenticated op (sign / public) on an existing key.
-func vaultKeyAddressing(ctx context.Context, cmd *cobra.Command, env *Env, client *api.Client, vaultID, name string) (secrets.VaultOpParams, error) {
+// resolveVaultKeyHandle resolves a key name to its constellation handle via the
+// catalogue. version 0 = the current primary (highest version); version N pins a
+// specific version (so data signed/wrapped under an old version still
+// verifies/unwraps). Falls back to the v1 handle shape for uncatalogued keys.
+func resolveVaultKeyHandle(ctx context.Context, client *api.Client, vaultID, name string, version int) (string, error) {
+	keys, err := client.ListVaultKeys(ctx, vaultID)
+	if err != nil {
+		return "", err
+	}
+	best, bestV := "", -1
+	for _, k := range keys {
+		if fmt.Sprintf("%v", k["name"]) != name {
+			continue
+		}
+		v := 0
+		if vf, ok := k["version"].(float64); ok {
+			v = int(vf)
+		}
+		h, _ := k["handle"].(string)
+		if version > 0 {
+			if v == version {
+				return h, nil
+			}
+			continue
+		}
+		if v > bestV {
+			bestV, best = v, h
+		}
+	}
+	if best != "" {
+		return best, nil
+	}
+	if version > 0 {
+		return "", fmt.Errorf("version %d of key %q not found", version, name)
+	}
+	return "vaults/" + vaultID + "/" + name, nil // legacy / uncatalogued
+}
+
+func vaultKeyAddressing(ctx context.Context, cmd *cobra.Command, env *Env, client *api.Client, vaultID, name string, version int) (secrets.VaultOpParams, error) {
 	dir, err := client.VaultDirectory(ctx)
+	if err != nil {
+		return secrets.VaultOpParams{}, err
+	}
+	handle, err := resolveVaultKeyHandle(ctx, client, vaultID, name, version)
 	if err != nil {
 		return secrets.VaultOpParams{}, err
 	}
@@ -288,7 +330,7 @@ func vaultKeyAddressing(ctx context.Context, cmd *cobra.Command, env *Env, clien
 	}
 	attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
 	return secrets.VaultOpParams{
-		Handle:     "vaults/" + vaultID + "/" + name,
+		Handle:     handle,
 		Endpoints:  dir.Endpoints,
 		MRENCLAVE:  dir.MRENCLAVE,
 		AttServer:  dir.AttestationServer,
@@ -299,6 +341,7 @@ func vaultKeyAddressing(ctx context.Context, cmd *cobra.Command, env *Env, clien
 
 func newVaultKeySignCmd() *cobra.Command {
 	var fromFile string
+	var version int
 	cmd := &cobra.Command{
 		Use:   "sign <vault-id> <name> [message]",
 		Short: "Sign a message with a vault signing key (in-enclave; key never leaves)",
@@ -316,7 +359,7 @@ func newVaultKeySignCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			p, err := vaultKeyAddressing(cmd.Context(), cmd, env, client, args[0], args[1])
+			p, err := vaultKeyAddressing(cmd.Context(), cmd, env, client, args[0], args[1], version)
 			if err != nil {
 				return err
 			}
@@ -337,6 +380,7 @@ func newVaultKeySignCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&fromFile, "from-file", "", "read the message bytes from a file")
+	cmd.Flags().IntVar(&version, "version", 0, "key version to use (0 = current primary)")
 	return cmd
 }
 
@@ -351,6 +395,7 @@ func resolveSignMessage(args []string, fromFile string) ([]byte, error) {
 }
 
 func newVaultKeyPublicCmd() *cobra.Command {
+	var version int
 	cmd := &cobra.Command{
 		Use:   "public <vault-id> <name>",
 		Short: "Print a vault key's public half as a JWK",
@@ -364,7 +409,7 @@ func newVaultKeyPublicCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			p, err := vaultKeyAddressing(cmd.Context(), cmd, env, client, args[0], args[1])
+			p, err := vaultKeyAddressing(cmd.Context(), cmd, env, client, args[0], args[1], version)
 			if err != nil {
 				return err
 			}
@@ -383,6 +428,7 @@ func newVaultKeyPublicCmd() *cobra.Command {
 			})
 		},
 	}
+	cmd.Flags().IntVar(&version, "version", 0, "key version (0 = current primary)")
 	return cmd
 }
 
@@ -424,7 +470,7 @@ func newVaultKeyWrapCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			p, err := vaultKeyAddressing(cmd.Context(), cmd, env, client, args[0], args[1])
+			p, err := vaultKeyAddressing(cmd.Context(), cmd, env, client, args[0], args[1], 0)
 			if err != nil {
 				return err
 			}
@@ -451,6 +497,7 @@ func newVaultKeyWrapCmd() *cobra.Command {
 
 func newVaultKeyUnwrapCmd() *cobra.Command {
 	var ciphertextB64, ivB64 string
+	var version int
 	cmd := &cobra.Command{
 		Use:   "unwrap <vault-id> <name> --ciphertext <b64> --iv <b64>",
 		Short: "Decrypt data under a vault AES-256-GCM key (in-enclave)",
@@ -475,7 +522,7 @@ func newVaultKeyUnwrapCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			p, err := vaultKeyAddressing(cmd.Context(), cmd, env, client, args[0], args[1])
+			p, err := vaultKeyAddressing(cmd.Context(), cmd, env, client, args[0], args[1], version)
 			if err != nil {
 				return err
 			}
@@ -500,6 +547,7 @@ func newVaultKeyUnwrapCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&ciphertextB64, "ciphertext", "", "base64 ciphertext (from 'vault key wrap')")
 	f.StringVar(&ivB64, "iv", "", "base64 IV (from 'vault key wrap')")
+	f.IntVar(&version, "version", 0, "key version that wrapped the data (0 = current primary)")
 	return cmd
 }
 
@@ -557,7 +605,7 @@ without destroying the material on the vaults.`,
 			}
 			deletedOn := []string{}
 			if !catalogueOnly {
-				p, err := vaultKeyAddressing(cmd.Context(), cmd, env, client, args[0], args[1])
+				p, err := vaultKeyAddressing(cmd.Context(), cmd, env, client, args[0], args[1], 0)
 				if err != nil {
 					return err
 				}
@@ -584,5 +632,125 @@ without destroying the material on the vaults.`,
 		},
 	}
 	cmd.Flags().BoolVar(&catalogueOnly, "catalogue-only", false, "remove the catalogue entry only; leave the material on the vaults")
+	return cmd
+}
+
+// getPrimaryVaultKeyType returns the key_type of a key's current primary version.
+func getPrimaryVaultKeyType(ctx context.Context, client *api.Client, vaultID, name string) (string, error) {
+	keys, err := client.ListVaultKeys(ctx, vaultID)
+	if err != nil {
+		return "", err
+	}
+	best, bestV := "", -1
+	for _, k := range keys {
+		if fmt.Sprintf("%v", k["name"]) != name {
+			continue
+		}
+		v := 0
+		if vf, ok := k["version"].(float64); ok {
+			v = int(vf)
+		}
+		if v > bestV {
+			bestV = v
+			best, _ = k["key_type"].(string)
+		}
+	}
+	if bestV < 0 {
+		return "", fmt.Errorf("key %q not found in vault", name)
+	}
+	return best, nil
+}
+
+// rotateVaultKeyGrant asks the platform to mint a grant for a new key version and
+// maps the response into the addressing the agent needs.
+func rotateVaultKeyGrant(ctx context.Context, client *api.Client, vaultID, name, cnf string) (string, secrets.VaultAddressing, error) {
+	r, err := client.RotateVaultKeyGrant(ctx, vaultID, name, cnf)
+	if err != nil {
+		return "", secrets.VaultAddressing{}, err
+	}
+	handle, _ := r.Key["handle"].(string)
+	return r.Grant, secrets.VaultAddressing{
+		Handle:    handle,
+		Endpoints: r.Constellation.Endpoints,
+		MRENCLAVE: r.Constellation.MRENCLAVE,
+		AttServer: r.Constellation.AttestationServer,
+		Threshold: r.Constellation.Threshold,
+	}, nil
+}
+
+func newVaultKeyRotateCmd() *cobra.Command {
+	var value, fromFile string
+	var randomBytes int
+	cmd := &cobra.Command{
+		Use:   "rotate <vault-id> <name>",
+		Short: "Create a new primary version of a key (old versions kept for verify/unwrap)",
+		Long: `Rotates a key: creates a NEW primary version with fresh material, generated
+client-side. Operations (sign/wrap) use the new primary; old versions are
+retained so data signed/wrapped under them still verifies/unwraps (pin with
+--version on sign/public/unwrap). For p256/aes keys the new material is generated
+automatically; for a secret, provide --value/--from-file/--random-bytes.`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			tok, err := auth.AccessToken(ctx, env.Cfg.Issuer)
+			if err != nil {
+				return err
+			}
+			claims, err := auth.Claims(tok)
+			if err != nil {
+				return err
+			}
+			sub, _ := claims["sub"].(string)
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			vaultID, name := args[0], args[1]
+			keyType, err := getPrimaryVaultKeyType(ctx, client, vaultID, name)
+			if err != nil {
+				return err
+			}
+			attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
+			mint := func(ctx context.Context, cnf string) (string, secrets.VaultAddressing, error) {
+				return rotateVaultKeyGrant(ctx, client, vaultID, name, cnf)
+			}
+			params := secrets.VaultCreateParams{Sub: sub, AttToken: attTok, MintGrant: mint}
+			var res *secrets.Result
+			switch keyType {
+			case "P256SigningKey":
+				res, err = secrets.CreateSigningKeyInVault(ctx, params)
+			case "Aes256GcmKey":
+				res, err = secrets.CreateAesKeyInVault(ctx, params)
+			default:
+				params.Exportable = true
+				var secret []byte
+				if secret, err = resolveSecretMaterial(value, fromFile, randomBytes); err == nil {
+					params.Secret = secret
+					res, err = secrets.CreateInVault(ctx, params)
+				}
+			}
+			if err != nil {
+				return err
+			}
+			if !env.Quiet {
+				output.Success(cmd.ErrOrStderr(), "Rotated %s — new primary %s", name, res.Handle)
+			}
+			return output.Emit(env.Format, res, func() output.Table {
+				return output.Table{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
+					{"name", name},
+					{"new_handle", res.Handle},
+					{"type", keyType},
+				}}
+			})
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&value, "value", "", "new secret value (secret keys only)")
+	f.StringVar(&fromFile, "from-file", "", "read new secret bytes from a file (secret keys only)")
+	f.IntVar(&randomBytes, "random-bytes", 32, "random bytes for a rotated secret when no value/file given")
 	return cmd
 }
