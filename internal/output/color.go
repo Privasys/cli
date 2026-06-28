@@ -42,6 +42,21 @@ func paint(code, s string) string {
 	return code + s + cReset
 }
 
+// IsTTY reports whether w is an interactive terminal (a char device). Used to
+// gate live, in-place rendering (spinners, \r updates) so pipes, agents, and
+// captured output get plain, one-line-per-change output instead.
+func IsTTY(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
+}
+
 // Green/Blue/Slate/Bold colourise a string for human terminals (no-ops when
 // colour is disabled).
 func Green(s string) string { return paint(cGreen, s) }

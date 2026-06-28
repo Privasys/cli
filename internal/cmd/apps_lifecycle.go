@@ -1199,45 +1199,107 @@ func newAppsDeployCmd() *cobra.Command {
 	return cmd
 }
 
+// deployPhase maps a (status, container_state) pair to a friendly phase label
+// and whether the deployment has finished (and failed). It collapses the raw
+// status churn ("starting"/"pulling"/...) into a few human stages.
+func deployPhase(status, container string) (label string, done, failed bool) {
+	switch status {
+	case "active", "deployed", "running":
+		return "active", true, false
+	case "failed", "error", "stopped":
+		return status, true, true
+	}
+	switch container {
+	case "pulling":
+		return "pulling image", false, false
+	case "running":
+		return "starting container", false, false
+	case "", "unknown":
+		return "preparing", false, false
+	default:
+		return container, false, false
+	}
+}
+
+// watchDeployment polls a deployment until it is active or fails. On a terminal
+// it shows a single live spinner line that updates in place (one line, friendly
+// phase); on a pipe/agent it prints one plain line per phase transition (no
+// repetition). Used by `apps deploy --watch` and `apps update --watch`.
 func watchDeployment(cmd *cobra.Command, client *api.Client, env *Env, appID, depID string) error {
-	deadline := time.Now().Add(5 * time.Minute)
+	w := cmd.ErrOrStderr()
+	tty := output.IsTTY(w)
+	spin := []rune("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+	start := time.Now()
+	deadline := start.Add(5 * time.Minute)
+	lastLabel := ""
+	si := 0
+	var cur map[string]interface{}
+	var lastPoll time.Time
+
+	clear := func() {
+		if tty {
+			fmt.Fprint(w, "\r\033[K")
+		}
+	}
+
 	for {
-		deps, err := client.ListDeployments(cmd.Context(), appID)
-		if err != nil {
-			return err
-		}
-		var cur map[string]interface{}
-		for _, d := range deps {
-			if output.Str(d, "id") == depID {
-				cur = d
-				break
+		if lastPoll.IsZero() || time.Since(lastPoll) >= 3*time.Second {
+			deps, err := client.ListDeployments(cmd.Context(), appID)
+			if err != nil {
+				clear()
+				return err
 			}
+			cur = nil
+			for _, d := range deps {
+				if output.Str(d, "id") == depID {
+					cur = d
+					break
+				}
+			}
+			lastPoll = time.Now()
 		}
+
 		if cur != nil {
-			st := output.Str(cur, "status")
-			cs := output.Str(cur, "container_state")
-			fmt.Fprintf(os.Stderr, "status=%s%s\n", st, ifPresent(" container=", cs))
-			switch st {
-			case "active", "deployed", "running":
+			label, done, failed := deployPhase(output.Str(cur, "status"), output.Str(cur, "container_state"))
+			elapsed := int(time.Since(start).Seconds())
+
+			if done {
+				clear()
+				if failed {
+					// A vault-backed app whose measurement just changed has its
+					// data key locked pending owner approval (the upgrade gate).
+					fmt.Fprintf(w, "deployment %s (%ds)\n", label, elapsed)
+					fmt.Fprintf(w, "hint: if this app uses vault-backed storage and you changed the version or enclave, the data key may be locked pending approval — run: privasys apps upgrade %s\n", appID)
+					return fmt.Errorf("deployment %s ended in status %q", depID, output.Str(cur, "status"))
+				}
+				output.Success(w, "active (%ds)", elapsed)
 				return output.Emit(env.Format, cur, func() output.Table {
 					return kvTable(cur, []string{"id", "status", "container_state", "enclave_host", "hostname"})
 				})
-			case "failed", "error", "stopped":
-				// If this is a vault-backed app whose measurement just changed,
-				// the data key is locked pending owner approval (the upgrade gate).
-				fmt.Fprintf(cmd.ErrOrStderr(),
-					"hint: if this app uses vault-backed storage and you changed the version or enclave, the data key may be locked pending approval — run: privasys apps upgrade %s\n",
-					appID)
-				return fmt.Errorf("deployment %s ended in status %q", depID, st)
+			}
+
+			if tty {
+				fmt.Fprintf(w, "\r\033[K%s %s (%ds)", string(spin[si%len(spin)]), label, elapsed)
+				si++
+			} else if label != lastLabel {
+				fmt.Fprintf(w, "%s…\n", label)
+				lastLabel = label
 			}
 		}
+
 		if time.Now().After(deadline) {
+			clear()
 			return fmt.Errorf("timed out watching deployment %s", depID)
+		}
+		wait := 3 * time.Second
+		if tty {
+			wait = 120 * time.Millisecond // smooth spinner between polls
 		}
 		select {
 		case <-cmd.Context().Done():
+			clear()
 			return cmd.Context().Err()
-		case <-time.After(3 * time.Second):
+		case <-time.After(wait):
 		}
 	}
 }
