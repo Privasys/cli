@@ -51,3 +51,7 @@ func UnwrapInVault(ctx context.Context, p VaultOpParams, ciphertext, iv, aad []b
 func DestroyKeyInVault(ctx context.Context, p VaultOpParams) (deletedOn []string, err error) {
 	return nil, errors.New("destroying key material requires the RA-TLS build of the CLI (use a released binary)")
 }
+
+func ReadAuditInVault(ctx context.Context, p VaultOpParams, limit int) ([]AuditRecord, string, error) {
+	return nil, "", errors.New("reading the audit log requires the RA-TLS build of the CLI (use a released binary)")
+}

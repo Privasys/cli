@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -130,8 +131,53 @@ func newVaultKeyCmd() *cobra.Command {
 	}
 	c.AddCommand(newVaultKeyCreateCmd(), newVaultKeyListCmd(), newVaultKeyRmCmd(),
 		newVaultKeySignCmd(), newVaultKeyPublicCmd(),
-		newVaultKeyWrapCmd(), newVaultKeyUnwrapCmd(), newVaultKeyRotateCmd())
+		newVaultKeyWrapCmd(), newVaultKeyUnwrapCmd(), newVaultKeyRotateCmd(),
+		newVaultKeyAuditCmd())
 	return c
+}
+
+func newVaultKeyAuditCmd() *cobra.Command {
+	var version, limit int
+	cmd := &cobra.Command{
+		Use:   "audit <vault-id> <name>",
+		Short: "Show a key's audit log — every operation, who, allowed/denied (owner-readable)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			p, err := vaultKeyAddressing(cmd.Context(), cmd, env, client, args[0], args[1], version)
+			if err != nil {
+				return err
+			}
+			entries, vaultEp, err := secrets.ReadAuditInVault(cmd.Context(), p, limit)
+			if err != nil {
+				return err
+			}
+			if !env.Quiet {
+				output.Success(cmd.ErrOrStderr(), "%d audit entries from %s", len(entries), vaultEp)
+			}
+			return output.Emit(env.Format, entries, func() output.Table {
+				rows := make([][]string, 0, len(entries))
+				for _, e := range entries {
+					ts := time.Unix(int64(e.Ts), 0).UTC().Format(time.RFC3339)
+					rows = append(rows, []string{
+						fmt.Sprintf("%d", e.Seq), ts, e.Op, e.Caller, e.Decision, e.Reason,
+					})
+				}
+				return output.Table{Headers: []string{"SEQ", "TIME", "OP", "CALLER", "DECISION", "REASON"}, Rows: rows}
+			})
+		},
+	}
+	f := cmd.Flags()
+	f.IntVar(&version, "version", 0, "key version (0 = current primary)")
+	f.IntVar(&limit, "limit", 256, "max entries to return")
+	return cmd
 }
 
 func newVaultKeyCreateCmd() *cobra.Command {

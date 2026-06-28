@@ -164,6 +164,45 @@ func DestroyKeyInVault(ctx context.Context, p VaultOpParams) (deletedOn []string
 	return deleted, nil
 }
 
+// ReadAuditInVault reads a key's audit log (owner-authenticated; the owner is a
+// policy principal). Tries each endpoint until the holder responds.
+func ReadAuditInVault(ctx context.Context, p VaultOpParams, limit int) ([]AuditRecord, string, error) {
+	verify, verr := verifyPolicy(p.MRENCLAVE, p.AttServer, p.AttToken)
+	if verr != nil {
+		return nil, "", verr
+	}
+	if limit <= 0 {
+		limit = 256
+	}
+	opts := vault.DialOptions{AuthToken: staticToken(p.OwnerToken), VaultPolicy: verify}
+	var lastErr error
+	for _, ep := range p.Endpoints {
+		c, derr := vault.Dial(ctx, vaultReg(ep), opts)
+		if derr != nil {
+			lastErr = derr
+			continue
+		}
+		entries, _, aerr := c.ReadAuditLog(ctx, p.Handle, 0, uint32(limit))
+		c.Close()
+		if aerr != nil {
+			if strings.Contains(aerr.Error(), "not found") {
+				continue
+			}
+			lastErr = aerr
+			continue
+		}
+		out := make([]AuditRecord, 0, len(entries))
+		for _, e := range entries {
+			out = append(out, AuditRecord{
+				Seq: e.Seq, Ts: e.Ts, Op: e.Op, Caller: e.Caller,
+				Decision: fmt.Sprintf("%v", e.Decision), Reason: e.Reason,
+			})
+		}
+		return out, ep, nil
+	}
+	return nil, "", fmt.Errorf("no vault has audit for %q: %v", p.Handle, lastErr)
+}
+
 // UnwrapInVault decrypts ciphertext under an AES-256-GCM key in-enclave.
 func UnwrapInVault(ctx context.Context, p VaultOpParams, ciphertext, iv, aad []byte) (plaintext []byte, vaultEp string, err error) {
 	verify, verr := verifyPolicy(p.MRENCLAVE, p.AttServer, p.AttToken)

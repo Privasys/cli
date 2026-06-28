@@ -132,6 +132,16 @@ type PublicKeyResult struct {
 	Vault     string `json:"vault"`
 }
 
+// AuditRecord is one entry of a key's tamper-evident audit log (who did what).
+type AuditRecord struct {
+	Seq      uint64 `json:"seq"`
+	Ts       uint64 `json:"ts"`
+	Op       string `json:"op"`
+	Caller   string `json:"caller"`
+	Decision string `json:"decision"`
+	Reason   string `json:"reason,omitempty"`
+}
+
 // staticToken is an AuthTokenSource over a fixed bearer (the owner's token).
 type staticToken string
 
