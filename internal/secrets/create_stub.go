@@ -35,3 +35,15 @@ func SignInVault(ctx context.Context, p VaultOpParams, message []byte) (*SignRes
 func GetPublicKeyInVault(ctx context.Context, p VaultOpParams) (*PublicKeyResult, error) {
 	return nil, errors.New("reading a public key requires the RA-TLS build of the CLI (use a released binary)")
 }
+
+func CreateAesKeyInVault(ctx context.Context, p VaultCreateParams) (*Result, error) {
+	return nil, errors.New("creating a wrapping key requires the RA-TLS build of the CLI (use a released binary)")
+}
+
+func WrapInVault(ctx context.Context, p VaultOpParams, plaintext, aad []byte) (ciphertext, iv []byte, vaultEp string, err error) {
+	return nil, nil, "", errors.New("wrap requires the RA-TLS build of the CLI (use a released binary)")
+}
+
+func UnwrapInVault(ctx context.Context, p VaultOpParams, ciphertext, iv, aad []byte) (plaintext []byte, vaultEp string, err error) {
+	return nil, "", errors.New("unwrap requires the RA-TLS build of the CLI (use a released binary)")
+}

@@ -38,20 +38,11 @@ func vaultReg(ep string) vault.VaultRegistration {
 	return vault.VaultRegistration{ID: ep, Endpoint: ep, Status: "static"}
 }
 
-// CreateSigningKeyInVault creates a managed P-256 signing key in a user vault.
-// Single-enclave custody (v1): the whole PKCS#8 private key is created on ONE
-// vault of the constellation; Sign happens in-enclave there, the key never
-// leaves. The keypair is generated client-side; the platform mints the cnf-bound
+// createWholeKeyOnVault creates a whole (not Shamir-split) key on ONE vault of
+// the constellation — single-enclave custody (v1) for operational key types
+// (signing / wrapping) whose ops run in-enclave. The platform mints the cnf-bound
 // grant and never sees the material.
-func CreateSigningKeyInVault(ctx context.Context, p VaultCreateParams) (*Result, error) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, fmt.Errorf("generate p256: %w", err)
-	}
-	pkcs8, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		return nil, fmt.Errorf("marshal pkcs8: %w", err)
-	}
+func createWholeKeyOnVault(ctx context.Context, p VaultCreateParams, material []byte) (*Result, error) {
 	cert, cnf, err := generateClientCert(p.Sub)
 	if err != nil {
 		return nil, fmt.Errorf("client cert: %w", err)
@@ -73,13 +64,97 @@ func CreateSigningKeyInVault(ctx context.Context, p VaultCreateParams) (*Result,
 		return nil, fmt.Errorf("dial %s: %w", ep, err)
 	}
 	defer c.Close()
-	if _, err := c.CreateKey(ctx, addr.Handle, pkcs8, grant); err != nil {
-		return nil, fmt.Errorf("create signing key on %s: %w", ep, err)
+	if _, err := c.CreateKey(ctx, addr.Handle, material, grant); err != nil {
+		return nil, fmt.Errorf("create key on %s: %w", ep, err)
 	}
 	return &Result{
 		Handle: addr.Handle, Created: 1, Total: 1, Threshold: 1,
 		Exportable: p.Exportable, Thumbprint: cnf, Endpoint: ep,
 	}, nil
+}
+
+// CreateSigningKeyInVault creates a managed P-256 signing key (single-enclave
+// custody): the keypair is generated client-side, the whole PKCS#8 private key is
+// created on one vault, and Sign happens in-enclave there.
+func CreateSigningKeyInVault(ctx context.Context, p VaultCreateParams) (*Result, error) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("generate p256: %w", err)
+	}
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("marshal pkcs8: %w", err)
+	}
+	return createWholeKeyOnVault(ctx, p, pkcs8)
+}
+
+// CreateAesKeyInVault creates a managed AES-256-GCM wrapping key (single-enclave
+// custody): 32 random bytes generated client-side, created whole on one vault;
+// Wrap/Unwrap happen in-enclave there, the key never leaves.
+func CreateAesKeyInVault(ctx context.Context, p VaultCreateParams) (*Result, error) {
+	material := make([]byte, 32)
+	if _, err := rand.Read(material); err != nil {
+		return nil, fmt.Errorf("generate aes-256 key: %w", err)
+	}
+	return createWholeKeyOnVault(ctx, p, material)
+}
+
+// WrapInVault encrypts plaintext under an AES-256-GCM key in-enclave (the key
+// never leaves), authenticating as the owner. Returns (ciphertext, iv). Tries
+// each endpoint until the holder vault responds.
+func WrapInVault(ctx context.Context, p VaultOpParams, plaintext, aad []byte) (ciphertext, iv []byte, vaultEp string, err error) {
+	verify, verr := verifyPolicy(p.MRENCLAVE, p.AttServer, p.AttToken)
+	if verr != nil {
+		return nil, nil, "", verr
+	}
+	opts := vault.DialOptions{AuthToken: staticToken(p.OwnerToken), VaultPolicy: verify}
+	var lastErr error
+	for _, ep := range p.Endpoints {
+		c, derr := vault.Dial(ctx, vaultReg(ep), opts)
+		if derr != nil {
+			lastErr = derr
+			continue
+		}
+		ct, gotIV, werr := c.Wrap(ctx, p.Handle, plaintext, aad, nil)
+		c.Close()
+		if werr != nil {
+			if strings.Contains(werr.Error(), "not found") {
+				continue
+			}
+			lastErr = werr
+			continue
+		}
+		return ct, gotIV, ep, nil
+	}
+	return nil, nil, "", fmt.Errorf("no vault could wrap with %q: %v", p.Handle, lastErr)
+}
+
+// UnwrapInVault decrypts ciphertext under an AES-256-GCM key in-enclave.
+func UnwrapInVault(ctx context.Context, p VaultOpParams, ciphertext, iv, aad []byte) (plaintext []byte, vaultEp string, err error) {
+	verify, verr := verifyPolicy(p.MRENCLAVE, p.AttServer, p.AttToken)
+	if verr != nil {
+		return nil, "", verr
+	}
+	opts := vault.DialOptions{AuthToken: staticToken(p.OwnerToken), VaultPolicy: verify}
+	var lastErr error
+	for _, ep := range p.Endpoints {
+		c, derr := vault.Dial(ctx, vaultReg(ep), opts)
+		if derr != nil {
+			lastErr = derr
+			continue
+		}
+		pt, uerr := c.Unwrap(ctx, p.Handle, ciphertext, iv, aad)
+		c.Close()
+		if uerr != nil {
+			if strings.Contains(uerr.Error(), "not found") {
+				continue
+			}
+			lastErr = uerr
+			continue
+		}
+		return pt, ep, nil
+	}
+	return nil, "", fmt.Errorf("no vault could unwrap with %q: %v", p.Handle, lastErr)
 }
 
 // SignInVault produces an in-enclave ECDSA-P256-SHA256 signature, authenticating

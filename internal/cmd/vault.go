@@ -129,7 +129,8 @@ func newVaultKeyCmd() *cobra.Command {
 		Short: "Create, list and remove keys in a vault",
 	}
 	c.AddCommand(newVaultKeyCreateCmd(), newVaultKeyListCmd(), newVaultKeyRmCmd(),
-		newVaultKeySignCmd(), newVaultKeyPublicCmd())
+		newVaultKeySignCmd(), newVaultKeyPublicCmd(),
+		newVaultKeyWrapCmd(), newVaultKeyUnwrapCmd())
 	return c
 }
 
@@ -149,7 +150,10 @@ constellation. The platform never sees the key material.
   it with --value or --from-file, or omit both to generate --random-bytes.
 --type p256: a managed ECDSA P-256 signing key — generated client-side, created
   whole on one vault, signed in-enclave (the private key never leaves), and
-  non-exportable by default. Use 'vault key sign' / 'vault key public'.`,
+  non-exportable by default. Use 'vault key sign' / 'vault key public'.
+--type aes: a managed AES-256-GCM wrapping key — 32 random bytes created whole on
+  one vault; wrap/unwrap happen in-enclave (the key never leaves), non-exportable.
+  Use 'vault key wrap' / 'vault key unwrap'.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
@@ -169,7 +173,7 @@ constellation. The platform never sees the key material.
 			if sub == "" {
 				return fmt.Errorf("could not determine your subject from the session")
 			}
-			vaultKeyType, signing, err := resolveVaultKeyType(keyType)
+			vaultKeyType, operational, err := resolveVaultKeyType(keyType)
 			if err != nil {
 				return err
 			}
@@ -181,9 +185,10 @@ constellation. The platform never sees the key material.
 			}
 			vaultID, name := args[0], args[1]
 
-			// A managed signing key is non-exportable (in-enclave sign only).
+			// An operational key (signing / wrapping) is whole + non-exportable
+			// (in-enclave use only); a RawShare secret keeps the export default.
 			exp := exportable
-			if signing {
+			if operational {
 				exp = false
 			}
 			mint := func(ctx context.Context, cnf string) (string, secrets.VaultAddressing, error) {
@@ -191,24 +196,25 @@ constellation. The platform never sees the key material.
 			}
 
 			var res *secrets.Result
-			if signing {
-				res, err = secrets.CreateSigningKeyInVault(ctx, secrets.VaultCreateParams{
-					Sub: sub, Exportable: exp, AttToken: attTok, MintGrant: mint,
-				})
-			} else {
+			params := secrets.VaultCreateParams{Sub: sub, Exportable: exp, AttToken: attTok, MintGrant: mint}
+			switch {
+			case vaultKeyType == "P256SigningKey":
+				res, err = secrets.CreateSigningKeyInVault(ctx, params)
+			case vaultKeyType == "Aes256GcmKey":
+				res, err = secrets.CreateAesKeyInVault(ctx, params)
+			default:
 				var secret []byte
 				if secret, err = resolveSecretMaterial(value, fromFile, randomBytes); err == nil {
-					res, err = secrets.CreateInVault(ctx, secrets.VaultCreateParams{
-						Sub: sub, Secret: secret, Exportable: exp, AttToken: attTok, MintGrant: mint,
-					})
+					params.Secret = secret
+					res, err = secrets.CreateInVault(ctx, params)
 				}
 			}
 			if err != nil {
 				return err
 			}
 			if !env.Quiet {
-				if signing {
-					output.Success(cmd.ErrOrStderr(), "Created P-256 signing key %s on %s", res.Handle, res.Endpoint)
+				if operational {
+					output.Success(cmd.ErrOrStderr(), "Created %s %s on %s", vaultKeyType, res.Handle, res.Endpoint)
 				} else {
 					output.Success(cmd.ErrOrStderr(), "Created key %s (%d/%d vaults, threshold %d)",
 						res.Handle, res.Created, res.Total, res.Threshold)
@@ -216,7 +222,7 @@ constellation. The platform never sees the key material.
 			}
 			return output.Emit(env.Format, res, func() output.Table {
 				rows := [][]string{{"handle", res.Handle}}
-				if signing {
+				if operational {
 					rows = append(rows, []string{"type", vaultKeyType}, []string{"vault", res.Endpoint})
 				} else {
 					rows = append(rows, []string{"vaults", fmt.Sprintf("%d/%d (threshold %d)", res.Created, res.Total, res.Threshold)})
@@ -227,7 +233,7 @@ constellation. The platform never sees the key material.
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&keyType, "type", "secret", "key type: secret | p256")
+	f.StringVar(&keyType, "type", "secret", "key type: secret | p256 (signing) | aes (wrapping)")
 	f.StringVar(&value, "value", "", "secret value (a string); --type secret only")
 	f.StringVar(&fromFile, "from-file", "", "read the secret bytes from a file; --type secret only")
 	f.IntVar(&randomBytes, "random-bytes", 32, "generate this many random bytes when no value/file is given")
@@ -236,15 +242,18 @@ constellation. The platform never sees the key material.
 }
 
 // resolveVaultKeyType maps the --type flag to the vault KeyType + whether it is
-// an in-enclave signing key.
-func resolveVaultKeyType(t string) (vaultKeyType string, signing bool, err error) {
+// an operational (whole-key, in-enclave, non-exportable) type vs a RawShare
+// secret.
+func resolveVaultKeyType(t string) (vaultKeyType string, operational bool, err error) {
 	switch t {
 	case "", "secret", "raw", "RawShare":
 		return "", false, nil // "" => the platform defaults to RawShare
 	case "p256", "P256", "P256SigningKey", "ecdsa-p256":
 		return "P256SigningKey", true, nil
+	case "aes", "aes256", "Aes256GcmKey", "aes-256-gcm":
+		return "Aes256GcmKey", true, nil
 	default:
-		return "", false, fmt.Errorf("unknown --type %q (want: secret | p256)", t)
+		return "", false, fmt.Errorf("unknown --type %q (want: secret | p256 | aes)", t)
 	}
 }
 
@@ -394,6 +403,104 @@ func jwkFromPublicKey(keyType string, pub []byte) (map[string]any, error) {
 	default:
 		return nil, fmt.Errorf("key type %q has no public key", keyType)
 	}
+}
+
+func newVaultKeyWrapCmd() *cobra.Command {
+	var fromFile string
+	cmd := &cobra.Command{
+		Use:   "wrap <vault-id> <name> [plaintext]",
+		Short: "Encrypt data under a vault AES-256-GCM key (in-enclave; key never leaves)",
+		Args:  cobra.RangeArgs(2, 3),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			pt, err := resolveSignMessage(args, fromFile)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			p, err := vaultKeyAddressing(cmd.Context(), cmd, env, client, args[0], args[1])
+			if err != nil {
+				return err
+			}
+			ct, iv, vaultEp, err := secrets.WrapInVault(cmd.Context(), p, pt, nil)
+			if err != nil {
+				return err
+			}
+			ctB64 := base64.StdEncoding.EncodeToString(ct)
+			ivB64 := base64.StdEncoding.EncodeToString(iv)
+			if !env.Quiet {
+				output.Success(cmd.ErrOrStderr(), "Wrapped on %s", vaultEp)
+			}
+			return output.Emit(env.Format, map[string]any{"ciphertext_b64": ctB64, "iv_b64": ivB64, "vault": vaultEp}, func() output.Table {
+				return output.Table{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
+					{"ciphertext", ctB64},
+					{"iv", ivB64},
+				}}
+			})
+		},
+	}
+	cmd.Flags().StringVar(&fromFile, "from-file", "", "read the plaintext bytes from a file")
+	return cmd
+}
+
+func newVaultKeyUnwrapCmd() *cobra.Command {
+	var ciphertextB64, ivB64 string
+	cmd := &cobra.Command{
+		Use:   "unwrap <vault-id> <name> --ciphertext <b64> --iv <b64>",
+		Short: "Decrypt data under a vault AES-256-GCM key (in-enclave)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			if ciphertextB64 == "" || ivB64 == "" {
+				return fmt.Errorf("--ciphertext and --iv are required (base64)")
+			}
+			ct, err := base64.StdEncoding.DecodeString(ciphertextB64)
+			if err != nil {
+				return fmt.Errorf("--ciphertext: %w", err)
+			}
+			iv, err := base64.StdEncoding.DecodeString(ivB64)
+			if err != nil {
+				return fmt.Errorf("--iv: %w", err)
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			p, err := vaultKeyAddressing(cmd.Context(), cmd, env, client, args[0], args[1])
+			if err != nil {
+				return err
+			}
+			pt, vaultEp, err := secrets.UnwrapInVault(cmd.Context(), p, ct, iv, nil)
+			if err != nil {
+				return err
+			}
+			if !env.Quiet {
+				output.Success(cmd.ErrOrStderr(), "Unwrapped on %s", vaultEp)
+			}
+			// Plaintext to stdout (raw) for table; base64 for json/yaml.
+			if env.Format == "table" || env.Format == "" {
+				cmd.OutOrStdout().Write(pt)
+				if len(pt) > 0 && pt[len(pt)-1] != '\n' {
+					cmd.OutOrStdout().Write([]byte("\n"))
+				}
+				return nil
+			}
+			return output.Emit(env.Format, map[string]any{"plaintext_b64": base64.StdEncoding.EncodeToString(pt), "vault": vaultEp}, nil)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&ciphertextB64, "ciphertext", "", "base64 ciphertext (from 'vault key wrap')")
+	f.StringVar(&ivB64, "iv", "", "base64 IV (from 'vault key wrap')")
+	return cmd
 }
 
 func newVaultKeyListCmd() *cobra.Command {
