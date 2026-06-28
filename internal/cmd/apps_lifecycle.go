@@ -1235,6 +1235,11 @@ func watchDeployment(cmd *cobra.Command, client *api.Client, env *Env, appID, de
 	si := 0
 	var cur map[string]interface{}
 	var lastPoll time.Time
+	var activeSince time.Time
+	// After the deployment goes active, wait this long for a gateway to pull a
+	// route set including the new hostname before declaring success — so the
+	// endpoint is actually reachable (closes the deploy/attest propagation race).
+	const routeWait = 25 * time.Second
 
 	clear := func() {
 		if tty {
@@ -1263,19 +1268,36 @@ func watchDeployment(cmd *cobra.Command, client *api.Client, env *Env, appID, de
 			label, done, failed := deployPhase(output.Str(cur, "status"), output.Str(cur, "container_state"))
 			elapsed := int(time.Since(start).Seconds())
 
-			if done {
+			if done && failed {
 				clear()
-				if failed {
-					// A vault-backed app whose measurement just changed has its
-					// data key locked pending owner approval (the upgrade gate).
-					fmt.Fprintf(w, "deployment %s (%ds)\n", label, elapsed)
-					fmt.Fprintf(w, "hint: if this app uses vault-backed storage and you changed the version or enclave, the data key may be locked pending approval — run: privasys apps upgrade %s\n", appID)
-					return fmt.Errorf("deployment %s ended in status %q", depID, output.Str(cur, "status"))
+				// A vault-backed app whose measurement just changed has its
+				// data key locked pending owner approval (the upgrade gate).
+				fmt.Fprintf(w, "deployment %s (%ds)\n", label, elapsed)
+				fmt.Fprintf(w, "hint: if this app uses vault-backed storage and you changed the version or enclave, the data key may be locked pending approval — run: privasys apps upgrade %s\n", appID)
+				return fmt.Errorf("deployment %s ended in status %q", depID, output.Str(cur, "status"))
+			}
+			if done { // active: gate success on the gateway route having propagated
+				if activeSince.IsZero() {
+					activeSince = time.Now()
 				}
-				output.Success(w, "active (%ds)", elapsed)
-				return output.Emit(env.Format, cur, func() output.Table {
-					return kvTable(cur, []string{"id", "status", "container_state", "enclave_host", "hostname"})
-				})
+				routeReady, _ := cur["route_ready"].(bool)
+				if routeReady {
+					clear()
+					output.Success(w, "active, routable (%ds)", elapsed)
+					return output.Emit(env.Format, cur, func() output.Table {
+						return kvTable(cur, []string{"id", "status", "container_state", "enclave_host", "hostname"})
+					})
+				}
+				if time.Since(activeSince) > routeWait {
+					clear()
+					output.Success(w, "active (%ds)", elapsed)
+					fmt.Fprintf(w, "warning: the app is active but route propagation to the gateway is unconfirmed; the endpoint may not be reachable yet — retry `attest` shortly\n")
+					return output.Emit(env.Format, cur, func() output.Table {
+						return kvTable(cur, []string{"id", "status", "container_state", "enclave_host", "hostname"})
+					})
+				}
+				// Active but not yet routable — keep waiting (and rendering).
+				label = "waiting for gateway route"
 			}
 
 			if tty {
