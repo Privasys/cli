@@ -11,10 +11,43 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Privasys/cli/internal/api"
 	"github.com/Privasys/cli/internal/auth"
 	"github.com/Privasys/cli/internal/output"
 	"github.com/Privasys/cli/internal/secrets"
 )
+
+// resolveConstellation picks the vault constellation addressing for a
+// user-secret op. Precedence: explicit --vault/--mrenclave/--attestation-server
+// flags win; otherwise discover the active constellation from the directory
+// (GET /api/v1/vaults — the same source container apps and the SDK use), so the
+// pin is never stale. The built-in prod defaults are only a last resort if the
+// directory is unavailable.
+func resolveConstellation(ctx context.Context, client *api.Client, endpoints []string, mrenclave, attServer string) ([]string, string, string) {
+	if len(endpoints) == 0 || mrenclave == "" || attServer == "" {
+		if dir, err := client.VaultDirectory(ctx); err == nil {
+			if len(endpoints) == 0 {
+				endpoints = dir.Endpoints
+			}
+			if mrenclave == "" {
+				mrenclave = dir.MRENCLAVE
+			}
+			if attServer == "" {
+				attServer = dir.AttestationServer
+			}
+		}
+	}
+	if len(endpoints) == 0 {
+		endpoints = secrets.DefaultEndpoints
+	}
+	if mrenclave == "" {
+		mrenclave = secrets.DefaultMRENCLAVE
+	}
+	if attServer == "" {
+		attServer = secrets.DefaultAttServer
+	}
+	return endpoints, mrenclave, attServer
+}
 
 func newSecretsCmd() *cobra.Command {
 	c := &cobra.Command{
@@ -84,15 +117,11 @@ you (the owner); the material is never printed.`,
 			// Used only to verify the vaults' own quotes during the RA-TLS dial.
 			attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
 
-			if len(endpoints) == 0 {
-				endpoints = secrets.DefaultEndpoints
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
 			}
-			if mrenclave == "" {
-				mrenclave = secrets.DefaultMRENCLAVE
-			}
-			if attServer == "" {
-				attServer = secrets.DefaultAttServer
-			}
+			endpoints, mrenclave, attServer = resolveConstellation(ctx, client, endpoints, mrenclave, attServer)
 
 			handle := "users/" + sub + "/" + args[0]
 			res, err := secrets.Create(ctx, secrets.CreateParams{
@@ -170,15 +199,11 @@ a fingerprint, never the key.`,
 			}
 			attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
 
-			if len(endpoints) == 0 {
-				endpoints = secrets.DefaultEndpoints
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
 			}
-			if mrenclave == "" {
-				mrenclave = secrets.DefaultMRENCLAVE
-			}
-			if attServer == "" {
-				attServer = secrets.DefaultAttServer
-			}
+			endpoints, mrenclave, attServer = resolveConstellation(ctx, client, endpoints, mrenclave, attServer)
 
 			handle := "users/" + sub + "/" + args[0]
 			material, res, err := secrets.Export(ctx, secrets.ExportParams{

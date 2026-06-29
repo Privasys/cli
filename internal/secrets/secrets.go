@@ -40,18 +40,20 @@ import (
 
 const grantPath = "/vault/key-creation-grant"
 
-// Defaults for the production vault constellation (see infrastructure.md): the
-// 2-of-4 SGX constellation across Paris + London, its current MRENCLAVE, and
-// the attestation server. Override per-invocation when the vault is upgraded.
+// Last-resort fallbacks for the production vault constellation, used only when
+// the live directory (GET /api/v1/vaults) is unavailable. The CLI normally
+// discovers the active constellation (endpoints + MRENCLAVE + attestation
+// server) from the directory — the same source container apps and the SDK use —
+// so these need not track every vault cutover. The 2-of-4 SGX constellation
+// across Paris + London.
 var DefaultEndpoints = []string{
 	"141.94.219.130:8443", "141.94.219.130:8444", // Paris
 	"198.244.201.58:8443", "198.244.201.58:8444", // London
 }
 
 const (
-	// vault-v0.24.0 (grant + operation-bound export step-up), live on the 4 prod
-	// vaults (Paris + London, 8443/8444) since 2026-06-26. Bump this on each prod
-	// vault MRENCLAVE cutover.
+	// Fallback pin (vault-v0.24.0, Paris+London 8443/8444). The directory is the
+	// source of truth; this is only used if /api/v1/vaults can't be reached.
 	DefaultMRENCLAVE = "f463b560dfaa4e30fe01165e4feb733eb94463143b0096afd18f83dd7008a9c5"
 	DefaultAttServer = "https://as.privasys.org/verify"
 )
