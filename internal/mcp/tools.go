@@ -7,8 +7,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"time"
 
@@ -160,11 +162,12 @@ func (s *Server) registerTools() {
 					exportable = v
 				}
 				attTok, _ := auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")
+				endpoints, mrenclave, attServer := mcpConstellation(ctx, d)
 				return secrets.Create(ctx, secrets.CreateParams{
 					Issuer: d.Issuer, Bearer: d.Token, Sub: sub,
 					Handle: "users/" + sub + "/" + name, Secret: material, Exportable: exportable,
-					Endpoints: secrets.DefaultEndpoints, Threshold: 2,
-					MRENCLAVE: secrets.DefaultMRENCLAVE, AttServer: secrets.DefaultAttServer, AttToken: attTok,
+					Endpoints: endpoints, Threshold: 2,
+					MRENCLAVE: mrenclave, AttServer: attServer, AttToken: attTok,
 				})
 			},
 		},
@@ -195,11 +198,12 @@ func (s *Server) registerTools() {
 					return nil, errors.New("could not determine your subject from the session")
 				}
 				attTok, _ := auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")
+				endpoints, mrenclave, attServer := mcpConstellation(ctx, d)
 				material, res, err := secrets.Export(ctx, secrets.ExportParams{
 					Issuer: d.Issuer, Bearer: d.Token, Sub: sub,
 					Handle:    "users/" + sub + "/" + name,
-					Endpoints: secrets.DefaultEndpoints, Threshold: 2,
-					MRENCLAVE: secrets.DefaultMRENCLAVE, AttServer: secrets.DefaultAttServer, AttToken: attTok,
+					Endpoints: endpoints, Threshold: 2,
+					MRENCLAVE: mrenclave, AttServer: attServer, AttToken: attTok,
 					RequireStepUp: true,
 					// The agent cannot approve WebAuthn step-up; the human does it in
 					// their wallet. Surfaced as a clear instruction until the wallet
@@ -359,6 +363,123 @@ func (s *Server) registerTools() {
 					"path": out, "fingerprint": res.Fingerprint,
 					"handle": res.Handle, "vaults": res.Retrieved, "written": true,
 				}, nil
+			},
+		},
+		{
+			Name:        "apps_configure",
+			Description: "Configure a confidential app via its image-declared role:config tool, which lifts the configure-then-freeze gate so the app starts serving. The config fields come from the app's manifest (see apps_api). 'config' is the JSON config object. Do NOT pass a secret the user asked you not to handle (e.g. an API key) — surface those for the human to set.",
+			Schema: obj(map[string]interface{}{
+				"app_id": strProp("the app id"),
+				"config": map[string]interface{}{"type": "object", "description": "config values per the role:config tool's input schema"},
+			}, "app_id", "config"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				appID, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				config, _ := args["config"].(map[string]interface{})
+				if config == nil {
+					config = map[string]interface{}{}
+				}
+				schema, err := d.Client.Schema(ctx, appID)
+				if err != nil {
+					return nil, err
+				}
+				fn := functionByRole(schema, "config")
+				if fn == nil {
+					return nil, errors.New("app declares no configuration (no role:config tool)")
+				}
+				name, _ := fn["name"].(string)
+				res, err := d.Client.Rpc(ctx, appID, name, config)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]interface{}{"configured": true, "tool": name, "result": res}, nil
+			},
+		},
+		{
+			Name:        "apps_action",
+			Description: "Run a confidential app's role:action operation by name (e.g. load_model) via the owner-authed control plane. 'args' is the JSON input (per the action tool's schema; see apps_api). Returns the result; for a long-running action, poll the app's status tool with apps_call to follow progress.",
+			Schema: obj(map[string]interface{}{
+				"app_id": strProp("the app id"),
+				"name":   strProp("the action tool name"),
+				"args":   map[string]interface{}{"type": "object", "description": "the action inputs"},
+			}, "app_id", "name"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				appID, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				name, err := requireStr(args, "name")
+				if err != nil {
+					return nil, err
+				}
+				body, _ := args["args"].(map[string]interface{})
+				if body == nil {
+					body = map[string]interface{}{}
+				}
+				return d.Client.Rpc(ctx, appID, name, body)
+			},
+		},
+		{
+			Name:        "vault_key_sign",
+			Description: "Sign a message with a vault signing key. The private key never leaves the constellation — it is signed in-enclave over RA-TLS. Returns the signature (base64) and algorithm.",
+			Schema: obj(map[string]interface{}{
+				"vault_id": strProp("the vault id"),
+				"name":     strProp("the key name"),
+				"message":  strProp("the message to sign (UTF-8 text)"),
+				"version":  intProp("key version (0 = current primary)"),
+			}, "vault_id", "name", "message"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				vaultID, err := requireStr(args, "vault_id")
+				if err != nil {
+					return nil, err
+				}
+				name, err := requireStr(args, "name")
+				if err != nil {
+					return nil, err
+				}
+				message, err := requireStr(args, "message")
+				if err != nil {
+					return nil, err
+				}
+				p, err := vaultKeyAddr(ctx, d, vaultID, name, argInt(args, "version"))
+				if err != nil {
+					return nil, err
+				}
+				res, err := secrets.SignInVault(ctx, p, []byte(message))
+				if err != nil {
+					return nil, err
+				}
+				return map[string]interface{}{"alg": res.Alg, "vault": res.Vault, "signature_b64": base64.StdEncoding.EncodeToString(res.Signature)}, nil
+			},
+		},
+		{
+			Name:        "vault_key_public",
+			Description: "Get a vault signing key's public half (key type + the public key, base64). The private half never leaves the constellation.",
+			Schema: obj(map[string]interface{}{
+				"vault_id": strProp("the vault id"),
+				"name":     strProp("the key name"),
+				"version":  intProp("key version (0 = current primary)"),
+			}, "vault_id", "name"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				vaultID, err := requireStr(args, "vault_id")
+				if err != nil {
+					return nil, err
+				}
+				name, err := requireStr(args, "name")
+				if err != nil {
+					return nil, err
+				}
+				p, err := vaultKeyAddr(ctx, d, vaultID, name, argInt(args, "version"))
+				if err != nil {
+					return nil, err
+				}
+				res, err := secrets.GetPublicKeyInVault(ctx, p)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]interface{}{"key_type": res.KeyType, "vault": res.Vault, "public_key_b64": base64.StdEncoding.EncodeToString(res.PublicKey)}, nil
 			},
 		},
 		{
@@ -904,6 +1025,87 @@ func resolveLatestVersion(ctx context.Context, d Deps, appID, ref string) (strin
 
 // containerPath maps a function name to a container endpoint via the app's
 // privasys.json tool manifest, falling back to /<function>.
+// mcpConstellation resolves the active vault constellation for the agent's
+// user-secret ops via the directory (GET /api/v1/vaults — the same source
+// container apps and the SDK use), falling back to the built-in defaults if it
+// is unreachable. Mirrors the CLI's resolveConstellation.
+func mcpConstellation(ctx context.Context, d Deps) (endpoints []string, mrenclave, attServer string) {
+	endpoints, mrenclave, attServer = secrets.DefaultEndpoints, secrets.DefaultMRENCLAVE, secrets.DefaultAttServer
+	if dir, err := d.Client.VaultDirectory(ctx); err == nil {
+		if len(dir.Endpoints) > 0 {
+			endpoints = dir.Endpoints
+		}
+		if dir.MRENCLAVE != "" {
+			mrenclave = dir.MRENCLAVE
+		}
+		if dir.AttestationServer != "" {
+			attServer = dir.AttestationServer
+		}
+	}
+	return endpoints, mrenclave, attServer
+}
+
+// functionByRole returns the first app-schema function with the given role
+// (config | action | status). Used by apps_configure/apps_action to find the
+// image-declared config/action tools.
+func functionByRole(schema map[string]interface{}, role string) map[string]interface{} {
+	fns, _ := schema["functions"].([]interface{})
+	for _, f := range fns {
+		if fm, ok := f.(map[string]interface{}); ok && fmt.Sprintf("%v", fm["role"]) == role {
+			return fm
+		}
+	}
+	return nil
+}
+
+// vaultKeyAddr resolves the constellation addressing for a vault key (mirrors
+// the CLI's vaultKeyAddressing): the active directory pin + the key's handle +
+// the owner/attestation tokens. Vault key data-plane ops dial the constellation
+// directly over RA-TLS (the platform is not in the path).
+func vaultKeyAddr(ctx context.Context, d Deps, vaultID, name string, version int) (secrets.VaultOpParams, error) {
+	dir, err := d.Client.VaultDirectory(ctx)
+	if err != nil {
+		return secrets.VaultOpParams{}, err
+	}
+	keys, err := d.Client.ListVaultKeys(ctx, vaultID)
+	if err != nil {
+		return secrets.VaultOpParams{}, err
+	}
+	handle, best := "", -1
+	for _, k := range keys {
+		if fmt.Sprintf("%v", k["name"]) != name {
+			continue
+		}
+		v := 0
+		if vf, ok := k["version"].(float64); ok {
+			v = int(vf)
+		}
+		h, _ := k["handle"].(string)
+		if version > 0 {
+			if v == version {
+				handle = h
+				break
+			}
+			continue
+		}
+		if v > best {
+			best, handle = v, h
+		}
+	}
+	if handle == "" {
+		return secrets.VaultOpParams{}, fmt.Errorf("key %q not found in vault %s", name, vaultID)
+	}
+	ownerTok, err := auth.AccessTokenForAudience(ctx, d.Issuer, "privasys-platform")
+	if err != nil {
+		return secrets.VaultOpParams{}, err
+	}
+	attTok, _ := auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")
+	return secrets.VaultOpParams{
+		Handle: handle, Endpoints: dir.Endpoints, MRENCLAVE: dir.MRENCLAVE,
+		AttServer: dir.AttestationServer, AttToken: attTok, OwnerToken: ownerTok,
+	}, nil
+}
+
 func containerPath(app map[string]interface{}, function string) string {
 	if mcp, ok := app["container_mcp"].(map[string]interface{}); ok {
 		if tools, ok := mcp["tools"].([]interface{}); ok {

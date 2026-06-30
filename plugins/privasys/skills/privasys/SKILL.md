@@ -75,6 +75,28 @@ credentials**. The flow:
 
 If the user is fine with a public image, skip step 3.
 
+## Configuring and operating an app
+
+Apps declare typed, image-bound capabilities in their manifest (`privasys.json`),
+tagged by **role**: `inference` (callable by anyone/agents), `config` (a
+configuration form), `action` (an owner/operator operation), `status` (read-only
+state). Discover them with `apps_api` — the schema lists each function's role and
+input schema. The declaration lives in the measured image, so what you configure
+and run is attested.
+
+- **Configure** (`apps_configure`): some apps boot **frozen** — every endpoint
+  503s with "awaiting initial configuration" until configured. Call
+  `apps_configure` with the values from the role:config tool's schema; a
+  successful call lifts the freeze gate and the app starts serving. Do **not**
+  pass a secret the user told you not to handle (e.g. an API key) — surface those
+  for the human to set.
+- **Operate** (`apps_action`): run an owner operation by name (e.g. `load_model`).
+  If it is long-running, the tool declares a progress channel — poll the app's
+  `status` tool (via `apps_call`) until it reaches a terminal state.
+
+Both go through the owner-authed control plane (not the public data path), and
+the relay only forwards to endpoints the attested manifest declares.
+
 ## Securing user data (the data-protection story)
 
 - Encrypted storage is sealed with a **data key that belongs to the user**, generated inside the confidential hardware; the platform never sees it. See `references/data-protection.md`.
@@ -83,6 +105,25 @@ If the user is fine with a public image, skip step 3.
 - `apps export-key` lets the owner take their key out. **DANGER:** it writes the key to a *local file only*. Never request, echo, log, or pass the key material anywhere it could reach a model or service. Confirm with the human first.
 - `secrets_create` makes a user-owned key in the vault (Shamir-split; the platform never holds it). It generates random material — you never see or handle the secret bytes.
 - `secrets_export` writes a secret the owner owns to a **local file only** and returns just a path + fingerprint — never the key. It is **dangerous** (raw key to disk) and requires a fresh WebAuthn step-up the owner approves in their wallet; you cannot approve it. Confirm with the human first.
+
+## Keys & secrets — the vault (vHSM)
+
+The constellation is a confidential, attested key store (a vHSM): keys are
+Shamir-split across SGX enclaves, so no single machine holds usable material and
+the platform never sees it.
+
+- **Vaults & keys:** `vault_create` makes a key container; `vault_key_create`
+  makes a key in it (random, a P-256 **signing** key, or an AES **wrapping** key).
+  It generates the material — you never see the bytes; the owner can export it.
+- **Use a signing key:** `vault_key_sign` signs a message in-enclave (the private
+  key never leaves the constellation); `vault_key_public` returns the public half.
+- **User secrets:** `secrets_create` / `secrets_export` (above).
+
+Heavier key management is CLI / REST-facade only — direct the user to it:
+`privasys vault key wrap|unwrap` (encrypt/decrypt under an AES key),
+`vault key rotate` (new key version), `vault key audit` (per-key audit log), and
+`privasys vault serve` — an **Azure Key Vault-shaped REST facade** so non-CLI
+clients and existing tooling can use the vHSM unchanged.
 
 ## The rule that matters
 
