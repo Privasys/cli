@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Privasys/cli/internal/auth"
@@ -367,10 +368,10 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "apps_configure",
-			Description: "Configure a confidential app via its image-declared role:config tool, which lifts the configure-then-freeze gate so the app starts serving. The config fields come from the app's manifest (see apps_api). 'config' is the JSON config object. Do NOT pass a secret the user asked you not to handle (e.g. an API key) — surface those for the human to set.",
+			Description: "Apply a confidential app's owner-only setup (its image-declared `configure` section, or a legacy role:config tool), which lifts the configure-then-freeze gate so the app starts serving. The config fields come from the app's manifest (see apps_api). 'config' is the JSON config object. Do NOT pass a secret the user asked you not to handle (e.g. an API key) — surface those for the human to set.",
 			Schema: obj(map[string]interface{}{
 				"app_id": strProp("the app id"),
-				"config": map[string]interface{}{"type": "object", "description": "config values per the role:config tool's input schema"},
+				"config": map[string]interface{}{"type": "object", "description": "config values per the configure section's input schema"},
 			}, "app_id", "config"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				appID, err := requireStr(args, "app_id")
@@ -385,11 +386,10 @@ func (s *Server) registerTools() {
 				if err != nil {
 					return nil, err
 				}
-				fn := functionByRole(schema, "config")
-				if fn == nil {
-					return nil, errors.New("app declares no configuration (no role:config tool)")
+				name := configRPCName(schema)
+				if name == "" {
+					return nil, errors.New("app declares no configuration")
 				}
-				name, _ := fn["name"].(string)
 				res, err := d.Client.Rpc(ctx, appID, name, config)
 				if err != nil {
 					return nil, err
@@ -1370,6 +1370,30 @@ func functionByRole(schema map[string]interface{}, role string) map[string]inter
 		}
 	}
 	return nil
+}
+
+// configRPCName resolves the RPC name to invoke for an app's owner configuration.
+// Preferred: the dedicated top-level `configure` section (its `name`, wasm
+// `function`, or `endpoint` last segment). Falls back to a legacy role:config
+// tool. Returns "" when the app declares no configuration.
+func configRPCName(schema map[string]interface{}) string {
+	if cfg, ok := schema["configure"].(map[string]interface{}); ok {
+		if n, _ := cfg["name"].(string); n != "" {
+			return n
+		}
+		if n, _ := cfg["function"].(string); n != "" {
+			return n
+		}
+		if ep, _ := cfg["endpoint"].(string); ep != "" {
+			return strings.TrimPrefix(ep, "/")
+		}
+	}
+	if fn := functionByRole(schema, "config"); fn != nil {
+		if n, _ := fn["name"].(string); n != "" {
+			return n
+		}
+	}
+	return ""
 }
 
 // vaultKeyAddr resolves the constellation addressing for a vault key (mirrors

@@ -1688,10 +1688,11 @@ func newAppsConfigureCmd() *cobra.Command {
 	var data string
 	cmd := &cobra.Command{
 		Use:   "configure <app-id>",
-		Short: "Configure an app (calls its role:config tool; lifts the freeze gate)",
-		Long: `Submits configuration to the app's role:config tool via the control plane.
-A successful call lifts the configure-then-freeze gate. With no --set/--data,
-prints the config tool and its parameter count.
+		Short: "Configure an app (applies its owner setup; lifts the freeze gate)",
+		Long: `Submits owner configuration to the app's image-declared configure section
+(or a legacy role:config tool) via the control plane. A successful call lifts the
+configure-then-freeze gate. With no --set/--data, prints the config target and its
+field count.
 
   --set key=value   config value (repeatable)
   --data            JSON config body, or @file (overrides --set)`,
@@ -1714,14 +1715,13 @@ prints the config tool and its parameter count.
 			if err != nil {
 				return err
 			}
-			fn := functionByRole(schema, "config")
-			if fn == nil {
-				return fmt.Errorf("app declares no configuration (no role:config tool)")
+			name, fn := configDescriptor(schema)
+			if name == "" || fn == nil {
+				return fmt.Errorf("app declares no configuration")
 			}
-			name := output.Str(fn, "name")
 			if len(set) == 0 && data == "" {
 				return output.Emit(env.Format, fn, func() output.Table {
-					return output.Table{Headers: []string{"CONFIG TOOL", "PARAMS"}, Rows: [][]string{{name, countOf(fn, "params")}}}
+					return output.Table{Headers: []string{"CONFIG", "FIELDS"}, Rows: [][]string{{name, countConfigFields(fn)}}}
 				})
 			}
 			body, err := buildToolBody(set, data)
@@ -1849,6 +1849,39 @@ func functionByRole(schema map[string]interface{}, role string) map[string]inter
 		}
 	}
 	return nil
+}
+
+// configDescriptor resolves the app's owner-configuration target: the dedicated
+// top-level `configure` section, or a legacy role:config tool. Returns the RPC
+// name and a descriptor map (for display), or ("", nil) when none is declared.
+func configDescriptor(schema map[string]interface{}) (string, map[string]interface{}) {
+	if cfg, ok := schema["configure"].(map[string]interface{}); ok && len(cfg) > 0 {
+		name := output.Str(cfg, "name")
+		if name == "" {
+			if f := output.Str(cfg, "function"); f != "" {
+				name = f
+			} else if ep := output.Str(cfg, "endpoint"); ep != "" {
+				name = strings.TrimPrefix(ep, "/")
+			}
+		}
+		return name, cfg
+	}
+	if fn := functionByRole(schema, "config"); fn != nil {
+		return output.Str(fn, "name"), fn
+	}
+	return "", nil
+}
+
+// countConfigFields returns the field count for a config descriptor: the
+// `inputSchema.properties` length for a `configure` section, else the legacy
+// tool's `params` count.
+func countConfigFields(fn map[string]interface{}) string {
+	if is, ok := fn["inputSchema"].(map[string]interface{}); ok {
+		if props, ok := is["properties"].(map[string]interface{}); ok {
+			return fmt.Sprintf("%d", len(props))
+		}
+	}
+	return countOf(fn, "params")
 }
 
 func functionByName(schema map[string]interface{}, name string) map[string]interface{} {
