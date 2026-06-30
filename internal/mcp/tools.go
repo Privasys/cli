@@ -483,6 +483,293 @@ func (s *Server) registerTools() {
 			},
 		},
 		{
+			Name:        "vault_rm",
+			Description: "Delete a vault (key container) by id.",
+			Schema:      obj(map[string]interface{}{"vault_id": strProp("the vault id")}, "vault_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				vaultID, err := requireStr(args, "vault_id")
+				if err != nil {
+					return nil, err
+				}
+				if err := d.Client.DeleteVault(ctx, vaultID); err != nil {
+					return nil, err
+				}
+				return map[string]interface{}{"deleted": true, "vault_id": vaultID}, nil
+			},
+		},
+		{
+			Name:        "vault_key_list",
+			Description: "List the keys in a vault (name, type, version).",
+			Schema:      obj(map[string]interface{}{"vault_id": strProp("the vault id")}, "vault_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				vaultID, err := requireStr(args, "vault_id")
+				if err != nil {
+					return nil, err
+				}
+				return d.Client.ListVaultKeys(ctx, vaultID)
+			},
+		},
+		{
+			Name:        "vault_key_wrap",
+			Description: "Encrypt data under a vault AES-256-GCM key (in-enclave; the key never leaves the constellation). 'plaintext' is the UTF-8 data to encrypt. Returns ciphertext + IV (base64) to pass to vault_key_unwrap.",
+			Schema: obj(map[string]interface{}{
+				"vault_id":  strProp("the vault id"),
+				"name":      strProp("the AES key name"),
+				"plaintext": strProp("the data to encrypt (UTF-8 text)"),
+			}, "vault_id", "name", "plaintext"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				vaultID, err := requireStr(args, "vault_id")
+				if err != nil {
+					return nil, err
+				}
+				name, err := requireStr(args, "name")
+				if err != nil {
+					return nil, err
+				}
+				plaintext, err := requireStr(args, "plaintext")
+				if err != nil {
+					return nil, err
+				}
+				p, err := vaultKeyAddr(ctx, d, vaultID, name, 0)
+				if err != nil {
+					return nil, err
+				}
+				ct, iv, vaultEp, err := secrets.WrapInVault(ctx, p, []byte(plaintext), nil)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]interface{}{
+					"ciphertext_b64": base64.StdEncoding.EncodeToString(ct),
+					"iv_b64":         base64.StdEncoding.EncodeToString(iv),
+					"vault":          vaultEp,
+				}, nil
+			},
+		},
+		{
+			Name:        "vault_key_unwrap",
+			Description: "Decrypt data under a vault AES-256-GCM key (in-enclave). Pass the ciphertext + IV (base64) from vault_key_wrap. Returns the plaintext (base64). NOTE: the decrypted data is returned to you — only do this when the user wants the plaintext.",
+			Schema: obj(map[string]interface{}{
+				"vault_id":       strProp("the vault id"),
+				"name":           strProp("the AES key name"),
+				"ciphertext_b64": strProp("base64 ciphertext from vault_key_wrap"),
+				"iv_b64":         strProp("base64 IV from vault_key_wrap"),
+				"version":        intProp("key version that wrapped the data (0 = current primary)"),
+			}, "vault_id", "name", "ciphertext_b64", "iv_b64"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				vaultID, err := requireStr(args, "vault_id")
+				if err != nil {
+					return nil, err
+				}
+				name, err := requireStr(args, "name")
+				if err != nil {
+					return nil, err
+				}
+				ctB64, err := requireStr(args, "ciphertext_b64")
+				if err != nil {
+					return nil, err
+				}
+				ivB64, err := requireStr(args, "iv_b64")
+				if err != nil {
+					return nil, err
+				}
+				ct, err := base64.StdEncoding.DecodeString(ctB64)
+				if err != nil {
+					return nil, fmt.Errorf("ciphertext_b64: %w", err)
+				}
+				iv, err := base64.StdEncoding.DecodeString(ivB64)
+				if err != nil {
+					return nil, fmt.Errorf("iv_b64: %w", err)
+				}
+				p, err := vaultKeyAddr(ctx, d, vaultID, name, argInt(args, "version"))
+				if err != nil {
+					return nil, err
+				}
+				pt, vaultEp, err := secrets.UnwrapInVault(ctx, p, ct, iv, nil)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]interface{}{"plaintext_b64": base64.StdEncoding.EncodeToString(pt), "vault": vaultEp}, nil
+			},
+		},
+		{
+			Name:        "vault_key_rotate",
+			Description: "Rotate a key: create a new primary version with fresh material (generated in-enclave / client-side; you never see it). Old versions are retained so data signed/wrapped under them still verifies/unwraps.",
+			Schema: obj(map[string]interface{}{
+				"vault_id": strProp("the vault id"),
+				"name":     strProp("the key name"),
+			}, "vault_id", "name"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				vaultID, err := requireStr(args, "vault_id")
+				if err != nil {
+					return nil, err
+				}
+				name, err := requireStr(args, "name")
+				if err != nil {
+					return nil, err
+				}
+				claims, err := auth.Claims(d.Token)
+				if err != nil {
+					return nil, err
+				}
+				sub, _ := claims["sub"].(string)
+				keyType, err := primaryVaultKeyType(ctx, d, vaultID, name)
+				if err != nil {
+					return nil, err
+				}
+				attTok, _ := auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")
+				mint := func(ctx context.Context, cnf string) (string, secrets.VaultAddressing, error) {
+					r, err := d.Client.RotateVaultKeyGrant(ctx, vaultID, name, cnf)
+					if err != nil {
+						return "", secrets.VaultAddressing{}, err
+					}
+					handle, _ := r.Key["handle"].(string)
+					return r.Grant, secrets.VaultAddressing{
+						Handle: handle, Endpoints: r.Constellation.Endpoints, MRENCLAVE: r.Constellation.MRENCLAVE,
+						AttServer: r.Constellation.AttestationServer, Threshold: r.Constellation.Threshold,
+					}, nil
+				}
+				params := secrets.VaultCreateParams{Sub: sub, AttToken: attTok, MintGrant: mint}
+				switch keyType {
+				case "P256SigningKey":
+					return secrets.CreateSigningKeyInVault(ctx, params)
+				case "Aes256GcmKey":
+					return secrets.CreateAesKeyInVault(ctx, params)
+				default:
+					material := make([]byte, 32)
+					if _, err := rand.Read(material); err != nil {
+						return nil, err
+					}
+					params.Secret, params.Exportable = material, true
+					return secrets.CreateInVault(ctx, params)
+				}
+			},
+		},
+		{
+			Name:        "vault_key_rm",
+			Description: "Delete a key. DANGEROUS by default it cryptographically DESTROYS the key material on the constellation (irreversible) then removes the catalogue entry. Set catalogue_only:true to forget the key in your listing without destroying the material. Confirm with the human first.",
+			Schema: obj(map[string]interface{}{
+				"vault_id":       strProp("the vault id"),
+				"name":           strProp("the key name"),
+				"catalogue_only": boolProp("remove the catalogue entry only; leave the material on the vaults"),
+			}, "vault_id", "name"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				vaultID, err := requireStr(args, "vault_id")
+				if err != nil {
+					return nil, err
+				}
+				name, err := requireStr(args, "name")
+				if err != nil {
+					return nil, err
+				}
+				catalogueOnly, _ := args["catalogue_only"].(bool)
+				deletedOn := []string{}
+				if !catalogueOnly {
+					p, perr := vaultKeyAddr(ctx, d, vaultID, name, 0)
+					if perr != nil {
+						return nil, perr
+					}
+					if deletedOn, err = secrets.DestroyKeyInVault(ctx, p); err != nil {
+						return nil, fmt.Errorf("destroy key material: %w", err)
+					}
+				}
+				if err := d.Client.DeleteVaultKey(ctx, vaultID, name); err != nil {
+					return nil, err
+				}
+				return map[string]interface{}{"deleted": true, "destroyed_on": deletedOn}, nil
+			},
+		},
+		{
+			Name:        "vault_key_audit",
+			Description: "Read a key's tamper-evident audit log (every operation, the caller, allowed/denied), read directly from the holder vault.",
+			Schema: obj(map[string]interface{}{
+				"vault_id": strProp("the vault id"),
+				"name":     strProp("the key name"),
+				"limit":    intProp("max entries (default 50)"),
+			}, "vault_id", "name"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				vaultID, err := requireStr(args, "vault_id")
+				if err != nil {
+					return nil, err
+				}
+				name, err := requireStr(args, "name")
+				if err != nil {
+					return nil, err
+				}
+				limit := argInt(args, "limit")
+				if limit <= 0 {
+					limit = 50
+				}
+				p, err := vaultKeyAddr(ctx, d, vaultID, name, 0)
+				if err != nil {
+					return nil, err
+				}
+				entries, vaultEp, err := secrets.ReadAuditInVault(ctx, p, limit)
+				if err != nil {
+					return nil, err
+				}
+				return map[string]interface{}{"entries": entries, "vault": vaultEp}, nil
+			},
+		},
+		{
+			Name:        "apps_owners_list",
+			Description: "List who can access an app (its owners).",
+			Schema:      obj(map[string]interface{}{"app_id": strProp("the app id")}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				appID, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				return d.Client.ListAppOwners(ctx, appID)
+			},
+		},
+		{
+			Name:        "apps_owners_add",
+			Description: "Grant a member (by their subject) access to an app.",
+			Schema: obj(map[string]interface{}{
+				"app_id": strProp("the app id"),
+				"sub":    strProp("the member's subject (privasys.id sub)"),
+				"email":  strProp("member email (optional)"),
+				"name":   strProp("member name (optional)"),
+			}, "app_id", "sub"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				appID, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				sub, err := requireStr(args, "sub")
+				if err != nil {
+					return nil, err
+				}
+				owner := map[string]interface{}{"sub": sub}
+				if e := argStr(args, "email"); e != "" {
+					owner["email"] = e
+				}
+				if n := argStr(args, "name"); n != "" {
+					owner["name"] = n
+				}
+				return d.Client.AddAppOwner(ctx, appID, owner)
+			},
+		},
+		{
+			Name:        "apps_owners_remove",
+			Description: "Remove a member's access to an app.",
+			Schema: obj(map[string]interface{}{
+				"app_id": strProp("the app id"),
+				"sub":    strProp("the member's subject to remove"),
+			}, "app_id", "sub"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				appID, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				sub, err := requireStr(args, "sub")
+				if err != nil {
+					return nil, err
+				}
+				return d.Client.RemoveAppOwner(ctx, appID, sub)
+			},
+		},
+		{
 			Name:        "apps_list",
 			Description: "List the caller's apps.",
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
@@ -1043,6 +1330,33 @@ func mcpConstellation(ctx context.Context, d Deps) (endpoints []string, mrenclav
 		}
 	}
 	return endpoints, mrenclave, attServer
+}
+
+// primaryVaultKeyType returns the key_type of a key's current primary version
+// (used by vault_key_rotate to generate the right new material).
+func primaryVaultKeyType(ctx context.Context, d Deps, vaultID, name string) (string, error) {
+	keys, err := d.Client.ListVaultKeys(ctx, vaultID)
+	if err != nil {
+		return "", err
+	}
+	best, bestV := "", -1
+	for _, k := range keys {
+		if fmt.Sprintf("%v", k["name"]) != name {
+			continue
+		}
+		v := 0
+		if vf, ok := k["version"].(float64); ok {
+			v = int(vf)
+		}
+		if v > bestV {
+			bestV = v
+			best, _ = k["key_type"].(string)
+		}
+	}
+	if bestV < 0 {
+		return "", fmt.Errorf("key %q not found in vault %s", name, vaultID)
+	}
+	return best, nil
 }
 
 // functionByRole returns the first app-schema function with the given role

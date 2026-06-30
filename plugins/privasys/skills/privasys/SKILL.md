@@ -97,6 +97,9 @@ and run is attested.
 Both go through the owner-authed control plane (not the public data path), and
 the relay only forwards to endpoints the attested manifest declares.
 
+**Share access:** `apps_owners_list`, `apps_owners_add` (by the member's
+subject), and `apps_owners_remove` manage who can access and manage an app.
+
 ## Securing user data (the data-protection story)
 
 - Encrypted storage is sealed with a **data key that belongs to the user**, generated inside the confidential hardware; the platform never sees it. See `references/data-protection.md`.
@@ -110,20 +113,22 @@ the relay only forwards to endpoints the attested manifest declares.
 
 The constellation is a confidential, attested key store (a vHSM): keys are
 Shamir-split across SGX enclaves, so no single machine holds usable material and
-the platform never sees it.
+the platform never sees it. The full key surface is available as MCP tools:
 
-- **Vaults & keys:** `vault_create` makes a key container; `vault_key_create`
-  makes a key in it (random, a P-256 **signing** key, or an AES **wrapping** key).
-  It generates the material — you never see the bytes; the owner can export it.
-- **Use a signing key:** `vault_key_sign` signs a message in-enclave (the private
-  key never leaves the constellation); `vault_key_public` returns the public half.
+- **Vaults:** `vault_create`, `vault_list`, `vault_rm`.
+- **Keys:** `vault_key_create` (random, a P-256 **signing** key, or an AES
+  **wrapping** key), `vault_key_list`, `vault_key_rotate` (new primary version,
+  old ones kept for verify/unwrap), `vault_key_rm` (**destroys the material** —
+  confirm with the human), `vault_key_audit` (per-key audit log). You never see
+  the material on create/rotate; the owner can export it.
+- **Use a key:** `vault_key_sign` / `vault_key_public` (signing — the private key
+  never leaves the enclave); `vault_key_wrap` / `vault_key_unwrap` (encrypt /
+  decrypt data under an AES key — `unwrap` returns the plaintext to you, so only
+  use it when the user wants the cleartext back).
 - **User secrets:** `secrets_create` / `secrets_export` (above).
 
-Heavier key management is CLI / REST-facade only — direct the user to it:
-`privasys vault key wrap|unwrap` (encrypt/decrypt under an AES key),
-`vault key rotate` (new key version), `vault key audit` (per-key audit log), and
-`privasys vault serve` — an **Azure Key Vault-shaped REST facade** so non-CLI
-clients and existing tooling can use the vHSM unchanged.
+For existing tooling, `privasys vault serve` runs an **Azure Key Vault-shaped
+REST facade** over a vault (CLI only) so non-CLI clients use the vHSM unchanged.
 
 ## The rule that matters
 
