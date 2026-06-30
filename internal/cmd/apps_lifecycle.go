@@ -1410,7 +1410,7 @@ func newAppsAPICmd() *cobra.Command {
 			}
 			return output.Emit(env.Format, schema, func() output.Table {
 				rows := schemaRows(schema)
-				return output.Table{Headers: []string{"INTERFACE", "FUNCTION", "PARAMS", "RESULTS"}, Rows: rows}
+				return output.Table{Headers: []string{"INTERFACE", "FUNCTION", "ROLE", "PARAMS", "RESULTS"}, Rows: rows}
 			})
 		},
 	}
@@ -1647,7 +1647,11 @@ func schemaRows(schema map[string]interface{}) [][]string {
 			if !ok {
 				continue
 			}
-			rows = append(rows, []string{iface, output.Str(fm, "name"), countOf(fm, "params"), countOf(fm, "results")})
+			role := output.Str(fm, "role")
+			if role == "" {
+				role = "inference"
+			}
+			rows = append(rows, []string{iface, output.Str(fm, "name"), role, countOf(fm, "params"), countOf(fm, "results")})
 		}
 	}
 	if fns, ok := schema["functions"].([]interface{}); ok {
@@ -1672,4 +1676,300 @@ func countOf(m map[string]interface{}, key string) string {
 		return fmt.Sprintf("%d", len(a))
 	}
 	return "0"
+}
+
+// --- config + actions (role-tagged tools on the schema/RPC surface) ---
+
+// newAppsConfigureCmd configures an app by calling its role:config tool through
+// the control-plane relay. A successful call lifts the configure-then-freeze
+// gate. With no --set/--data it describes the required config.
+func newAppsConfigureCmd() *cobra.Command {
+	var set []string
+	var data string
+	cmd := &cobra.Command{
+		Use:   "configure <app-id>",
+		Short: "Configure an app (calls its role:config tool; lifts the freeze gate)",
+		Long: `Submits configuration to the app's role:config tool via the control plane.
+A successful call lifts the configure-then-freeze gate. With no --set/--data,
+prints the config tool and its parameter count.
+
+  --set key=value   config value (repeatable)
+  --data            JSON config body, or @file (overrides --set)`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(ctx, client, args[0])
+			if err != nil {
+				return err
+			}
+			schema, err := client.Schema(ctx, appID)
+			if err != nil {
+				return err
+			}
+			fn := functionByRole(schema, "config")
+			if fn == nil {
+				return fmt.Errorf("app declares no configuration (no role:config tool)")
+			}
+			name := output.Str(fn, "name")
+			if len(set) == 0 && data == "" {
+				return output.Emit(env.Format, fn, func() output.Table {
+					return output.Table{Headers: []string{"CONFIG TOOL", "PARAMS"}, Rows: [][]string{{name, countOf(fn, "params")}}}
+				})
+			}
+			body, err := buildToolBody(set, data)
+			if err != nil {
+				return err
+			}
+			res, err := client.Rpc(ctx, appID, name, body)
+			if err != nil {
+				return err
+			}
+			if e := rpcResultError(res); e != "" {
+				return fmt.Errorf("configure failed: %s", e)
+			}
+			fmt.Fprintln(cmd.OutOrStdout(), "configured (freeze gate lifted)")
+			return nil
+		},
+	}
+	cmd.Flags().StringArrayVar(&set, "set", nil, "config value key=value (repeatable)")
+	cmd.Flags().StringVar(&data, "data", "", "JSON config body (or @file); overrides --set")
+	return cmd
+}
+
+// newAppsActionCmd runs an app action tool via the control-plane relay and, when
+// the tool declares x-privasys.progress, polls the named status tool to a
+// terminal state, printing progress.
+func newAppsActionCmd() *cobra.Command {
+	var arg []string
+	var data string
+	cmd := &cobra.Command{
+		Use:   "action <app-id> <name>",
+		Short: "Run an app action tool, polling progress to completion",
+		Long: `Invokes a role:action tool by name via the control plane. If the tool declares
+a progress channel (x-privasys.progress), polls the status tool until it reaches
+a terminal state.
+
+  --arg key=value   input value (repeatable)
+  --data            JSON body, or @file (overrides --arg)`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(ctx, client, args[0])
+			if err != nil {
+				return err
+			}
+			schema, err := client.Schema(ctx, appID)
+			if err != nil {
+				return err
+			}
+			fn := functionByName(schema, args[1])
+			if fn == nil {
+				return fmt.Errorf("no such function %q (see `app schema`)", args[1])
+			}
+			body, err := buildToolBody(arg, data)
+			if err != nil {
+				return err
+			}
+			res, err := client.Rpc(ctx, appID, args[1], body)
+			if err != nil {
+				return err
+			}
+			if e := rpcResultError(res); e != "" {
+				return fmt.Errorf("action failed: %s", e)
+			}
+			out := cmd.OutOrStdout()
+			prog := progressSpec(fn)
+			if prog == nil {
+				fmt.Fprintln(out, "done")
+				return nil
+			}
+			for i := 0; i < 600; i++ {
+				time.Sleep(2 * time.Second)
+				st, err := client.Rpc(ctx, appID, prog.tool, map[string]interface{}{})
+				if err != nil {
+					return err
+				}
+				stu := unwrapRpcResult(st)
+				state := output.Str(stu, prog.stateField)
+				msg := ""
+				if prog.messageField != "" {
+					msg = output.Str(stu, prog.messageField)
+				}
+				fmt.Fprintf(out, "\r%-10s %-50s", state, msg)
+				if contains(prog.success, state) {
+					fmt.Fprintf(out, "\n")
+					return nil
+				}
+				if contains(prog.failure, state) {
+					return fmt.Errorf("\naction failed: %s", msg)
+				}
+			}
+			return fmt.Errorf("action did not finish in time")
+		},
+	}
+	cmd.Flags().StringArrayVar(&arg, "arg", nil, "input key=value (repeatable)")
+	cmd.Flags().StringVar(&data, "data", "", "JSON body (or @file); overrides --arg")
+	return cmd
+}
+
+// --- helpers for config/action ---
+
+func schemaFunctions(schema map[string]interface{}) []map[string]interface{} {
+	var out []map[string]interface{}
+	if fns, ok := schema["functions"].([]interface{}); ok {
+		for _, f := range fns {
+			if fm, ok := f.(map[string]interface{}); ok {
+				out = append(out, fm)
+			}
+		}
+	}
+	return out
+}
+
+func functionByRole(schema map[string]interface{}, role string) map[string]interface{} {
+	for _, fm := range schemaFunctions(schema) {
+		if output.Str(fm, "role") == role {
+			return fm
+		}
+	}
+	return nil
+}
+
+func functionByName(schema map[string]interface{}, name string) map[string]interface{} {
+	for _, fm := range schemaFunctions(schema) {
+		if output.Str(fm, "name") == name {
+			return fm
+		}
+	}
+	return nil
+}
+
+// buildToolBody turns --set/--arg key=value pairs (or a --data JSON blob) into a
+// request body.
+func buildToolBody(kv []string, data string) (interface{}, error) {
+	if data != "" {
+		b := []byte(data)
+		if data[0] == '@' {
+			bb, err := os.ReadFile(data[1:])
+			if err != nil {
+				return nil, err
+			}
+			b = bb
+		}
+		var v interface{}
+		if err := json.Unmarshal(b, &v); err != nil {
+			return nil, fmt.Errorf("--data is not valid JSON")
+		}
+		return v, nil
+	}
+	m := map[string]interface{}{}
+	for _, p := range kv {
+		i := strings.IndexByte(p, '=')
+		if i < 0 {
+			return nil, fmt.Errorf("invalid key=value %q", p)
+		}
+		m[p[:i]] = p[i+1:]
+	}
+	return m, nil
+}
+
+// rpcResultError returns a non-empty error string if the RPC envelope carries a
+// transport error or a WIT-level Err (returns[0].value.err); otherwise "".
+func rpcResultError(res map[string]interface{}) string {
+	if e, ok := res["error"].(string); ok && e != "" {
+		return e
+	}
+	if rs, ok := res["returns"].([]interface{}); ok && len(rs) > 0 {
+		if r0, ok := rs[0].(map[string]interface{}); ok {
+			if val, ok := r0["value"].(map[string]interface{}); ok {
+				if e, ok := val["err"]; ok && e != nil {
+					return fmt.Sprintf("%v", e)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// unwrapRpcResult returns the inner record of an RPC response: container apps
+// return their JSON directly; wasm apps wrap it as returns[0].value(.ok).
+func unwrapRpcResult(res map[string]interface{}) map[string]interface{} {
+	if rs, ok := res["returns"].([]interface{}); ok && len(rs) > 0 {
+		if r0, ok := rs[0].(map[string]interface{}); ok {
+			if val, ok := r0["value"].(map[string]interface{}); ok {
+				if okv, ok := val["ok"].(map[string]interface{}); ok {
+					return okv
+				}
+				return val
+			}
+		}
+	}
+	return res
+}
+
+type progSpec struct {
+	tool, stateField, progressField, messageField string
+	success, failure                              []string
+}
+
+func progressSpec(fn map[string]interface{}) *progSpec {
+	xp, ok := fn["x_privasys"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	p, ok := xp["progress"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	ps := &progSpec{
+		tool:          output.Str(p, "tool"),
+		stateField:    output.Str(p, "stateField"),
+		progressField: output.Str(p, "progressField"),
+		messageField:  output.Str(p, "messageField"),
+	}
+	if ps.tool == "" || ps.stateField == "" {
+		return nil
+	}
+	if t, ok := p["terminal"].(map[string]interface{}); ok {
+		ps.success = anyToStrSlice(t["success"])
+		ps.failure = anyToStrSlice(t["failure"])
+	}
+	return ps
+}
+
+func anyToStrSlice(v interface{}) []string {
+	a, ok := v.([]interface{})
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(a))
+	for _, x := range a {
+		out = append(out, fmt.Sprintf("%v", x))
+	}
+	return out
+}
+
+func contains(ss []string, s string) bool {
+	for _, x := range ss {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
