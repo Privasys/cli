@@ -195,9 +195,10 @@ func (f *kvFacade) getPublic(w http.ResponseWriter, r *http.Request) {
 
 func (f *kvFacade) sign(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Alg     string `json:"alg"`
-		Value   string `json:"value"` // base64url message (see impedance note)
-		Version int    `json:"version"`
+		Alg       string `json:"alg"`
+		Value     string `json:"value"` // base64url message, or a digest when prehashed
+		Version   int    `json:"version"`
+		Prehashed bool   `json:"prehashed"` // value is a 32-byte SHA-256 digest, signed raw (CKM_ECDSA)
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeKVError(w, http.StatusBadRequest, err)
@@ -213,7 +214,11 @@ func (f *kvFacade) sign(w http.ResponseWriter, r *http.Request) {
 		writeKVError(w, http.StatusBadGateway, err)
 		return
 	}
-	res, err := secrets.SignInVault(r.Context(), p, msg)
+	sign := secrets.SignInVault
+	if body.Prehashed {
+		sign = secrets.SignPrehashInVault
+	}
+	res, err := sign(r.Context(), p, msg)
 	if err != nil {
 		writeKVError(w, http.StatusBadGateway, err)
 		return

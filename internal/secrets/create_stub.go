@@ -32,6 +32,10 @@ func SignInVault(ctx context.Context, p VaultOpParams, message []byte) (*SignRes
 	return nil, errors.New("signing requires the RA-TLS build of the CLI (use a released binary)")
 }
 
+func SignPrehashInVault(ctx context.Context, p VaultOpParams, digest []byte) (*SignResult, error) {
+	return nil, errors.New("signing requires the RA-TLS build of the CLI (use a released binary)")
+}
+
 func GetPublicKeyInVault(ctx context.Context, p VaultOpParams) (*PublicKeyResult, error) {
 	return nil, errors.New("reading a public key requires the RA-TLS build of the CLI (use a released binary)")
 }

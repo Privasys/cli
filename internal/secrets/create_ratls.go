@@ -261,6 +261,35 @@ func SignInVault(ctx context.Context, p VaultOpParams, message []byte) (*SignRes
 	return nil, fmt.Errorf("no vault could sign %q: %v", p.Handle, lastErr)
 }
 
+// SignPrehashInVault signs a 32-byte SHA-256 digest raw (ECDSA-P256, no re-hash)
+// — for PKCS#11 CKM_ECDSA / TLS. Mirrors SignInVault but uses the prehash path.
+func SignPrehashInVault(ctx context.Context, p VaultOpParams, digest []byte) (*SignResult, error) {
+	verify, err := verifyPolicy(p.MRENCLAVE, p.AttServer, p.AttToken)
+	if err != nil {
+		return nil, err
+	}
+	opts := vault.DialOptions{AuthToken: staticToken(p.OwnerToken), VaultPolicy: verify}
+	var lastErr error
+	for _, ep := range p.Endpoints {
+		c, derr := vault.Dial(ctx, vaultReg(ep), opts)
+		if derr != nil {
+			lastErr = derr
+			continue
+		}
+		sig, alg, serr := c.SignPrehash(ctx, p.Handle, digest)
+		c.Close()
+		if serr != nil {
+			if strings.Contains(serr.Error(), "not found") {
+				continue // not the holder vault
+			}
+			lastErr = serr
+			continue
+		}
+		return &SignResult{Signature: sig, Alg: alg, Vault: ep}, nil
+	}
+	return nil, fmt.Errorf("no vault could sign %q: %v", p.Handle, lastErr)
+}
+
 // GetPublicKeyInVault returns a key's public half + type, trying each endpoint
 // until the holder responds.
 func GetPublicKeyInVault(ctx context.Context, p VaultOpParams) (*PublicKeyResult, error) {
