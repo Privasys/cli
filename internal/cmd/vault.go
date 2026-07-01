@@ -388,10 +388,16 @@ func vaultKeyAddressing(ctx context.Context, cmd *cobra.Command, env *Env, clien
 func newVaultKeySignCmd() *cobra.Command {
 	var fromFile string
 	var version int
+	var prehashed bool
 	cmd := &cobra.Command{
 		Use:   "sign <vault-id> <name> [message]",
 		Short: "Sign a message with a vault signing key (in-enclave; key never leaves)",
-		Args:  cobra.RangeArgs(2, 3),
+		Long: `Signs with a vault P-256 key inside the enclave; the private key never leaves
+the constellation. By default the vault hashes the message (SHA-256) and signs.
+With --prehashed the input IS a pre-computed 32-byte SHA-256 digest (64 hex
+chars, or the raw bytes via --from-file), signed raw (CKM_ECDSA) — what TLS
+stacks and code signers need, avoiding a double hash.`,
+		Args: cobra.RangeArgs(2, 3),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
 			if err != nil {
@@ -409,7 +415,16 @@ func newVaultKeySignCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, err := secrets.SignInVault(cmd.Context(), p, msg)
+			var res *secrets.SignResult
+			if prehashed {
+				digest, derr := secrets.DigestBytes(msg)
+				if derr != nil {
+					return derr
+				}
+				res, err = secrets.SignPrehashInVault(cmd.Context(), p, digest)
+			} else {
+				res, err = secrets.SignInVault(cmd.Context(), p, msg)
+			}
 			if err != nil {
 				return err
 			}
@@ -427,6 +442,7 @@ func newVaultKeySignCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&fromFile, "from-file", "", "read the message bytes from a file")
 	cmd.Flags().IntVar(&version, "version", 0, "key version to use (0 = current primary)")
+	cmd.Flags().BoolVar(&prehashed, "prehashed", false, "the input is a 32-byte SHA-256 digest (64 hex chars or raw bytes); sign it raw (CKM_ECDSA), no re-hash")
 	return cmd
 }
 

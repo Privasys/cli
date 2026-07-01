@@ -423,12 +423,13 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "vault_key_sign",
-			Description: "Sign a message with a vault signing key. The private key never leaves the constellation — it is signed in-enclave over RA-TLS. Returns the signature (base64) and algorithm.",
+			Description: "Sign a message with a vault signing key. The private key never leaves the constellation — it is signed in-enclave over RA-TLS. Returns the signature (base64) and algorithm. Set prehashed:true when 'message' is a pre-computed SHA-256 digest as 64 hex chars — it is signed raw (CKM_ECDSA, no re-hash), what TLS stacks and code signers need.",
 			Schema: obj(map[string]interface{}{
-				"vault_id": strProp("the vault id"),
-				"name":     strProp("the key name"),
-				"message":  strProp("the message to sign (UTF-8 text)"),
-				"version":  intProp("key version (0 = current primary)"),
+				"vault_id":  strProp("the vault id"),
+				"name":      strProp("the key name"),
+				"message":   strProp("the message to sign (UTF-8 text), or with prehashed: the 32-byte SHA-256 digest as 64 hex chars"),
+				"version":   intProp("key version (0 = current primary)"),
+				"prehashed": boolProp("message is a SHA-256 digest (64 hex chars); sign it raw, no re-hash"),
 			}, "vault_id", "name", "message"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				vaultID, err := requireStr(args, "vault_id")
@@ -447,7 +448,16 @@ func (s *Server) registerTools() {
 				if err != nil {
 					return nil, err
 				}
-				res, err := secrets.SignInVault(ctx, p, []byte(message))
+				var res *secrets.SignResult
+				if pre, _ := args["prehashed"].(bool); pre {
+					digest, derr := secrets.DigestBytes([]byte(message))
+					if derr != nil {
+						return nil, derr
+					}
+					res, err = secrets.SignPrehashInVault(ctx, p, digest)
+				} else {
+					res, err = secrets.SignInVault(ctx, p, []byte(message))
+				}
 				if err != nil {
 					return nil, err
 				}

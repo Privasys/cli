@@ -122,9 +122,11 @@ the platform never sees it. The full key surface is available as MCP tools:
   confirm with the human), `vault_key_audit` (per-key audit log). You never see
   the material on create/rotate; the owner can export it.
 - **Use a key:** `vault_key_sign` / `vault_key_public` (signing — the private key
-  never leaves the enclave); `vault_key_wrap` / `vault_key_unwrap` (encrypt /
-  decrypt data under an AES key — `unwrap` returns the plaintext to you, so only
-  use it when the user wants the cleartext back).
+  never leaves the enclave; pass `prehashed:true` with a 64-hex-char SHA-256
+  digest to sign it raw, the CKM_ECDSA / TLS / code-signing form);
+  `vault_key_wrap` / `vault_key_unwrap` (encrypt / decrypt data under an AES key
+  — `unwrap` returns the plaintext to you, so only use it when the user wants
+  the cleartext back).
 - **User secrets:** `secrets_create` / `secrets_export` (above).
 
 For existing tooling, `privasys vault serve` runs an **Azure Key Vault-shaped

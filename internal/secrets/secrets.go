@@ -30,11 +30,13 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"math/big"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -142,6 +144,20 @@ type AuditRecord struct {
 	Caller   string `json:"caller"`
 	Decision string `json:"decision"`
 	Reason   string `json:"reason,omitempty"`
+}
+
+// DigestBytes normalises a pre-hashed sign input to the raw 32-byte SHA-256
+// digest: 64 hex chars (the natural CLI/agent form) or the 32 raw bytes.
+func DigestBytes(in []byte) ([]byte, error) {
+	if len(in) == 64 {
+		if b, err := hex.DecodeString(strings.TrimSpace(string(in))); err == nil {
+			return b, nil
+		}
+	}
+	if len(in) == 32 {
+		return in, nil
+	}
+	return nil, fmt.Errorf("prehashed sign expects a 32-byte SHA-256 digest (64 hex chars or 32 raw bytes); got %d bytes", len(in))
 }
 
 // staticToken is an AuthTokenSource over a fixed bearer (the owner's token).
