@@ -52,9 +52,9 @@ var DefaultEndpoints = []string{
 }
 
 const (
-	// Fallback pin (vault-v0.24.0, Paris+London 8443/8444). The directory is the
+	// Fallback pin (vault-v0.26.0, Paris+London 8443/8444). The directory is the
 	// source of truth; this is only used if /api/v1/vaults can't be reached.
-	DefaultMRENCLAVE = "f463b560dfaa4e30fe01165e4feb733eb94463143b0096afd18f83dd7008a9c5"
+	DefaultMRENCLAVE = "d881cff03f1d3be5899fde6605b37fe4e859e5d6c99dd8cbf3bcbc023fe26215"
 	DefaultAttServer = "https://as.privasys.org/verify"
 )
 
