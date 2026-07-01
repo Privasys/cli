@@ -101,8 +101,11 @@ func CreateAesKeyInVault(ctx context.Context, p VaultCreateParams) (*Result, err
 
 // WrapInVault encrypts plaintext under an AES-256-GCM key in-enclave (the key
 // never leaves), authenticating as the owner. Returns (ciphertext, iv). Tries
-// each endpoint until the holder vault responds.
-func WrapInVault(ctx context.Context, p VaultOpParams, plaintext, aad []byte) (ciphertext, iv []byte, vaultEp string, err error) {
+// each endpoint until the holder vault responds. iv is optional: nil lets the
+// vault generate one (the default); a caller-supplied 12-byte IV serves callers
+// whose protocol fixes the nonce (PKCS#11 CKM_AES_GCM) — the caller then owns
+// nonce uniqueness per key.
+func WrapInVault(ctx context.Context, p VaultOpParams, plaintext, aad, iv []byte) (ciphertext, gotIV []byte, vaultEp string, err error) {
 	verify, verr := verifyPolicy(p.MRENCLAVE, p.AttServer, p.AttToken)
 	if verr != nil {
 		return nil, nil, "", verr
@@ -115,7 +118,7 @@ func WrapInVault(ctx context.Context, p VaultOpParams, plaintext, aad []byte) (c
 			lastErr = derr
 			continue
 		}
-		ct, gotIV, werr := c.Wrap(ctx, p.Handle, plaintext, aad, nil)
+		ct, gotIV, werr := c.Wrap(ctx, p.Handle, plaintext, aad, iv)
 		c.Close()
 		if werr != nil {
 			if strings.Contains(werr.Error(), "not found") {

@@ -534,7 +534,7 @@ func (s *Server) registerTools() {
 				if err != nil {
 					return nil, err
 				}
-				ct, iv, vaultEp, err := secrets.WrapInVault(ctx, p, []byte(plaintext), nil)
+				ct, iv, vaultEp, err := secrets.WrapInVault(ctx, p, []byte(plaintext), nil, nil)
 				if err != nil {
 					return nil, err
 				}

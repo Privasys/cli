@@ -520,7 +520,7 @@ func newVaultKeyWrapCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ct, iv, vaultEp, err := secrets.WrapInVault(cmd.Context(), p, pt, nil)
+			ct, iv, vaultEp, err := secrets.WrapInVault(cmd.Context(), p, pt, nil, nil)
 			if err != nil {
 				return err
 			}

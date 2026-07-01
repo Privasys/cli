@@ -45,7 +45,7 @@ Endpoints (base http://<addr>):
   POST   /keys/{name}/create        {"kty":"EC"|"oct"|"secret"}
   GET    /keys/{name}               -> JWK (signing keys)
   POST   /keys/{name}/sign          {"alg":"ES256","value":"<base64url message>"}
-  POST   /keys/{name}/wrapKey       {"value":"<base64url plaintext>"}
+  POST   /keys/{name}/wrapKey       {"value":"<base64url plaintext>","iv":"<optional base64url 12-byte IV>"}
   POST   /keys/{name}/unwrapKey     {"value":"<base64url ciphertext>","iv":"<base64url>"}
   POST   /keys/{name}/rotate
   DELETE /keys/{name}`,
@@ -229,6 +229,10 @@ func (f *kvFacade) sign(w http.ResponseWriter, r *http.Request) {
 func (f *kvFacade) wrap(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Value string `json:"value"`
+		// Optional caller-supplied 12-byte GCM IV (base64url). PKCS#11
+		// CKM_AES_GCM fixes the nonce caller-side; empty lets the vault
+		// generate one (the default, and the safer choice).
+		IV string `json:"iv"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeKVError(w, http.StatusBadRequest, err)
@@ -239,12 +243,20 @@ func (f *kvFacade) wrap(w http.ResponseWriter, r *http.Request) {
 		writeKVError(w, http.StatusBadRequest, fmt.Errorf("value must be base64url"))
 		return
 	}
+	var reqIV []byte
+	if body.IV != "" {
+		reqIV, err = base64.RawURLEncoding.DecodeString(body.IV)
+		if err != nil {
+			writeKVError(w, http.StatusBadRequest, fmt.Errorf("iv must be base64url"))
+			return
+		}
+	}
 	p, err := f.addr(r, r.PathValue("name"))
 	if err != nil {
 		writeKVError(w, http.StatusBadGateway, err)
 		return
 	}
-	ct, iv, _, err := secrets.WrapInVault(r.Context(), p, pt, nil)
+	ct, iv, _, err := secrets.WrapInVault(r.Context(), p, pt, nil, reqIV)
 	if err != nil {
 		writeKVError(w, http.StatusBadGateway, err)
 		return

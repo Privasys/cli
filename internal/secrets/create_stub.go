@@ -44,7 +44,7 @@ func CreateAesKeyInVault(ctx context.Context, p VaultCreateParams) (*Result, err
 	return nil, errors.New("creating a wrapping key requires the RA-TLS build of the CLI (use a released binary)")
 }
 
-func WrapInVault(ctx context.Context, p VaultOpParams, plaintext, aad []byte) (ciphertext, iv []byte, vaultEp string, err error) {
+func WrapInVault(ctx context.Context, p VaultOpParams, plaintext, aad, iv []byte) (ciphertext, gotIV []byte, vaultEp string, err error) {
 	return nil, nil, "", errors.New("wrap requires the RA-TLS build of the CLI (use a released binary)")
 }
 
