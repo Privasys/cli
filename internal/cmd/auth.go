@@ -79,6 +79,7 @@ func newAuthLoginCmd() *cobra.Command {
 			}
 			sub := subjectOf(tr.AccessToken)
 			output.Success(cmd.OutOrStdout(), "Logged in%s", whom(sub))
+			hintAgents(cmd)
 			return nil
 		},
 	}

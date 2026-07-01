@@ -16,6 +16,21 @@ import (
 	"github.com/Privasys/cli/internal/output"
 )
 
+// hintAgents nudges a human (interactive terminal only) toward wiring their AI
+// agent after a natural moment like sign-in — the step new users miss. Silent on
+// pipes/agents/JSON, and skipped when the current directory is already wired.
+func hintAgents(cmd *cobra.Command) {
+	w := cmd.ErrOrStderr()
+	if !output.IsTTY(w) {
+		return
+	}
+	if _, err := os.Stat(".mcp.json"); err == nil {
+		return // already wired in this project
+	}
+	fmt.Fprintf(w, "\n%s let an AI agent (Claude Code, Cursor, …) drive Privasys — run %s in your project.\n",
+		output.Blue("tip:"), output.Bold("privasys agents init"))
+}
+
 func newAgentsCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "agents",
@@ -109,8 +124,13 @@ func newAgentsInitCmd() *cobra.Command {
 				output.Success(cmd.ErrOrStderr(), "%s %s", r.Status, r.Path)
 			}
 			if !env.Quiet {
-				fmt.Fprintf(cmd.ErrOrStderr(), "\n%s Next: start your agent here, or run %s to verify the wiring.\n",
-					output.Check(), output.Bold("privasys mcp serve"))
+				w := cmd.ErrOrStderr()
+				fmt.Fprintf(w, "\n%s Wired. Next steps:\n", output.Check())
+				fmt.Fprintf(w, "  1. %s your agent/editor so it picks up the new config (and your PATH, if you just installed privasys).\n", output.Bold("Restart"))
+				fmt.Fprintf(w, "  2. Verify it can reach the CLI — ask the agent to run:  %s\n", output.Bold("privasys version"))
+				fmt.Fprintf(w, "  3. Try it:  \"deploy me a confidential app\"  or  \"check my Privasys account\".\n")
+				fmt.Fprintf(w, "\nUsing the Claude Code terminal CLI? For the full skill + /deploy /attest commands instead:\n")
+				fmt.Fprintf(w, "  %s\n", output.Bold("claude plugin marketplace add Privasys/cli && claude plugin install privasys@privasys"))
 			}
 			return nil
 		},
