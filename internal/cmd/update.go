@@ -105,7 +105,9 @@ against the release's checksums.txt.`,
 
 // detectInstallChannel classifies how this binary was installed from its path.
 func detectInstallChannel(exe string) string {
-	p := strings.ToLower(filepath.ToSlash(exe))
+	// Normalise both separators explicitly: filepath.ToSlash only converts on
+	// Windows, and this classification must behave identically everywhere.
+	p := strings.ToLower(strings.ReplaceAll(exe, `\`, "/"))
 	switch {
 	case strings.Contains(p, "/scoop/"):
 		return "scoop"
