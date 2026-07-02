@@ -1470,16 +1470,9 @@ quote verification (genuine TEE + TCB) against the attestation server.
 
 			var body []byte
 			if data != "" {
-				body = []byte(data)
-				if data[0] == '@' {
-					b, rerr := os.ReadFile(data[1:])
-					if rerr != nil {
-						return rerr
-					}
-					body = b
-				}
-				if !json.Valid(body) {
-					return fmt.Errorf("--data is not valid JSON")
+				var perr error
+				if body, perr = parseJSONDataArg(data); perr != nil {
+					return perr
 				}
 			}
 
@@ -1897,17 +1890,13 @@ func functionByName(schema map[string]interface{}, name string) map[string]inter
 // request body.
 func buildToolBody(kv []string, data string) (interface{}, error) {
 	if data != "" {
-		b := []byte(data)
-		if data[0] == '@' {
-			bb, err := os.ReadFile(data[1:])
-			if err != nil {
-				return nil, err
-			}
-			b = bb
+		b, err := parseJSONDataArg(data)
+		if err != nil {
+			return nil, err
 		}
 		var v interface{}
 		if err := json.Unmarshal(b, &v); err != nil {
-			return nil, fmt.Errorf("--data is not valid JSON")
+			return nil, fmt.Errorf("--data is not valid JSON: %w", err)
 		}
 		return v, nil
 	}
