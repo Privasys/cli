@@ -21,6 +21,24 @@ import (
 	"github.com/Privasys/cli/internal/secrets"
 )
 
+// slugifyDisplayName reduces a friendly display name (e.g. "Web Search (Brave)")
+// to its canonical app-name form: lowercase, spaces to hyphens, everything else
+// dropped. Kept in lockstep with the management-service and the portal so a
+// display name always corresponds to the app name.
+func slugifyDisplayName(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
+			b.WriteRune(r)
+		case r == ' ':
+			b.WriteByte('-')
+		}
+	}
+	return b.String()
+}
+
 func newAppsCreateCmd() *cobra.Command {
 	var (
 		name, displayName, description string
@@ -40,6 +58,15 @@ func newAppsCreateCmd() *cobra.Command {
 			}
 			if name == "" || source == "" {
 				return fmt.Errorf("--name and --source are required")
+			}
+			// A friendly display name must reduce to the canonical app name
+			// (lowercase, spaces to hyphens, other characters dropped). Checked
+			// locally for a fast, clear error; the server enforces it too.
+			if displayName != "" {
+				canonical := strings.ToLower(strings.TrimSpace(name))
+				if slug := slugifyDisplayName(displayName); slug != canonical {
+					return fmt.Errorf("--display-name %q must reduce to --name %q (it reduces to %q): lowercase, spaces become hyphens, other characters are dropped", displayName, canonical, slug)
+				}
 			}
 			body := map[string]interface{}{"name": name, "source_type": source}
 			putStr(body, "display_name", displayName)
