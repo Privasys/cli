@@ -113,6 +113,77 @@ func newAppsCreateCmd() *cobra.Command {
 	return cmd
 }
 
+func newAppsRenameCmd() *cobra.Command {
+	var title string
+	cmd := &cobra.Command{
+		Use:   "rename <app> --title <title>",
+		Short: "Change an app's display title (the canonical name/slug is immutable)",
+		Long: `Sets the app's friendly display title (display_name), e.g. "Web Search (Brave)".
+
+The title must reduce to the canonical app name (lowercase, spaces become
+hyphens, other characters dropped) — the canonical name/slug itself cannot be
+changed. Pass an empty --title to reset the title to the canonical name.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			if !cmd.Flags().Changed("title") {
+				return fmt.Errorf("--title is required")
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
+			// Fetch the app: we need its canonical name for the slug check, and
+			// its existing store fields to echo back (UpdateStoreListing does a
+			// full overwrite of the listing, so a bare title change would wipe
+			// the rest).
+			cur, gerr := client.GetApp(cmd.Context(), appID)
+			if gerr != nil {
+				return gerr
+			}
+			canonical := output.Str(cur, "name")
+			// Local slug check for a fast, clear error (the server enforces it too).
+			if t := strings.TrimSpace(title); t != "" {
+				if slug := slugifyDisplayName(t); slug != canonical {
+					return fmt.Errorf("title %q must reduce to the app name %q (it reduces to %q): lowercase, spaces become hyphens, other characters are dropped", t, canonical, slug)
+				}
+			}
+			fields := map[string]interface{}{
+				"display_name":        title,
+				"store_tagline":       output.Str(cur, "store_tagline"),
+				"store_description":   output.Str(cur, "store_description"),
+				"store_category":      output.Str(cur, "store_category"),
+				"store_icon_url":      output.Str(cur, "store_icon_url"),
+				"store_screenshots":   cur["store_screenshots"],
+				"store_privacy_url":   output.Str(cur, "store_privacy_url"),
+				"store_tos_url":       output.Str(cur, "store_tos_url"),
+				"store_website_url":   output.Str(cur, "store_website_url"),
+				"store_support_email": output.Str(cur, "store_support_email"),
+				"store_keywords":      output.Str(cur, "store_keywords"),
+			}
+			app, err := client.UpdateStoreListing(cmd.Context(), appID, fields)
+			if err != nil {
+				return err
+			}
+			if !env.Quiet {
+				output.Success(cmd.ErrOrStderr(), "Renamed %s to %q", args[0], output.Str(app, "display_name"))
+			}
+			return output.Emit(env.Format, app, func() output.Table {
+				return kvTable(app, []string{"name", "display_name", "id"})
+			})
+		},
+	}
+	cmd.Flags().StringVar(&title, "title", "", "display title (must reduce to the canonical app name)")
+	return cmd
+}
+
 func newAppsStoreListingCmd() *cobra.Command {
 	var description, category, tagline, iconURL, privacyURL, tosURL, websiteURL, supportEmail, keywords string
 	var screenshots []string
