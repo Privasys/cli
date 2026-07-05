@@ -551,7 +551,7 @@ control or for scripting.`,
 				}
 			}
 
-			res, err := client.PromoteProfile(ctx, appID, vid, pendingID)
+			res, err := promoteWithStepUp(cmd, env, client, appID, vid, pendingID, nil)
 			if err != nil {
 				return err
 			}
@@ -657,7 +657,7 @@ version loads cleanly with no locked-data window.`,
 						return fmt.Errorf("aborted")
 					}
 				}
-				if _, prerr := client.PromoteProfile(ctx, appID, vid, pendingID); prerr != nil {
+				if _, prerr := promoteWithStepUp(cmd, env, client, appID, vid, pendingID, nil); prerr != nil {
 					return prerr
 				}
 				if !env.Quiet {
@@ -1129,6 +1129,76 @@ func newVersionsPendingCmd() *cobra.Command {
 	}
 }
 
+// promoteWithStepUp promotes pendingID for (appID, vid). When the app's vault
+// key gates promote on an operation-bound WebAuthn step-up (VAULT_REQUIRE_STEPUP),
+// it drives the browser passkey ceremony and promotes with the resulting
+// operation-bound token as the bearer — the management-service forwards that
+// bearer to the vault, which recomputes the binding and releases the key.
+// Otherwise it promotes with the ordinary owner bearer. approvalTokens carries
+// any separation-of-duties co-sign tokens.
+func promoteWithStepUp(cmd *cobra.Command, env *Env, client *api.Client, appID, vid string, pendingID int, approvalTokens []string) (map[string]interface{}, error) {
+	ctx := cmd.Context()
+	tgt, err := client.GetVaultExportTarget(ctx, appID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve vault key for step-up: %w", err)
+	}
+	if !tgt.RequireStepUp {
+		return client.PromoteProfile(ctx, appID, vid, pendingID, approvalTokens...)
+	}
+	digest, policyVersion, err := pendingStepUpBinding(ctx, client, appID, vid, pendingID)
+	if err != nil {
+		return nil, err
+	}
+	bearer, err := auth.AccessToken(ctx, env.Cfg.Issuer)
+	if err != nil {
+		return nil, err
+	}
+	stepTok, err := secrets.RequestStepUpViaBrowser(ctx, env.Cfg.Issuer, bearer, "promote",
+		tgt.Handle, digest, policyVersion, secrets.OpenBrowser, cmd.ErrOrStderr())
+	if err != nil {
+		return nil, err
+	}
+	// The step-up token carries the owner sub AND the operation-bound webauthn
+	// proof, so it satisfies both the owner principal and the OidcStepUp condition
+	// in one bearer. Swap it in only for this promote call.
+	sc := *client
+	sc.Token = stepTok
+	return sc.PromoteProfile(ctx, appID, vid, pendingID, approvalTokens...)
+}
+
+// pendingStepUpBinding pulls the operation-binding inputs (profile_binding_digest
+// and the key's current policy_version) for pendingID from the enriched pending
+// list, so the step-up token binds this exact promote and nothing else.
+func pendingStepUpBinding(ctx context.Context, client *api.Client, appID, vid string, pendingID int) (string, uint32, error) {
+	pend, err := client.ListPending(ctx, appID, vid)
+	if err != nil {
+		return "", 0, err
+	}
+	vaults, _ := pend["vaults"].([]interface{})
+	for _, v := range vaults {
+		vm, _ := v.(map[string]interface{})
+		plist, _ := vm["pending"].([]interface{})
+		for _, p := range plist {
+			pm, _ := p.(map[string]interface{})
+			if int(jsonNum(pm["id"])) != pendingID {
+				continue
+			}
+			digest, _ := pm["profile_binding_digest"].(string)
+			if digest == "" {
+				return "", 0, fmt.Errorf("pending #%d carries no binding digest; the platform may be too old for step-up promote", pendingID)
+			}
+			return digest, uint32(jsonNum(pm["policy_version"])), nil
+		}
+	}
+	return "", 0, fmt.Errorf("pending profile #%d not found; stage the measurement first", pendingID)
+}
+
+// jsonNum coerces a decoded JSON number (float64) to a float, 0 if absent.
+func jsonNum(v interface{}) float64 {
+	f, _ := v.(float64)
+	return f
+}
+
 func newVersionsPromoteCmd() *cobra.Command {
 	var pendingID int
 	var approvalTokens []string
@@ -1156,7 +1226,7 @@ If the app opted into separation-of-duties co-sign, pass a fresh co-sign token f
 			if err != nil {
 				return err
 			}
-			res, err := client.PromoteProfile(cmd.Context(), appID, vid, pendingID, approvalTokens...)
+			res, err := promoteWithStepUp(cmd, env, client, appID, vid, pendingID, approvalTokens)
 			if err != nil {
 				return err
 			}
