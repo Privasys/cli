@@ -113,6 +113,26 @@ func newAppsCreateCmd() *cobra.Command {
 	return cmd
 }
 
+// currentStoreFields returns an app's existing store_* listing as an
+// UpdateStoreListing payload. The server overwrites ALL store fields on every
+// call (no partial merge), so any command that changes a subset must seed from
+// this to avoid wiping the rest. display_name is left out on purpose — the
+// server treats it as an optional pointer and leaves it untouched when absent.
+func currentStoreFields(app map[string]interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"store_tagline":       output.Str(app, "store_tagline"),
+		"store_description":   output.Str(app, "store_description"),
+		"store_category":      output.Str(app, "store_category"),
+		"store_icon_url":      output.Str(app, "store_icon_url"),
+		"store_screenshots":   app["store_screenshots"],
+		"store_privacy_url":   output.Str(app, "store_privacy_url"),
+		"store_tos_url":       output.Str(app, "store_tos_url"),
+		"store_website_url":   output.Str(app, "store_website_url"),
+		"store_support_email": output.Str(app, "store_support_email"),
+		"store_keywords":      output.Str(app, "store_keywords"),
+	}
+}
+
 func newAppsRenameCmd() *cobra.Command {
 	var title string
 	cmd := &cobra.Command{
@@ -155,19 +175,8 @@ changed. Pass an empty --title to reset the title to the canonical name.`,
 					return fmt.Errorf("title %q must reduce to the app name %q (it reduces to %q): lowercase, spaces become hyphens, other characters are dropped", t, canonical, slug)
 				}
 			}
-			fields := map[string]interface{}{
-				"display_name":        title,
-				"store_tagline":       output.Str(cur, "store_tagline"),
-				"store_description":   output.Str(cur, "store_description"),
-				"store_category":      output.Str(cur, "store_category"),
-				"store_icon_url":      output.Str(cur, "store_icon_url"),
-				"store_screenshots":   cur["store_screenshots"],
-				"store_privacy_url":   output.Str(cur, "store_privacy_url"),
-				"store_tos_url":       output.Str(cur, "store_tos_url"),
-				"store_website_url":   output.Str(cur, "store_website_url"),
-				"store_support_email": output.Str(cur, "store_support_email"),
-				"store_keywords":      output.Str(cur, "store_keywords"),
-			}
+			fields := currentStoreFields(cur)
+			fields["display_name"] = title
 			app, err := client.UpdateStoreListing(cmd.Context(), appID, fields)
 			if err != nil {
 				return err
@@ -205,7 +214,14 @@ func newAppsStoreListingCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fields := map[string]interface{}{}
+			// Seed from the current listing so unspecified fields survive — the
+			// server overwrites ALL store fields on every call.
+			cur, gerr := client.GetApp(cmd.Context(), appID)
+			if gerr != nil {
+				return gerr
+			}
+			fields := currentStoreFields(cur)
+			changed := false
 			for flag, key := range map[string]string{
 				"description": "store_description", "category": "store_category",
 				"tagline": "store_tagline", "icon-url": "store_icon_url",
@@ -216,12 +232,14 @@ func newAppsStoreListingCmd() *cobra.Command {
 				if cmd.Flags().Changed(flag) {
 					v, _ := cmd.Flags().GetString(flag)
 					fields[key] = v
+					changed = true
 				}
 			}
 			if cmd.Flags().Changed("screenshot") {
 				fields["store_screenshots"] = screenshots
+				changed = true
 			}
-			if len(fields) == 0 {
+			if !changed {
 				return fmt.Errorf("nothing to set; pass at least --description and --category")
 			}
 			app, err := client.UpdateStoreListing(cmd.Context(), appID, fields)
