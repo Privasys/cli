@@ -75,7 +75,14 @@ against the release's checksums.txt.`,
 			if err != nil {
 				return err
 			}
-			exe, _ = filepath.EvalSymlinks(exe)
+			// Resolve symlinks so a manual install reached through a symlink
+			// replaces the real binary. Keep the original path if resolution
+			// fails — e.g. a Windows directory junction (scoop's `current`) that
+			// EvalSymlinks refuses: a blank path would misdetect the install
+			// channel and drop into the self-replace path by mistake.
+			if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil && resolved != "" {
+				exe = resolved
+			}
 
 			// A package-manager install is the package manager's to update:
 			// replacing the binary underneath it would desynchronise its state.
@@ -177,6 +184,9 @@ func versionLess(a, b string) bool {
 // sha256 against the release's checksums.txt, extracts the binary, and swaps it
 // into place atomically (via a rename dance, so it works while running).
 func selfReplace(ctx context.Context, exe, version string) error {
+	if exe == "" {
+		return fmt.Errorf("could not determine the running binary path; download %s from https://github.com/Privasys/cli/releases/latest", version)
+	}
 	ext := "tar.gz"
 	if runtime.GOOS == "windows" {
 		ext = "zip"

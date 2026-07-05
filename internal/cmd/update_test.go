@@ -64,12 +64,14 @@ func TestVersionLess(t *testing.T) {
 
 func TestDetectInstallChannel(t *testing.T) {
 	cases := map[string]string{
-		`C:\Users\me\scoop\shims\privasys.exe`:            "scoop",
-		"/opt/homebrew/bin/privasys":                      "brew",
-		"/home/linuxbrew/.linuxbrew/bin/privasys":         "brew",
-		"/usr/local/Cellar/privasys/0.24.0/bin/privasys":  "brew",
-		"/home/me/.local/bin/privasys":                    "direct",
-		`C:\Users\me\AppData\Local\privasys\privasys.exe`: "direct",
+		`C:\Users\me\scoop\shims\privasys.exe`:                 "scoop",
+		`C:\Users\me\scoop\apps\privasys\current\privasys.exe`: "scoop", // shim resolves here
+		`C:\Users\me\scoop\apps\privasys\0.25.0\privasys.exe`:  "scoop", // junction resolved
+		"/opt/homebrew/bin/privasys":                           "brew",
+		"/home/linuxbrew/.linuxbrew/bin/privasys":              "brew",
+		"/usr/local/Cellar/privasys/0.24.0/bin/privasys":       "brew",
+		"/home/me/.local/bin/privasys":                         "direct",
+		`C:\Users\me\AppData\Local\privasys\privasys.exe`:      "direct",
 	}
 	for in, want := range cases {
 		if got := detectInstallChannel(in); got != want {
