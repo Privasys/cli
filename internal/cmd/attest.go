@@ -125,6 +125,25 @@ func directTable(r *ratls.Result) output.Table {
 	if r.QuoteStatus != "" {
 		rows = append(rows, []string{"quote status", r.QuoteStatus})
 	}
+	if r.GPU != nil {
+		gpu := "H100 CC verified"
+		if !r.GPU.Verified {
+			gpu = "NOT verified"
+		}
+		if r.GPU.CCEnvironment != "" {
+			gpu += " (" + r.GPU.CCEnvironment + ")"
+		}
+		if !r.GPU.MeasurementsVerified {
+			gpu += ", measurements unverified"
+		}
+		rows = append(rows, []string{"gpu", gpu})
+		if r.GPU.Driver != "" {
+			rows = append(rows, []string{"gpu driver/vbios", r.GPU.Driver + " / " + r.GPU.VBIOS})
+		}
+		if r.GPU.UUID != "" {
+			rows = append(rows, []string{"gpu uuid", r.GPU.UUID})
+		}
+	}
 	rows = append(rows, []string{"VERIFIED", fmt.Sprintf("%t", r.Verified)})
 	if r.VerifyError != "" {
 		rows = append(rows, []string{"error", r.VerifyError})

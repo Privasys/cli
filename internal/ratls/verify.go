@@ -41,10 +41,26 @@ type Result struct {
 	QuoteStatus   string   `json:"quote_status,omitempty"`
 	TcbDate       string   `json:"tcb_date,omitempty"`
 	AdvisoryIDs   []string `json:"advisory_ids,omitempty"`
+	GPU           *GPU     `json:"gpu,omitempty"`
 	Verified      bool     `json:"verified"`
 	VerifyError   string   `json:"verify_error,omitempty"`
 	CertPEM       string   `json:"-"`
 	QuoteRaw      []byte   `json:"-"`
+}
+
+// GPU is the NVIDIA Confidential-Computing attestation verdict, present when the
+// enclave's certificate carries GPU evidence (the tdx-gpu combined case) and it
+// was verified against the attestation server.
+type GPU struct {
+	Verified bool `json:"verified"`
+	// MeasurementsVerified is true only once firmware/VBIOS measurements are
+	// matched against a signed NVIDIA RIM. Verified can hold (genuine device,
+	// CC mode, authentic report) while this is still false.
+	MeasurementsVerified bool   `json:"measurements_verified"`
+	UUID                 string `json:"uuid,omitempty"`
+	Driver               string `json:"driver,omitempty"`
+	VBIOS                string `json:"vbios,omitempty"`
+	CCEnvironment        string `json:"cc_environment,omitempty"`
 }
 
 // Params configures a direct verification.
@@ -165,5 +181,15 @@ func fill(res *Result, info rc.CertInfo) {
 		res.QuoteStatus = string(info.QuoteVerification.Status)
 		res.TcbDate = info.QuoteVerification.TcbDate
 		res.AdvisoryIDs = info.QuoteVerification.AdvisoryIDs
+	}
+	if info.GPUAttestation != nil {
+		res.GPU = &GPU{
+			Verified:             info.GPUAttestation.Verified,
+			MeasurementsVerified: info.GPUAttestation.MeasurementsVerified,
+			UUID:                 info.GPUAttestation.GPUUUID,
+			Driver:               info.GPUAttestation.Driver,
+			VBIOS:                info.GPUAttestation.VBIOS,
+			CCEnvironment:        info.GPUAttestation.CCEnvironment,
+		}
 	}
 }
