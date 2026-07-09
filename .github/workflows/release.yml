@@ -37,6 +37,11 @@ jobs:
         uses: actions/checkout@v5
         with:
           repository: Privasys/ra-tls-clients
+          # Pinned: c53cfb1 (TLS channel binder in challenge mode) needs a
+          # crypto/tls RATLSChannelBinder that no released Privasys/go fork
+          # carries yet (v0.3.0 predates it). Unpin when the fork release with
+          # the channel binder ships and GO_RATLS_VERSION is bumped to it.
+          ref: 7a35024a976768bf6276b86ab860b4aa14a05c06
           path: ra-tls-clients
 
       - name: Checkout enclave-vaults-client (sibling for the go.mod replace)
