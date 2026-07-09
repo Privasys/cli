@@ -1176,7 +1176,11 @@ func promoteWithStepUp(cmd *cobra.Command, env *Env, client *api.Client, appID, 
 // are best-effort — a lookup failure just yields a thinner card, never an error
 // (the operation itself is unaffected: context is not part of the vault binding).
 func promoteApprovalContext(ctx context.Context, client *api.Client, appID, vid string) map[string]string {
-	c := map[string]string{}
+	// app_id + version_id let the approver's wallet query the (public,
+	// no-running-enclave) release-provenance endpoint itself, so it can show the
+	// published release and a GitHub compare (old→new) link — mgmt-computed, not
+	// relayed through this CLI.
+	c := map[string]string{"app_id": appID, "version_id": vid}
 	if app, err := client.GetApp(ctx, appID); err == nil {
 		name := output.Str(app, "display_name")
 		if name == "" {
