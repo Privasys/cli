@@ -17,7 +17,7 @@ permissions:
 # Run JS actions on Node 24 (org standard).
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  GO_RATLS_VERSION: privasys-v0.2.0-go1.25.8
+  GO_RATLS_VERSION: privasys-v0.3.0-go1.26.5
   GOTOOLCHAIN: local
   # The Go fork's bundled go.env ships an empty GOPROXY; set it explicitly.
   GOPROXY: "https://proxy.golang.org,direct"
