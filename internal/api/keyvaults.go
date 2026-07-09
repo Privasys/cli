@@ -66,7 +66,10 @@ type VaultKeyGrantResponse struct {
 // MintVaultKeyGrant asks the platform to author the policy, catalogue the key
 // and mint a holder-of-key-bound grant for a new key in the vault. cnf is the
 // SHA-256 thumbprint of the agent's RA-TLS leaf; the grant is bound to it.
-func (c *Client) MintVaultKeyGrant(ctx context.Context, vaultID, name, keyType, cnf string, exportable bool) (*VaultKeyGrantResponse, error) {
+// kind selects the policy shape ("secret" default; "wrapped-secret" grants the
+// operator app's TEE principal Unwrap only — write-once), and operatorAppID
+// names that app.
+func (c *Client) MintVaultKeyGrant(ctx context.Context, vaultID, name, keyType, cnf string, exportable bool, kind, operatorAppID string) (*VaultKeyGrantResponse, error) {
 	body := map[string]interface{}{
 		"name":         name,
 		"cnf_x5t_s256": cnf,
@@ -74,6 +77,12 @@ func (c *Client) MintVaultKeyGrant(ctx context.Context, vaultID, name, keyType, 
 	}
 	if keyType != "" {
 		body["key_type"] = keyType
+	}
+	if kind != "" {
+		body["kind"] = kind
+	}
+	if operatorAppID != "" {
+		body["operator_app_id"] = operatorAppID
 	}
 	var out VaultKeyGrantResponse
 	if err := c.do(ctx, http.MethodPost, "/api/v1/keyvaults/"+url.PathEscape(vaultID)+"/keys", body, &out); err != nil {

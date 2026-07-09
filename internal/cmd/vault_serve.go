@@ -148,7 +148,7 @@ func (f *kvFacade) create(w http.ResponseWriter, r *http.Request) {
 	}
 	attTok, _ := auth.AccessTokenForAudience(r.Context(), f.env.Cfg.Issuer, "attestation-server")
 	mint := func(ctx context.Context, cnf string) (string, secrets.VaultAddressing, error) {
-		return mintVaultKeyGrant(ctx, f.client, f.vaultID, name, kvKeyType(body.Kty), cnf, kvKeyType(body.Kty) == "")
+		return mintVaultKeyGrant(ctx, f.client, f.vaultID, name, kvKeyType(body.Kty), cnf, kvKeyType(body.Kty) == "", "", "")
 	}
 	params := secrets.VaultCreateParams{Sub: sub, AttToken: attTok, MintGrant: mint}
 	var res *secrets.Result

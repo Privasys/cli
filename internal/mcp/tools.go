@@ -283,7 +283,7 @@ func (s *Server) registerTools() {
 				return secrets.CreateInVault(ctx, secrets.VaultCreateParams{
 					Sub: sub, Secret: material, Exportable: exportable, AttToken: attTok,
 					MintGrant: func(ctx context.Context, cnf string) (string, secrets.VaultAddressing, error) {
-						r, err := d.Client.MintVaultKeyGrant(ctx, vaultID, name, "", cnf, exportable)
+						r, err := d.Client.MintVaultKeyGrant(ctx, vaultID, name, "", cnf, exportable, "", "")
 						if err != nil {
 							return "", secrets.VaultAddressing{}, err
 						}

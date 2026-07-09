@@ -181,7 +181,7 @@ func newVaultKeyAuditCmd() *cobra.Command {
 }
 
 func newVaultKeyCreateCmd() *cobra.Command {
-	var value, fromFile, keyType string
+	var value, fromFile, keyType, kind, operatorApp string
 	var randomBytes int
 	var exportable bool
 	cmd := &cobra.Command{
@@ -199,7 +199,13 @@ constellation. The platform never sees the key material.
   non-exportable by default. Use 'vault key sign' / 'vault key public'.
 --type aes: a managed AES-256-GCM wrapping key — 32 random bytes created whole on
   one vault; wrap/unwrap happen in-enclave (the key never leaves), non-exportable.
-  Use 'vault key wrap' / 'vault key unwrap'.`,
+  Use 'vault key wrap' / 'vault key unwrap'.
+
+--kind wrapped-secret (requires --type aes and --operator-app <app-id>): a
+  write-once sealed-credential key. You keep Wrap/Unwrap/DeleteKey; the operator
+  app's attested enclave gets Unwrap ONLY, so it can read a credential you seal
+  under the key but can neither reseal arbitrary data nor destroy the key. The
+  JSON output includes a ready-to-paste key_ref for the app.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
@@ -223,6 +229,18 @@ constellation. The platform never sees the key material.
 			if err != nil {
 				return err
 			}
+			switch kind {
+			case "", "secret":
+			case "wrapped-secret":
+				if vaultKeyType != "Aes256GcmKey" {
+					return fmt.Errorf("--kind wrapped-secret requires --type aes")
+				}
+				if operatorApp == "" {
+					return fmt.Errorf("--kind wrapped-secret requires --operator-app <app-id>")
+				}
+			default:
+				return fmt.Errorf("unknown --kind %q (want: secret | wrapped-secret)", kind)
+			}
 			// Used only to verify the vaults' own quotes during the RA-TLS dial.
 			attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
 			client, err := apiClient(cmd, env)
@@ -237,8 +255,13 @@ constellation. The platform never sees the key material.
 			if operational {
 				exp = false
 			}
+			var addressing secrets.VaultAddressing
 			mint := func(ctx context.Context, cnf string) (string, secrets.VaultAddressing, error) {
-				return mintVaultKeyGrant(ctx, client, vaultID, name, vaultKeyType, cnf, exp)
+				grant, addr, merr := mintVaultKeyGrant(ctx, client, vaultID, name, vaultKeyType, cnf, exp, kind, operatorApp)
+				if merr == nil {
+					addressing = addr
+				}
+				return grant, addr, merr
 			}
 
 			var res *secrets.Result
@@ -266,7 +289,26 @@ constellation. The platform never sees the key material.
 						res.Handle, res.Created, res.Total, res.Threshold)
 				}
 			}
-			return output.Emit(env.Format, res, func() output.Table {
+			// For a wrapped-secret, hand back a ready-to-paste key_ref the
+			// operator app takes verbatim (the attestation token lets the
+			// app verify the vaults' quotes when it unwraps).
+			var payload any = res
+			if kind == "wrapped-secret" {
+				payload = map[string]any{
+					"handle": res.Handle, "created": res.Created, "total": res.Total,
+					"threshold": res.Threshold, "exportable": res.Exportable,
+					"cnf_x5t_s256": res.Thumbprint, "endpoint": res.Endpoint,
+					"key_ref": map[string]any{
+						"handle":             res.Handle,
+						"endpoints":          addressing.Endpoints,
+						"mrenclave":          addressing.MRENCLAVE,
+						"attestation_server": addressing.AttServer,
+						"attestation_token":  attTok,
+						"threshold":          addressing.Threshold,
+					},
+				}
+			}
+			return output.Emit(env.Format, payload, func() output.Table {
 				rows := [][]string{{"handle", res.Handle}}
 				if operational {
 					rows = append(rows, []string{"type", vaultKeyType}, []string{"vault", res.Endpoint})
@@ -284,6 +326,8 @@ constellation. The platform never sees the key material.
 	f.StringVar(&fromFile, "from-file", "", "read the secret bytes from a file; --type secret only")
 	f.IntVar(&randomBytes, "random-bytes", 32, "generate this many random bytes when no value/file is given")
 	f.BoolVar(&exportable, "exportable", true, "allow the owner to export a secret later (signing keys are never exportable by default)")
+	f.StringVar(&kind, "kind", "", "key kind: secret (default) | wrapped-secret (write-once operator Unwrap; requires --type aes and --operator-app)")
+	f.StringVar(&operatorApp, "operator-app", "", "app id whose attested enclave gets Unwrap only (--kind wrapped-secret)")
 	return cmd
 }
 
@@ -305,8 +349,8 @@ func resolveVaultKeyType(t string) (vaultKeyType string, operational bool, err e
 
 // mintVaultKeyGrant asks the platform to mint the grant for a new key and maps
 // the response into the addressing the agent needs.
-func mintVaultKeyGrant(ctx context.Context, client *api.Client, vaultID, name, keyType, cnf string, exportable bool) (string, secrets.VaultAddressing, error) {
-	r, err := client.MintVaultKeyGrant(ctx, vaultID, name, keyType, cnf, exportable)
+func mintVaultKeyGrant(ctx context.Context, client *api.Client, vaultID, name, keyType, cnf string, exportable bool, kind, operatorApp string) (string, secrets.VaultAddressing, error) {
+	r, err := client.MintVaultKeyGrant(ctx, vaultID, name, keyType, cnf, exportable, kind, operatorApp)
 	if err != nil {
 		return "", secrets.VaultAddressing{}, err
 	}

@@ -267,7 +267,8 @@ func newAuthWhoamiCmd() *cobra.Command {
 }
 
 func newAuthPrintTokenCmd() *cobra.Command {
-	return &cobra.Command{
+	var audience string
+	cmd := &cobra.Command{
 		Use:   "print-access-token",
 		Short: "Print a valid access token (auto-refreshes)",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -275,7 +276,12 @@ func newAuthPrintTokenCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			token, err := auth.AccessToken(cmd.Context(), env.Cfg.Issuer)
+			var token string
+			if audience != "" {
+				token, err = auth.AccessTokenForAudience(cmd.Context(), env.Cfg.Issuer, audience)
+			} else {
+				token, err = auth.AccessToken(cmd.Context(), env.Cfg.Issuer)
+			}
 			if err != nil {
 				return err
 			}
@@ -283,6 +289,8 @@ func newAuthPrintTokenCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&audience, "audience", "", "mint the token for this audience (e.g. attestation-server) instead of the platform default")
+	return cmd
 }
 
 func newAuthListCmd() *cobra.Command {
