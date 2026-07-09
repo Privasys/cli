@@ -1153,8 +1153,12 @@ func promoteWithStepUp(cmd *cobra.Command, env *Env, client *api.Client, appID, 
 	if err != nil {
 		return nil, err
 	}
+	// Advisory context so the approver's wallet shows what they are approving —
+	// the app's friendly name and the target version/source — instead of only a
+	// hex digest. Best-effort: a lookup failure just omits that hint.
+	actx := promoteApprovalContext(ctx, client, appID, vid)
 	stepTok, err := secrets.RequestStepUpViaBrowser(ctx, env.Cfg.Issuer, bearer, "promote",
-		tgt.Handle, digest, policyVersion, secrets.OpenBrowser, cmd.ErrOrStderr())
+		tgt.Handle, digest, policyVersion, actx, secrets.OpenBrowser, cmd.ErrOrStderr())
 	if err != nil {
 		return nil, err
 	}
@@ -1164,6 +1168,36 @@ func promoteWithStepUp(cmd *cobra.Command, env *Env, client *api.Client, appID, 
 	sc := *client
 	sc.Token = stepTok
 	return sc.PromoteProfile(ctx, appID, vid, pendingID, approvalTokens...)
+}
+
+// promoteApprovalContext builds the advisory display context (app friendly name
+// + target version label) attached to a promote step-up, so the approver's
+// wallet shows what they are approving rather than only a hex digest. All fields
+// are best-effort — a lookup failure just yields a thinner card, never an error
+// (the operation itself is unaffected: context is not part of the vault binding).
+func promoteApprovalContext(ctx context.Context, client *api.Client, appID, vid string) map[string]string {
+	c := map[string]string{}
+	if app, err := client.GetApp(ctx, appID); err == nil {
+		name := output.Str(app, "display_name")
+		if name == "" {
+			name = output.Str(app, "name")
+		}
+		if name != "" {
+			c["app_name"] = name
+		}
+	}
+	if vs, err := client.ListVersions(ctx, appID); err == nil {
+		for _, v := range vs {
+			if output.Str(v, "id") == vid || output.Str(v, "semver") == vid ||
+				output.Str(v, "version_number") == vid {
+				if lbl := versionLabel(v); lbl != "" {
+					c["version"] = lbl
+				}
+				break
+			}
+		}
+	}
+	return c
 }
 
 // pendingStepUpBinding pulls the operation-binding inputs (profile_binding_digest

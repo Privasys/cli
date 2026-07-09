@@ -61,7 +61,8 @@ func Export(ctx context.Context, p ExportParams) ([]byte, *ExportResult, error) 
 		if err != nil {
 			return nil, nil, fmt.Errorf("get key info: %w", err)
 		}
-		stepTok, err := requestExportStepUp(ctx, p.Issuer, p.Bearer, p.Handle, info.PolicyVersion, p.Assert)
+		actx := approvalContext{"key_type": string(info.KeyType)}
+		stepTok, err := requestExportStepUp(ctx, p.Issuer, p.Bearer, p.Handle, info.PolicyVersion, actx, p.Assert)
 		if err != nil {
 			return nil, nil, err
 		}

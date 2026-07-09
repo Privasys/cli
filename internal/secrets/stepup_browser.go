@@ -36,7 +36,14 @@ type BrowserOpener func(rawURL string) error
 // profile's profile_binding_digest for promote (empty for export). policyVersion
 // is the key's current policy version. Both are baked into the vault_op binding
 // server-side, so the token authorises this exact operation and nothing else.
-func RequestStepUpViaBrowser(ctx context.Context, issuer, bearer, operation, handle, measurementDigestHex string, policyVersion uint32, open BrowserOpener, out io.Writer) (string, error) {
+// approvalContext is advisory display context (app name, version, source,
+// key type) the initiator attaches so the approver's wallet/browser can show a
+// human-meaningful operation instead of a bare hex digest. It is NOT bound into
+// the vault_op binding — the vault enforces only the operation tuple — so it is
+// a convenience hint, never the security decision.
+type approvalContext map[string]string
+
+func RequestStepUpViaBrowser(ctx context.Context, issuer, bearer, operation, handle, measurementDigestHex string, policyVersion uint32, actx approvalContext, open BrowserOpener, out io.Writer) (string, error) {
 	issuer = strings.TrimRight(issuer, "/")
 
 	// 1. Begin: authenticate with the owner bearer; the IdP fixes the nonce+exp,
@@ -47,6 +54,7 @@ func RequestStepUpViaBrowser(ctx context.Context, issuer, bearer, operation, han
 		"measurement_digest": measurementDigestHex,
 		"policy_version":     policyVersion,
 		"ttl_seconds":        240,
+		"context":            actx,
 	})
 	optionsJSON, err := postBearer(ctx, issuer+"/fido2/vault-approval/begin", bearer, beginBody)
 	if err != nil {
@@ -64,12 +72,18 @@ func RequestStepUpViaBrowser(ctx context.Context, issuer, bearer, operation, han
 
 	// 2. Hand the WebAuthn options to the browser page via the URL fragment (never
 	//    sent to a server). A short summary drives the confirm screen.
+	summary := map[string]string{"operation": operation, "handle": handle, "measurement": measurementDigestHex}
+	for k, v := range actx {
+		if v != "" {
+			summary[k] = v
+		}
+	}
 	frag := struct {
 		Options json.RawMessage   `json:"options"`
 		Summary map[string]string `json:"summary"`
 	}{
 		Options: json.RawMessage(optionsJSON),
-		Summary: map[string]string{"operation": operation, "handle": handle, "measurement": measurementDigestHex},
+		Summary: summary,
 	}
 	fragJSON, _ := json.Marshal(frag)
 	pageURL := issuer + "/fido2/vault-approval#" + base64.RawURLEncoding.EncodeToString(fragJSON)
