@@ -810,6 +810,7 @@ func (s *Server) registerTools() {
 				"display_name": strProp("human-friendly name"),
 				"description":  strProp("description"),
 				"storage":      boolProp("request encrypted, owner-controlled storage (for apps that hold user data)"),
+				"size":         strProp("container VM size slug: micro|small|medium|large|xlarge (default micro; container apps only, fixed at creation)"),
 			}, "name", "source_type"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				name, err := requireStr(args, "name")
@@ -831,6 +832,9 @@ func (s *Server) registerTools() {
 				}
 				if b, _ := args["storage"].(bool); b {
 					body["container_storage"] = true
+				}
+				if v := argStr(args, "size"); v != "" {
+					body["instance_size"] = v // server validates the slug
 				}
 				// container_port is platform-allocated (app listens on $PORT).
 				return d.Client.CreateApp(ctx, body)

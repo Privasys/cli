@@ -47,6 +47,7 @@ func newAppsCreateCmd() *cobra.Command {
 		storage                        bool
 		cloudImageName, cloudChannel   string
 		enclave                        string
+		size                           string
 	)
 	cmd := &cobra.Command{
 		Use:   "create --name <name> --source <upload|github|package|cloud_image> [flags]",
@@ -82,6 +83,13 @@ func newAppsCreateCmd() *cobra.Command {
 			if storage {
 				body["container_storage"] = true
 			}
+			if size != "" {
+				slug, err := normalizeInstanceSize(size)
+				if err != nil {
+					return err
+				}
+				body["instance_size"] = slug
+			}
 			client, err := apiClient(cmd, env)
 			if err != nil {
 				return err
@@ -110,7 +118,61 @@ func newAppsCreateCmd() *cobra.Command {
 	f.StringVar(&cloudImageName, "cloud-image-name", "", "cloud image name (cloud_image source)")
 	f.StringVar(&cloudChannel, "cloud-image-channel", "", "cloud image channel (cloud_image source)")
 	f.StringVar(&enclave, "enclave", "", "target enclave id")
+	f.StringVar(&size, "size", "", "container VM size: micro|small|medium|large|xlarge (or Confidential-* name; default micro, fixed at creation)")
 	return cmd
+}
+
+// normalizeInstanceSize maps a --size value to the wire slug. Accepts the bare
+// slug (micro..xlarge) or the canonical Confidential-* name, case-insensitive.
+func normalizeInstanceSize(v string) (string, error) {
+	slug := strings.ToLower(strings.TrimSpace(v))
+	slug = strings.TrimPrefix(slug, "confidential-")
+	switch slug {
+	case "micro", "small", "medium", "large", "xlarge":
+		return slug, nil
+	}
+	return "", fmt.Errorf("--size must be one of micro, small, medium, large, xlarge (got %q); see 'privasys apps sizes'", v)
+}
+
+func newAppsSizesCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "sizes",
+		Short: "List the Confidential-* container VM sizes and rates",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			sizes, err := client.InstanceSizes(cmd.Context())
+			if err != nil {
+				return err
+			}
+			return output.Emit(env.Format, map[string]interface{}{"sizes": sizes}, func() output.Table {
+				rows := make([][]string, 0, len(sizes))
+				for _, s := range sizes {
+					perHour := numField(s, "credits_per_hour")
+					rows = append(rows, []string{
+						output.Str(s, "slug"),
+						output.Str(s, "size"),
+						fmt.Sprintf("%d", int64(numField(s, "vcpu"))),
+						fmt.Sprintf("%d GB", int64(numField(s, "ram_gb"))),
+						fmt.Sprintf("%d GB", int64(numField(s, "storage_gb"))),
+						fmt.Sprintf("%d", int64(perHour)),
+						fmt.Sprintf("£%.2f", perHour*730/1_000_000),
+					})
+				}
+				return output.Table{
+					Headers: []string{"SLUG", "SIZE", "VCPU", "RAM", "STORAGE", "CREDITS/HOUR", "~/MONTH"},
+					Rows:    rows,
+				}
+			})
+		},
+	}
 }
 
 // currentStoreFields returns an app's existing store_* listing as an

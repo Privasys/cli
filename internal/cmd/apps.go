@@ -64,6 +64,7 @@ func newAppsCmd() *cobra.Command {
 		newAppsListCmd(),
 		newAppsDescribeCmd(),
 		newAppsCreateCmd(),
+		newAppsSizesCmd(),
 		newAppsRenameCmd(),
 		newAppsStoreListingCmd(),
 		newAppsDeleteCmd(),
@@ -154,7 +155,7 @@ func newAppsDescribeCmd() *cobra.Command {
 				return err
 			}
 			return output.Emit(env.Format, app, func() output.Table {
-				keys := []string{"name", "id", "app_type", "status", "owner_sub", "account_id",
+				keys := []string{"name", "id", "app_type", "instance_size", "status", "owner_sub", "account_id",
 					"github_repo", "github_branch", "commit", "image", "cwasm_hash", "enclave_id", "created_at"}
 				rows := make([][]string, 0, len(keys))
 				for _, k := range keys {

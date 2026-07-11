@@ -65,6 +65,18 @@ func (c *Client) CreateApp(ctx context.Context, body map[string]interface{}) (ma
 	return out, nil
 }
 
+// InstanceSizes lists the Confidential-* container VM sizes and rates
+// (GET /api/v1/catalog/instance-sizes).
+func (c *Client) InstanceSizes(ctx context.Context) ([]map[string]interface{}, error) {
+	var out struct {
+		Sizes []map[string]interface{} `json:"sizes"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/catalog/instance-sizes", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Sizes, nil
+}
+
 // UpdateStoreListing sets an app's App Store listing fields (PUT
 // /apps/{id}/store). A Description and Category are required before the app can
 // be deployed or published. Only the keys present in fields are sent.
