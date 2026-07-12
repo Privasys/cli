@@ -182,12 +182,18 @@ func (c *Client) CreateVersion(ctx context.Context, id string, body map[string]s
 	return out, nil
 }
 
-// DeployVersion deploys a version to an enclave.
-func (c *Client) DeployVersion(ctx context.Context, id, versionID, enclaveID string) (map[string]interface{}, error) {
+// DeployVersion deploys a version to an enclave. instanceSize optionally sets
+// this deployment's Confidential-* size (empty = the app's default); a
+// redeploy with a different size is the resize primitive.
+func (c *Client) DeployVersion(ctx context.Context, id, versionID, enclaveID, instanceSize string) (map[string]interface{}, error) {
+	body := map[string]string{"enclave_id": enclaveID}
+	if instanceSize != "" {
+		body["instance_size"] = instanceSize
+	}
 	var out map[string]interface{}
 	if err := c.do(ctx, http.MethodPost,
 		"/api/v1/apps/"+id+"/versions/"+versionID+"/deploy",
-		map[string]string{"enclave_id": enclaveID}, &out); err != nil {
+		body, &out); err != nil {
 		return nil, err
 	}
 	return out, nil

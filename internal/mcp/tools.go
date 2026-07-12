@@ -889,6 +889,7 @@ func (s *Server) registerTools() {
 				"app_id":  strProp("the app id"),
 				"version": strProp("version id (default: latest)"),
 				"enclave": strProp("enclave id (default: only compatible)"),
+				"size":    strProp("container VM size for this deployment: micro|small|medium|large|xlarge (default: the app's size; redeploy with a new size to resize)"),
 			}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
@@ -917,7 +918,7 @@ func (s *Server) registerTools() {
 					}
 					enclaveID, _ = encs[0]["id"].(string)
 				}
-				return d.Client.DeployVersion(ctx, id, versionID, enclaveID)
+				return d.Client.DeployVersion(ctx, id, versionID, enclaveID, argStr(args, "size"))
 			},
 		},
 		{

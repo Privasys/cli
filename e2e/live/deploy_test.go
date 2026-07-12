@@ -98,7 +98,7 @@ func TestLiveDeploy(t *testing.T) {
 		enclaveID, _ = encs[0]["id"].(string)
 	}
 	t.Logf("deploying %s -> enclave %s", name, enclaveID)
-	dep, err := client.DeployVersion(ctx, appID, vid, enclaveID)
+	dep, err := client.DeployVersion(ctx, appID, vid, enclaveID, "")
 	if err != nil {
 		t.Fatalf("deploy: %v", err)
 	}

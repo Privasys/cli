@@ -730,7 +730,7 @@ version loads cleanly with no locked-data window.`,
 
 			// 3. Deploy. The server gate verifies the measurement is promoted and
 			// stops the running version before starting the new one (no overlap).
-			dep, derr := client.DeployVersion(ctx, appID, vid, enc)
+			dep, derr := client.DeployVersion(ctx, appID, vid, enc, "")
 			if derr != nil {
 				return derr
 			}
@@ -1418,7 +1418,7 @@ func newVersionsRevokeCmd() *cobra.Command {
 }
 
 func newAppsDeployCmd() *cobra.Command {
-	var versionID, enclaveID string
+	var versionID, enclaveID, size string
 	var watch bool
 	cmd := &cobra.Command{
 		Use:   "deploy <app-id>",
@@ -1428,6 +1428,13 @@ func newAppsDeployCmd() *cobra.Command {
 			env, err := loadEnv(cmd)
 			if err != nil {
 				return err
+			}
+			if size != "" {
+				slug, serr := normalizeInstanceSize(size)
+				if serr != nil {
+					return serr
+				}
+				size = slug
 			}
 			client, err := apiClient(cmd, env)
 			if err != nil {
@@ -1468,13 +1475,13 @@ func newAppsDeployCmd() *cobra.Command {
 				}
 			}
 
-			dep, err := client.DeployVersion(cmd.Context(), appID, versionID, enclaveID)
+			dep, err := client.DeployVersion(cmd.Context(), appID, versionID, enclaveID, size)
 			if err != nil {
 				return err
 			}
 			if !watch {
 				return output.Emit(env.Format, dep, func() output.Table {
-					return kvTable(dep, []string{"id", "status", "enclave_host", "hostname"})
+					return kvTable(dep, []string{"id", "status", "enclave_host", "hostname", "instance_size"})
 				})
 			}
 			return watchDeployment(cmd, client, env, appID, output.Str(dep, "id"))
@@ -1482,6 +1489,7 @@ func newAppsDeployCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&versionID, "version", "", "version id (default: latest)")
 	cmd.Flags().StringVar(&enclaveID, "enclave", "", "target enclave id (default: the only compatible one)")
+	cmd.Flags().StringVar(&size, "size", "", "container VM size for THIS deployment: micro|small|medium|large|xlarge (default: the app's size; redeploying with a new size is the resize)")
 	cmd.Flags().BoolVar(&watch, "watch", false, "poll until the deployment is active or failed")
 	return cmd
 }
