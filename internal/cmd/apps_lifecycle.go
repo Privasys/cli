@@ -162,14 +162,14 @@ func newAppsSizesCmd() *cobra.Command {
 						fmt.Sprintf("%d", int64(numField(s, "vcpu"))),
 						fmt.Sprintf("%d GB", int64(numField(s, "ram_gb"))),
 						fmt.Sprintf("%d GB", int64(numField(s, "storage_gb"))),
-						// The meter tick: charged per started minute.
-						fmt.Sprintf("%d", int64(numField(s, "credits_per_min"))),
+						// The meter tick: charged per started hour (decision 2026-07-13).
+						fmt.Sprintf("%d", int64(perHour)),
 						// 720h = the price book's published month (Micro £43.20/mo).
 						fmt.Sprintf("£%.2f", perHour*720/1_000_000),
 					})
 				}
 				return output.Table{
-					Headers: []string{"SLUG", "SIZE", "VCPU", "RAM", "STORAGE", "CREDITS/MIN", "~/MONTH"},
+					Headers: []string{"SLUG", "SIZE", "VCPU", "RAM", "STORAGE", "CREDITS/HOUR", "~/MONTH"},
 					Rows:    rows,
 				}
 			})
