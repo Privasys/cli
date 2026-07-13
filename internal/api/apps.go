@@ -187,7 +187,7 @@ func (c *Client) CreateVersion(ctx context.Context, id string, body map[string]s
 // `enclaveID` (admin/back-compat); pass one. instanceSize optionally sets this
 // deployment's Confidential-* size (empty = the app's default); a redeploy
 // with a different size is the resize primitive.
-func (c *Client) DeployVersion(ctx context.Context, id, versionID, enclaveID, location, instanceSize string) (map[string]interface{}, error) {
+func (c *Client) DeployVersion(ctx context.Context, id, versionID, enclaveID, location, instanceSize, tenancy string) (map[string]interface{}, error) {
 	body := map[string]string{}
 	if enclaveID != "" {
 		body["enclave_id"] = enclaveID
@@ -197,6 +197,9 @@ func (c *Client) DeployVersion(ctx context.Context, id, versionID, enclaveID, lo
 	}
 	if instanceSize != "" {
 		body["instance_size"] = instanceSize
+	}
+	if tenancy != "" {
+		body["tenancy"] = tenancy
 	}
 	var out map[string]interface{}
 	if err := c.do(ctx, http.MethodPost,

@@ -67,7 +67,7 @@ func deployStorageApp(t *testing.T, ctx context.Context, client *api.Client, enc
 		}
 		enc, _ = encs[0]["id"].(string)
 	}
-	if _, err := client.DeployVersion(ctx, appID, vid, enc, "", ""); err != nil {
+	if _, err := client.DeployVersion(ctx, appID, vid, enc, "", "", ""); err != nil {
 		t.Fatalf("deploy: %v", err)
 	}
 	return appID, vid, enc

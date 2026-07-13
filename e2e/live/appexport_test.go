@@ -91,7 +91,7 @@ func TestLiveAppExportKey(t *testing.T) {
 		}
 		enclaveID, _ = encs[0]["id"].(string)
 	}
-	dep, err := client.DeployVersion(ctx, appID, vid, enclaveID, "", "")
+	dep, err := client.DeployVersion(ctx, appID, vid, enclaveID, "", "", "")
 	if err != nil {
 		t.Fatalf("deploy: %v", err)
 	}

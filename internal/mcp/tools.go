@@ -892,6 +892,7 @@ func (s *Server) registerTools() {
 				"location": strProp("deploy location code, e.g. europe-west9 (default: the only one available)"),
 				"enclave":  strProp("enclave id (admin override; adopters use location)"),
 				"size":     strProp("container VM size for this deployment: micro|small|medium|large|xlarge (default: the app's size; redeploy with a new size to resize)"),
+				"tenancy":  strProp("mutualised (default, shared CVM) or dedicated (a whole confidential VM, Medium/Large only)"),
 			}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
@@ -923,7 +924,7 @@ func (s *Server) registerTools() {
 					}
 					location, _ = locs[0]["code"].(string)
 				}
-				return d.Client.DeployVersion(ctx, id, versionID, enclaveID, location, argStr(args, "size"))
+				return d.Client.DeployVersion(ctx, id, versionID, enclaveID, location, argStr(args, "size"), argStr(args, "tenancy"))
 			},
 		},
 		{

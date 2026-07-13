@@ -731,7 +731,7 @@ version loads cleanly with no locked-data window.`,
 
 			// 3. Deploy. The server gate verifies the measurement is promoted and
 			// stops the running version before starting the new one (no overlap).
-			dep, derr := client.DeployVersion(ctx, appID, vid, enc, "", "")
+			dep, derr := client.DeployVersion(ctx, appID, vid, enc, "", "", "")
 			if derr != nil {
 				return derr
 			}
@@ -1455,7 +1455,7 @@ func newAppsLocationsCmd() *cobra.Command {
 }
 
 func newAppsDeployCmd() *cobra.Command {
-	var versionID, enclaveID, location, size string
+	var versionID, enclaveID, location, size, tenancy string
 	var watch bool
 	cmd := &cobra.Command{
 		Use:   "deploy <app-id>",
@@ -1494,11 +1494,15 @@ func newAppsDeployCmd() *cobra.Command {
 				versionID = output.Str(vs[len(vs)-1], "id")
 			}
 
+			if tenancy != "" && tenancy != "mutualised" && tenancy != "dedicated" {
+				return fmt.Errorf("--tenancy must be mutualised or dedicated")
+			}
 			// Placement: adopters pick a location, not an enclave. An
 			// explicit --enclave (admin) still wins. Otherwise resolve the
 			// location: use --location, or auto-pick when there is exactly
-			// one. The server does the actual host selection + capacity check.
-			if enclaveID == "" && location == "" {
+			// one. Dedicated provisions a whole VM in the platform's region,
+			// so it needs no location.
+			if tenancy != "dedicated" && enclaveID == "" && location == "" {
 				locs, err := client.DeployLocations(cmd.Context(), appID)
 				if err != nil {
 					return err
@@ -1517,7 +1521,7 @@ func newAppsDeployCmd() *cobra.Command {
 				}
 			}
 
-			dep, err := client.DeployVersion(cmd.Context(), appID, versionID, enclaveID, location, size)
+			dep, err := client.DeployVersion(cmd.Context(), appID, versionID, enclaveID, location, size, tenancy)
 			if err != nil {
 				return err
 			}
@@ -1533,6 +1537,7 @@ func newAppsDeployCmd() *cobra.Command {
 	cmd.Flags().StringVar(&location, "location", "", "deploy location code, e.g. europe-west9 (default: the only one available; see `apps locations`)")
 	cmd.Flags().StringVar(&enclaveID, "enclave", "", "target enclave id (admin override; adopters use --location)")
 	cmd.Flags().StringVar(&size, "size", "", "container VM size for THIS deployment: micro|small|medium|large|xlarge (default: the app's size; redeploying with a new size is the resize)")
+	cmd.Flags().StringVar(&tenancy, "tenancy", "", "mutualised (default, shared CVM) or dedicated (a whole confidential VM, Medium/Large only)")
 	cmd.Flags().BoolVar(&watch, "watch", false, "poll until the deployment is active or failed")
 	return cmd
 }

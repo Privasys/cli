@@ -85,7 +85,7 @@ func TestVersionsAndDeploy(t *testing.T) {
 	if err != nil || v["id"] != "v3" {
 		t.Fatalf("createVersion: %v %v", v, err)
 	}
-	dep, err := c.DeployVersion(ctx, "app-1", "v2", "enc-9")
+	dep, err := c.DeployVersion(ctx, "app-1", "v2", "enc-9", "", "", "")
 	if err != nil || dep["id"] != "dep-1" {
 		t.Fatalf("deploy: %v %v", dep, err)
 	}
