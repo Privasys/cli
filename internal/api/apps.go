@@ -182,11 +182,19 @@ func (c *Client) CreateVersion(ctx context.Context, id string, body map[string]s
 	return out, nil
 }
 
-// DeployVersion deploys a version to an enclave. instanceSize optionally sets
-// this deployment's Confidential-* size (empty = the app's default); a
-// redeploy with a different size is the resize primitive.
-func (c *Client) DeployVersion(ctx context.Context, id, versionID, enclaveID, instanceSize string) (map[string]interface{}, error) {
-	body := map[string]string{"enclave_id": enclaveID}
+// DeployVersion deploys a version. Placement is by `location` (the adopter
+// picks a location, the platform resolves the host) or by explicit
+// `enclaveID` (admin/back-compat); pass one. instanceSize optionally sets this
+// deployment's Confidential-* size (empty = the app's default); a redeploy
+// with a different size is the resize primitive.
+func (c *Client) DeployVersion(ctx context.Context, id, versionID, enclaveID, location, instanceSize string) (map[string]interface{}, error) {
+	body := map[string]string{}
+	if enclaveID != "" {
+		body["enclave_id"] = enclaveID
+	}
+	if location != "" {
+		body["location"] = location
+	}
 	if instanceSize != "" {
 		body["instance_size"] = instanceSize
 	}
@@ -197,6 +205,17 @@ func (c *Client) DeployVersion(ctx context.Context, id, versionID, enclaveID, in
 		return nil, err
 	}
 	return out, nil
+}
+
+// DeployLocations lists the locations an app can deploy to (adopter-facing).
+func (c *Client) DeployLocations(ctx context.Context, id string) ([]map[string]interface{}, error) {
+	var out struct {
+		Locations []map[string]interface{} `json:"locations"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/apps/"+id+"/deploy-locations", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Locations, nil
 }
 
 // StageProfile stages a pending vault key profile for a version's measurement

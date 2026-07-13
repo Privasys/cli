@@ -21,8 +21,9 @@ import (
 )
 
 var (
-	errNoVersions  = errors.New("app has no versions; create one first")
-	errPickEnclave = errors.New("multiple or no compatible enclaves; pass 'enclave' explicitly")
+	errNoVersions   = errors.New("app has no versions; create one first")
+	errPickEnclave  = errors.New("multiple or no compatible enclaves; pass 'enclave' explicitly")
+	errPickLocation = errors.New("multiple or no locations available; pass 'location' explicitly")
 )
 
 // registerTools wires the full CLI surface as MCP tools.
@@ -884,12 +885,13 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "apps_deploy",
-			Description: "Deploy a version of an app to an enclave (defaults to latest version and the sole compatible enclave).",
+			Description: "Deploy a version of an app (defaults to the latest version and, when there is only one, the sole location). Adopters pick a location, not an enclave.",
 			Schema: obj(map[string]interface{}{
-				"app_id":  strProp("the app id"),
-				"version": strProp("version id (default: latest)"),
-				"enclave": strProp("enclave id (default: only compatible)"),
-				"size":    strProp("container VM size for this deployment: micro|small|medium|large|xlarge (default: the app's size; redeploy with a new size to resize)"),
+				"app_id":   strProp("the app id"),
+				"version":  strProp("version id (default: latest)"),
+				"location": strProp("deploy location code, e.g. europe-west9 (default: the only one available)"),
+				"enclave":  strProp("enclave id (admin override; adopters use location)"),
+				"size":     strProp("container VM size for this deployment: micro|small|medium|large|xlarge (default: the app's size; redeploy with a new size to resize)"),
 			}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
@@ -907,18 +909,21 @@ func (s *Server) registerTools() {
 					}
 					versionID, _ = vs[len(vs)-1]["id"].(string)
 				}
+				// Placement: an explicit enclave (admin) wins; otherwise resolve
+				// the location — use the given one, or auto-pick the sole location.
 				enclaveID := argStr(args, "enclave")
-				if enclaveID == "" {
-					encs, err := d.Client.CompatibleEnclaves(ctx, id)
+				location := argStr(args, "location")
+				if enclaveID == "" && location == "" {
+					locs, err := d.Client.DeployLocations(ctx, id)
 					if err != nil {
 						return nil, err
 					}
-					if len(encs) != 1 {
-						return nil, errPickEnclave
+					if len(locs) != 1 {
+						return nil, errPickLocation
 					}
-					enclaveID, _ = encs[0]["id"].(string)
+					location, _ = locs[0]["code"].(string)
 				}
-				return d.Client.DeployVersion(ctx, id, versionID, enclaveID, argStr(args, "size"))
+				return d.Client.DeployVersion(ctx, id, versionID, enclaveID, location, argStr(args, "size"))
 			},
 		},
 		{

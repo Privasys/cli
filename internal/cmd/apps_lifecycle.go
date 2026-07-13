@@ -731,7 +731,7 @@ version loads cleanly with no locked-data window.`,
 
 			// 3. Deploy. The server gate verifies the measurement is promoted and
 			// stops the running version before starting the new one (no overlap).
-			dep, derr := client.DeployVersion(ctx, appID, vid, enc, "")
+			dep, derr := client.DeployVersion(ctx, appID, vid, enc, "", "")
 			if derr != nil {
 				return derr
 			}
@@ -1418,8 +1418,44 @@ func newVersionsRevokeCmd() *cobra.Command {
 	return c
 }
 
+func newAppsLocationsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "locations <app-id>",
+		Short: "List the locations this app can be deployed to",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
+			locs, err := client.DeployLocations(cmd.Context(), appID)
+			if err != nil {
+				return err
+			}
+			return output.Emit(env.Format, map[string]interface{}{"locations": locs}, func() output.Table {
+				rows := make([][]string, 0, len(locs))
+				for _, l := range locs {
+					rows = append(rows, []string{
+						output.Str(l, "code"), output.Str(l, "label"),
+						output.Str(l, "tee_type"), output.Str(l, "provider"),
+					})
+				}
+				return output.Table{Headers: []string{"CODE", "LOCATION", "TEE", "PROVIDER"}, Rows: rows}
+			})
+		},
+	}
+}
+
 func newAppsDeployCmd() *cobra.Command {
-	var versionID, enclaveID, size string
+	var versionID, enclaveID, location, size string
 	var watch bool
 	cmd := &cobra.Command{
 		Use:   "deploy <app-id>",
@@ -1458,25 +1494,30 @@ func newAppsDeployCmd() *cobra.Command {
 				versionID = output.Str(vs[len(vs)-1], "id")
 			}
 
-			// Resolve a compatible enclave when not specified.
-			if enclaveID == "" {
-				encs, err := client.CompatibleEnclaves(cmd.Context(), appID)
+			// Placement: adopters pick a location, not an enclave. An
+			// explicit --enclave (admin) still wins. Otherwise resolve the
+			// location: use --location, or auto-pick when there is exactly
+			// one. The server does the actual host selection + capacity check.
+			if enclaveID == "" && location == "" {
+				locs, err := client.DeployLocations(cmd.Context(), appID)
 				if err != nil {
 					return err
 				}
-				if len(encs) == 1 {
-					enclaveID = output.Str(encs[0], "id")
-				} else if len(encs) == 0 {
-					return fmt.Errorf("no compatible enclaves available")
-				} else {
-					if env.NoInput {
-						return fmt.Errorf("multiple compatible enclaves; pass --enclave <id>")
+				switch {
+				case len(locs) == 1:
+					location = output.Str(locs[0], "code")
+				case len(locs) == 0:
+					return fmt.Errorf("no locations available for this app")
+				default:
+					codes := make([]string, 0, len(locs))
+					for _, l := range locs {
+						codes = append(codes, output.Str(l, "code"))
 					}
-					return fmt.Errorf("multiple compatible enclaves; pass --enclave <id> (see `apps deploy --help`)")
+					return fmt.Errorf("multiple locations available; pass --location <%s>", strings.Join(codes, "|"))
 				}
 			}
 
-			dep, err := client.DeployVersion(cmd.Context(), appID, versionID, enclaveID, size)
+			dep, err := client.DeployVersion(cmd.Context(), appID, versionID, enclaveID, location, size)
 			if err != nil {
 				return err
 			}
@@ -1489,7 +1530,8 @@ func newAppsDeployCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&versionID, "version", "", "version id (default: latest)")
-	cmd.Flags().StringVar(&enclaveID, "enclave", "", "target enclave id (default: the only compatible one)")
+	cmd.Flags().StringVar(&location, "location", "", "deploy location code, e.g. europe-west9 (default: the only one available; see `apps locations`)")
+	cmd.Flags().StringVar(&enclaveID, "enclave", "", "target enclave id (admin override; adopters use --location)")
 	cmd.Flags().StringVar(&size, "size", "", "container VM size for THIS deployment: micro|small|medium|large|xlarge (default: the app's size; redeploying with a new size is the resize)")
 	cmd.Flags().BoolVar(&watch, "watch", false, "poll until the deployment is active or failed")
 	return cmd
