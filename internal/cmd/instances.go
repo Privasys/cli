@@ -155,7 +155,7 @@ func newInstancesStartCmd() *cobra.Command {
 }
 
 func newInstancesDeleteCmd() *cobra.Command {
-	var force bool
+	var force, yes bool
 	cmd := &cobra.Command{
 		Use:   "delete <instance>",
 		Short: "Delete the instance VM (disks retained per the retention policy)",
@@ -173,12 +173,14 @@ func newInstancesDeleteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ok, err := confirm(cmd, env, fmt.Sprintf("Delete instance %s? The VM is removed; disks are retained.", args[0]))
-			if err != nil {
-				return err
-			}
-			if !ok {
-				return nil
+			if !yes {
+				ok, err := confirm(cmd, env, fmt.Sprintf("Delete instance %s? The VM is removed; disks are retained.", args[0]))
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return nil
+				}
 			}
 			res, err := client.DeleteInstance(cmd.Context(), id, force)
 			if err != nil {
@@ -193,6 +195,7 @@ func newInstancesDeleteCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "delete even while apps are still deployed on it")
+	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "skip the confirmation prompt")
 	return cmd
 }
 
