@@ -2080,6 +2080,68 @@ field count.
 	return cmd
 }
 
+// newAppsDependenciesCmd sets the app's attested cross-enclave dependency set:
+// the identities it is pinned to and will only complete an RA-TLS handshake
+// with. The runtime seals the set into the OID 65230.6.1 certificate extension
+// and enforces it fail-closed; the app itself never writes it.
+func newAppsDependenciesCmd() *cobra.Command {
+	var data string
+	var clear bool
+	cmd := &cobra.Command{
+		Use:   "dependencies <app-id>",
+		Short: "Set the app's attested cross-enclave dependency set",
+		Long: `Pins the app to a fixed set of dependency identities (measurements + required
+OIDs per dependency app). On the next (re)deploy the runtime seals the set into
+the app's RA-TLS certificate (OID 65230.6.1) and refuses to connect to any
+dependency that does not match.
+
+  --data     dependency-set JSON, or @file (an array of entries, or {"entries":[...]})
+  --clear    remove all declared dependencies`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !clear && data == "" {
+				return fmt.Errorf("provide --data <json|@file> or --clear")
+			}
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(ctx, client, args[0])
+			if err != nil {
+				return err
+			}
+			var deps json.RawMessage
+			if !clear {
+				b, err := parseJSONDataArg(data)
+				if err != nil {
+					return err
+				}
+				if !json.Valid(b) {
+					return fmt.Errorf("--data is not valid JSON")
+				}
+				deps = json.RawMessage(b)
+			}
+			if _, err := client.SetDependencies(ctx, appID, deps); err != nil {
+				return err
+			}
+			if clear {
+				fmt.Fprintln(cmd.OutOrStdout(), "dependencies cleared")
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "dependencies updated (sealed on next handshake / deploy)")
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&data, "data", "", "dependency-set JSON (or @file)")
+	cmd.Flags().BoolVar(&clear, "clear", false, "remove all declared dependencies")
+	return cmd
+}
+
 // newAppsActionCmd runs an app action tool via the control-plane relay and, when
 // the tool declares x-privasys.progress, polls the named status tool to a
 // terminal state, printing progress.

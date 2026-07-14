@@ -276,6 +276,19 @@ func (c *Client) SetVaultCosign(ctx context.Context, id string, require bool) (m
 	return out, nil
 }
 
+// SetDependencies sets (or clears, when deps is nil) the app's attested
+// cross-enclave dependency set. deps is the dependency-set JSON (an array of
+// entries or {"entries":[...]}).
+func (c *Client) SetDependencies(ctx context.Context, id string, deps json.RawMessage) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPatch,
+		"/api/v1/apps/"+id+"/dependencies",
+		map[string]json.RawMessage{"dependencies": deps}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RevokeProfile drops a staged-but-unpromoted profile. Owner-only.
 func (c *Client) RevokeProfile(ctx context.Context, id, versionID string, pendingID int) (map[string]interface{}, error) {
 	var out map[string]interface{}
