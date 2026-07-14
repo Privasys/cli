@@ -27,7 +27,10 @@ func New(baseURL, token string) *Client {
 	return &Client{
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		Token:   token,
-		HTTP:    &http.Client{Timeout: 30 * time.Second},
+		// 120s matches the server's deploy/lifecycle route timeout: some
+		// operations (dedicated instance stop/start/delete) drive the
+		// cloud-ops agent synchronously through gcloud, which takes ~40s.
+		HTTP:    &http.Client{Timeout: 120 * time.Second},
 	}
 }
 
