@@ -731,7 +731,7 @@ version loads cleanly with no locked-data window.`,
 
 			// 3. Deploy. The server gate verifies the measurement is promoted and
 			// stops the running version before starting the new one (no overlap).
-			dep, derr := client.DeployVersion(ctx, appID, vid, enc, "", "", "")
+			dep, derr := client.DeployVersion(ctx, appID, vid, enc, "", "", "", "")
 			if derr != nil {
 				return derr
 			}
@@ -1455,7 +1455,7 @@ func newAppsLocationsCmd() *cobra.Command {
 }
 
 func newAppsDeployCmd() *cobra.Command {
-	var versionID, enclaveID, location, size, tenancy string
+	var versionID, enclaveID, location, size, tenancy, instance string
 	var watch bool
 	cmd := &cobra.Command{
 		Use:   "deploy <app-id>",
@@ -1497,12 +1497,22 @@ func newAppsDeployCmd() *cobra.Command {
 			if tenancy != "" && tenancy != "mutualised" && tenancy != "dedicated" {
 				return fmt.Errorf("--tenancy must be mutualised or dedicated")
 			}
+			// --instance targets an existing dedicated instance you own:
+			// resolve its id and skip location/tenancy resolution (deploying
+			// onto an instance is always dedicated).
+			var instanceID string
+			if instance != "" {
+				instanceID, err = resolveInstanceID(cmd.Context(), client, instance)
+				if err != nil {
+					return err
+				}
+			}
 			// Placement: adopters pick a location, not an enclave. An
 			// explicit --enclave (admin) still wins. Otherwise resolve the
 			// location: use --location, or auto-pick when there is exactly
-			// one. Dedicated provisions a whole VM in the platform's region,
-			// so it needs no location.
-			if tenancy != "dedicated" && enclaveID == "" && location == "" {
+			// one. Dedicated (a provisioned VM or an --instance) needs no
+			// location.
+			if instanceID == "" && tenancy != "dedicated" && enclaveID == "" && location == "" {
 				locs, err := client.DeployLocations(cmd.Context(), appID)
 				if err != nil {
 					return err
@@ -1521,9 +1531,13 @@ func newAppsDeployCmd() *cobra.Command {
 				}
 			}
 
-			dep, err := client.DeployVersion(cmd.Context(), appID, versionID, enclaveID, location, size, tenancy)
+			dep, err := client.DeployVersion(cmd.Context(), appID, versionID, enclaveID, location, size, tenancy, instanceID)
 			if err != nil {
 				return err
+			}
+			// Surface an oversubscription heads-up (instance deploys only).
+			if w := output.Str(dep, "warning"); w != "" && !env.Quiet {
+				fmt.Fprintln(cmd.ErrOrStderr(), w)
 			}
 			if !watch {
 				return output.Emit(env.Format, dep, func() output.Table {
@@ -1538,6 +1552,7 @@ func newAppsDeployCmd() *cobra.Command {
 	cmd.Flags().StringVar(&enclaveID, "enclave", "", "target enclave id (admin override; adopters use --location)")
 	cmd.Flags().StringVar(&size, "size", "", "container VM size for THIS deployment: micro|small|medium|large|xlarge (default: the app's size; redeploying with a new size is the resize)")
 	cmd.Flags().StringVar(&tenancy, "tenancy", "", "mutualised (default, shared CVM) or dedicated (a whole confidential VM, Medium/Large only)")
+	cmd.Flags().StringVar(&instance, "instance", "", "deploy onto a dedicated instance you own (id or name; see `privasys instances`)")
 	cmd.Flags().BoolVar(&watch, "watch", false, "poll until the deployment is active or failed")
 	return cmd
 }

@@ -893,6 +893,7 @@ func (s *Server) registerTools() {
 				"enclave":  strProp("enclave id (admin override; adopters use location)"),
 				"size":     strProp("container VM size for this deployment: micro|small|medium|large|xlarge (default: the app's size; redeploy with a new size to resize)"),
 				"tenancy":  strProp("mutualised (default, shared CVM) or dedicated (a whole confidential VM, Medium/Large only)"),
+				"instance": strProp("deploy onto a dedicated instance id you own (multi-app; overrides location/tenancy)"),
 			}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
@@ -910,11 +911,13 @@ func (s *Server) registerTools() {
 					}
 					versionID, _ = vs[len(vs)-1]["id"].(string)
 				}
-				// Placement: an explicit enclave (admin) wins; otherwise resolve
-				// the location — use the given one, or auto-pick the sole location.
+				// Placement: --instance (an owned dedicated instance) wins,
+				// then an explicit enclave (admin), then the location — use the
+				// given one, or auto-pick the sole location.
 				enclaveID := argStr(args, "enclave")
 				location := argStr(args, "location")
-				if enclaveID == "" && location == "" {
+				instanceID := argStr(args, "instance")
+				if instanceID == "" && enclaveID == "" && location == "" {
 					locs, err := d.Client.DeployLocations(ctx, id)
 					if err != nil {
 						return nil, err
@@ -924,7 +927,7 @@ func (s *Server) registerTools() {
 					}
 					location, _ = locs[0]["code"].(string)
 				}
-				return d.Client.DeployVersion(ctx, id, versionID, enclaveID, location, argStr(args, "size"), argStr(args, "tenancy"))
+				return d.Client.DeployVersion(ctx, id, versionID, enclaveID, location, argStr(args, "size"), argStr(args, "tenancy"), instanceID)
 			},
 		},
 		{
