@@ -84,31 +84,63 @@ type rpcError struct {
 	Message string `json:"message"`
 }
 
-// Serve runs the read/dispatch/write loop until EOF or ctx cancellation.
+// Serve runs the read/dispatch/write loop until stdin EOF or ctx cancellation.
+//
+// The scan runs in a goroutine so the main loop can select on ctx.Done(): a
+// blocking stdin read (an orphaned pipe that never delivers EOF) no longer pins
+// the process — a signal or the parent-death watchdog cancels ctx and we return.
+// The reader goroutine may remain parked on that read, but the process is
+// exiting, so it is reaped with us.
 func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	enc := json.NewEncoder(out)
 
-	for sc.Scan() {
-		line := sc.Bytes()
-		if len(line) == 0 {
-			continue
+	lines := make(chan []byte)
+	scanErr := make(chan error, 1)
+	go func() {
+		defer close(lines)
+		for sc.Scan() {
+			line := append([]byte(nil), sc.Bytes()...)
+			select {
+			case lines <- line:
+			case <-ctx.Done():
+				return
+			}
 		}
-		var req rpcRequest
-		if err := json.Unmarshal(line, &req); err != nil {
-			continue // ignore malformed lines
-		}
-		// Notifications (no id) get no response.
-		resp, isNotification := s.dispatch(ctx, &req)
-		if isNotification {
-			continue
-		}
-		if err := enc.Encode(resp); err != nil {
-			return err
+		scanErr <- sc.Err()
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case line, ok := <-lines:
+			if !ok {
+				select {
+				case err := <-scanErr:
+					return err
+				default:
+					return nil
+				}
+			}
+			if len(line) == 0 {
+				continue
+			}
+			var req rpcRequest
+			if err := json.Unmarshal(line, &req); err != nil {
+				continue // ignore malformed lines
+			}
+			// Notifications (no id) get no response.
+			resp, isNotification := s.dispatch(ctx, &req)
+			if isNotification {
+				continue
+			}
+			if err := enc.Encode(resp); err != nil {
+				return err
+			}
 		}
 	}
-	return sc.Err()
 }
 
 func (s *Server) dispatch(ctx context.Context, req *rpcRequest) (*rpcResponse, bool) {

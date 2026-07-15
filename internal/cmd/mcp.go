@@ -6,6 +6,8 @@ package cmd
 import (
 	"context"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 
@@ -37,8 +39,16 @@ func newMcpCmd() *cobra.Command {
 				}
 				return d, nil
 			}
+			// The server's lifetime is bound to its MCP client. Cancel on a
+			// signal (clean shutdown / taskkill) and, as a backstop for an
+			// orphaned pipe that never delivers EOF, when the spawning client
+			// process dies — so an idle server can't linger indefinitely.
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+			go mcp.WatchParentDeath(ctx, stop)
+
 			srv := mcp.NewServer(deps, resolveVersion())
-			return srv.Serve(cmd.Context(), os.Stdin, os.Stdout)
+			return srv.Serve(ctx, os.Stdin, os.Stdout)
 		},
 	})
 	return c

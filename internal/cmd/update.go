@@ -88,6 +88,12 @@ against the release's checksums.txt.`,
 			// replacing the binary underneath it would desynchronise its state.
 			switch channel := detectInstallChannel(exe); channel {
 			case "scoop":
+				// scoop refuses to update a running app, and THIS process is a
+				// running privasys. Hand off to a detached updater that waits for
+				// us (and any other instances) to exit, so we don't self-block.
+				if runtime.GOOS == "windows" {
+					return spawnDetachedScoopUpdate(w)
+				}
 				fmt.Fprintf(w, "Installed via scoop; running: scoop update privasys\n")
 				return runTool(cmd, "scoop", "update", "privasys")
 			case "brew":
@@ -126,6 +132,40 @@ func detectInstallChannel(exe string) string {
 	default:
 		return "direct"
 	}
+}
+
+// spawnDetachedScoopUpdate works around scoop refusing to update a running app:
+// this very process is a running privasys, so `scoop update` would abort on it.
+// It opens a detached console that waits for this process to exit (and prompts
+// to close any other privasys instances, e.g. MCP servers), then runs the
+// update — and returns immediately so this process can exit and unblock scoop.
+func spawnDetachedScoopUpdate(w io.Writer) error {
+	pid := os.Getpid()
+	ps := fmt.Sprintf(
+		"Write-Host 'Updating privasys via scoop...';"+
+			"Wait-Process -Id %d -ErrorAction SilentlyContinue;"+
+			"while ($true) {"+
+			"  $o = @(Get-Process privasys -ErrorAction SilentlyContinue);"+
+			"  if ($o.Count -eq 0) { break }"+
+			"  Write-Host 'Other privasys processes are running (they block scoop). Close them, then press Enter:' -ForegroundColor Yellow;"+
+			"  $o | Select-Object Id,ProcessName | Format-Table | Out-Host;"+
+			"  Read-Host | Out-Null"+
+			"};"+
+			"scoop update privasys;"+
+			"Write-Host '';"+
+			"Read-Host 'Done. Press Enter to close' | Out-Null",
+		pid)
+	// `start` launches an independent console window that survives this process.
+	c := exec.Command("cmd", "/c", "start", "privasys update", "powershell",
+		"-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps)
+	if err := c.Start(); err != nil {
+		fmt.Fprintf(w, "Installed via scoop. Close running privasys processes, then run: scoop update privasys\n")
+		return nil
+	}
+	fmt.Fprintf(w, "Installed via scoop. Since scoop cannot update a running app, an updater\n")
+	fmt.Fprintf(w, "opened in a new window; it runs once this process (and any other privasys\n")
+	fmt.Fprintf(w, "instances, such as MCP servers) exit.\n")
+	return nil
 }
 
 // runTool executes a package manager inheriting the terminal.
