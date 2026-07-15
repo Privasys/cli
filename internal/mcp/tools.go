@@ -722,6 +722,35 @@ func (s *Server) registerTools() {
 			},
 		},
 		{
+			Name:        "enclaves_list",
+			Description: "List the platform's enclave fleet (id, name, TEE type, status, region, tenancy). Platform-operator view — requires the privasys-platform:manager role; without it the call is not authorized. Read-only.",
+			Schema: obj(map[string]interface{}{
+				"tee":    strProp("filter by TEE type (sgx|tdx)"),
+				"status": strProp("filter by status (e.g. active, pending)"),
+			}),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				enclaves, err := d.Client.ListEnclaves(ctx)
+				if err != nil {
+					return nil, err
+				}
+				tee, status := argStr(args, "tee"), argStr(args, "status")
+				if tee == "" && status == "" {
+					return enclaves, nil
+				}
+				out := make([]map[string]interface{}, 0, len(enclaves))
+				for _, e := range enclaves {
+					if tee != "" && !strings.EqualFold(fmt.Sprintf("%v", e["tee_type"]), tee) {
+						continue
+					}
+					if status != "" && !strings.EqualFold(fmt.Sprintf("%v", e["status"]), status) {
+						continue
+					}
+					out = append(out, e)
+				}
+				return out, nil
+			},
+		},
+		{
 			Name:        "apps_owners_list",
 			Description: "List who can access an app (its owners).",
 			Schema:      obj(map[string]interface{}{"app_id": strProp("the app id")}, "app_id"),
