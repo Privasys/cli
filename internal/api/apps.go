@@ -333,6 +333,29 @@ func (c *Client) MigrateConstellation(ctx context.Context, id, targetConstellati
 	return out, nil
 }
 
+// AppMeasurements lists the TEE measurements authorised on the app's vault
+// volume key, marking the current running one and which are retirable.
+func (c *Client) AppMeasurements(ctx context.Context, id string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.getJSON(ctx, "/api/v1/apps/"+id+"/measurements", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RetireMeasurement removes a superseded measurement (by its OID-3.2 workload
+// digest) from the app's vault key policy, so an old version can no longer
+// reconstruct the key. The current running measurement can never be retired.
+func (c *Client) RetireMeasurement(ctx context.Context, id, digest string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost,
+		"/api/v1/apps/"+id+"/retire-measurement",
+		map[string]string{"measurement_digest": digest}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ListDeployments returns an app's deployments.
 func (c *Client) ListDeployments(ctx context.Context, id string) ([]map[string]interface{}, error) {
 	var raw json.RawMessage

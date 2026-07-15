@@ -1054,6 +1054,126 @@ running. Defaults to the currently-active constellation.`,
 	return cmd
 }
 
+// truncHex shortens a long hex string for table display.
+func truncHex(s string) string {
+	if len(s) > 20 {
+		return s[:20] + "…"
+	}
+	return s
+}
+
+// boolYes renders a JSON bool as a tick / blank for a table cell.
+func boolYes(v interface{}) string {
+	if b, _ := v.(bool); b {
+		return "yes"
+	}
+	return ""
+}
+
+func newAppsMeasurementsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "measurements <app>",
+		Short: "List the TEE measurements authorised on the app's vault key (old versions can still unwrap it)",
+		Long: `Each time a new app/enclave version is promoted, its measurement is ADDED to the
+key policy; the previous ones are not removed automatically. So a retired version
+can still reconstruct (unwrap) the key until you retire its measurement. This
+lists the authorised measurements, marks the one your current running deployment
+uses, and flags which are older versions you can retire now (see
+'apps retire-measurement'). The WORKLOAD_DIGEST identifies each app-code version.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
+			res, err := client.AppMeasurements(cmd.Context(), appID)
+			if err != nil {
+				return err
+			}
+			list, _ := res["measurements"].([]interface{})
+			if !env.Quiet && env.Format == "table" {
+				if n, ok := res["retirable_count"].(float64); ok && n > 0 {
+					fmt.Fprintf(cmd.ErrOrStderr(), "%d older measurement(s) still authorised — retire with 'apps retire-measurement %s <digest>'\n", int(n), args[0])
+				}
+			}
+			return output.Emit(env.Format, res, func() output.Table {
+				rows := make([][]string, 0, len(list))
+				for _, m := range list {
+					mm, _ := m.(map[string]interface{})
+					rows = append(rows, []string{
+						output.Str(mm, "workload_digest"),
+						truncHex(output.Str(mm, "mrtd")),
+						boolYes(mm["current"]),
+						boolYes(mm["retirable"]),
+					})
+				}
+				return output.Table{Headers: []string{"WORKLOAD_DIGEST", "MRTD", "CURRENT", "RETIRABLE"}, Rows: rows}
+			})
+		},
+	}
+	return cmd
+}
+
+func newAppsRetireMeasurementCmd() *cobra.Command {
+	var yes bool
+	cmd := &cobra.Command{
+		Use:   "retire-measurement <app> <workload-digest>",
+		Short: "Revoke a superseded version's access to the app's vault key",
+		Long: `Removes an OLDER version's measurement from the app's vault key policy so that
+version can no longer reconstruct (unwrap) the key — closing the door on key
+extraction with a retired build. Get the digest from 'apps measurements'.
+
+The CURRENT running version can never be retired: deploy and confirm the new
+version healthy first (so it holds the key), then retire the old one. The last
+remaining measurement cannot be retired either (it would make the key unusable).`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(cmd.Context(), client, args[0])
+			if err != nil {
+				return err
+			}
+			digest := args[1]
+			if !yes {
+				ok, cErr := confirm(cmd, env, fmt.Sprintf("Retire measurement %s from %s's vault key? That version will no longer be able to unwrap the key.", truncHex(digest), args[0]))
+				if cErr != nil {
+					return cErr
+				}
+				if !ok {
+					return fmt.Errorf("aborted")
+				}
+			}
+			res, err := client.RetireMeasurement(cmd.Context(), appID, digest)
+			if err != nil {
+				return err
+			}
+			if !env.Quiet {
+				output.Success(cmd.ErrOrStderr(), "Retired measurement %s", truncHex(digest))
+			}
+			return output.Emit(env.Format, res, func() output.Table {
+				return kvTable(res, []string{"retired", "all_succeeded", "warning"})
+			})
+		},
+	}
+	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
+	return cmd
+}
+
 // ifElse returns a when cond, else b.
 func ifElse(cond bool, a, b string) string {
 	if cond {
