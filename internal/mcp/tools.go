@@ -1028,7 +1028,16 @@ func (s *Server) registerTools() {
 				}
 				var body []byte
 				if args["data"] != nil {
-					body, _ = json.Marshal(args["data"])
+					if s, ok := args["data"].(string); ok && json.Valid([]byte(s)) {
+						// The schema leaves `data` typeless, so some MCP
+						// clients deliver it as a pre-encoded JSON string;
+						// marshalling that again double-encodes and the app
+						// receives a quoted string instead of an object
+						// (vLLM: "'str' object has no attribute 'get'").
+						body = []byte(s)
+					} else {
+						body, _ = json.Marshal(args["data"])
+					}
 				}
 				path := ""
 				if aType == "container" {
