@@ -159,7 +159,7 @@ func TestLiveRotateKey(t *testing.T) {
 	client := api.New(endpoint, tok)
 
 	enc := os.Getenv("PRIVASYS_E2E_ENCLAVE")
-	image := envOr("PRIVASYS_E2E_IMAGE", "ghcr.io/privasys/container-app-example:v1.0.1")
+	image := envOr("PRIVASYS_E2E_IMAGE", "ghcr.io/privasys/container-app-example:v2.0.2")
 	appID, vid, enc := deployStorageApp(t, ctx, client, enc, image, "e2e-rot-"+randHex(4))
 
 	before := pollExportAppDEK(t, ctx, client, issuer, sub, appID, 6*time.Minute)
@@ -209,9 +209,9 @@ func TestLiveUpgradeSurvival(t *testing.T) {
 	client := api.New(endpoint, tok)
 
 	enc := os.Getenv("PRIVASYS_E2E_ENCLAVE")
-	image := envOr("PRIVASYS_E2E_IMAGE", "ghcr.io/privasys/container-app-example:v1.0.1")
+	image := envOr("PRIVASYS_E2E_IMAGE", "ghcr.io/privasys/container-app-example:v2.0.2")
 	// A DIFFERENT image digest = a new measurement to gate on.
-	image2 := envOr("PRIVASYS_E2E_IMAGE2", "ghcr.io/privasys/container-app-example:v1.0.0")
+	image2 := envOr("PRIVASYS_E2E_IMAGE2", "ghcr.io/privasys/container-app-example:v2.0.3")
 
 	appID, _, enc := deployStorageApp(t, ctx, client, enc, image, "e2e-upg-"+randHex(4))
 

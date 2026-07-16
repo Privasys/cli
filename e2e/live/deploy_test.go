@@ -29,7 +29,7 @@ import (
 //
 //	PRIVASYS_E2E=1
 //	PRIVASYS_E2E_ENDPOINT   management-service base URL (e.g. https://api-test.developer.privasys.org)
-//	PRIVASYS_E2E_IMAGE      optional container image (default: container-app-example:v1.0.1)
+//	PRIVASYS_E2E_IMAGE      optional container image (default: container-app-example:v2.0.2)
 //	PRIVASYS_E2E_ENCLAVE    optional enclave id (default: the only compatible one)
 func TestLiveDeploy(t *testing.T) {
 	issuer := skipUnlessLive(t)
@@ -46,7 +46,7 @@ func TestLiveDeploy(t *testing.T) {
 	}
 	client := api.New(endpoint, tok)
 
-	image := envOr("PRIVASYS_E2E_IMAGE", "ghcr.io/privasys/container-app-example:v1.0.1")
+	image := envOr("PRIVASYS_E2E_IMAGE", "ghcr.io/privasys/container-app-example:v2.0.2")
 	name := "e2e-l3-" + randHex(4)
 
 	// 1. Create a non-storage container app (no vault key).

@@ -46,7 +46,7 @@ func TestLiveAppExportKey(t *testing.T) {
 	sub, _ := claims["sub"].(string)
 	client := api.New(endpoint, tok)
 
-	image := envOr("PRIVASYS_E2E_IMAGE", "ghcr.io/privasys/container-app-example:v1.0.1")
+	image := envOr("PRIVASYS_E2E_IMAGE", "ghcr.io/privasys/container-app-example:v2.0.2")
 	name := "e2e-dek-" + randHex(4)
 
 	// 1. Create a vault-backed storage container app (the DEK is owner-exportable).
