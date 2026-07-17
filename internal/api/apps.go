@@ -114,6 +114,13 @@ func (c *Client) DeleteApp(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/api/v1/apps/"+id, nil, nil)
 }
 
+// DeleteAppWithVolume deletes the app AND its encrypted volume in one step.
+// Without this, the volume survives (and keeps billing) until deleted from
+// `volumes delete` — the safe default.
+func (c *Client) DeleteAppWithVolume(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/api/v1/apps/"+id+"?with_volume=true", nil, nil)
+}
+
 // CheckName reports whether an app name is available.
 func (c *Client) CheckName(ctx context.Context, name string) (map[string]interface{}, error) {
 	var out map[string]interface{}
@@ -187,8 +194,8 @@ func (c *Client) CreateVersion(ctx context.Context, id string, body map[string]s
 // `enclaveID` (admin/back-compat); pass one. instanceSize optionally sets this
 // deployment's Confidential-* size (empty = the app's default); a redeploy
 // with a different size is the resize primitive.
-func (c *Client) DeployVersion(ctx context.Context, id, versionID, enclaveID, location, instanceSize, tenancy, instanceID string) (map[string]interface{}, error) {
-	body := map[string]string{}
+func (c *Client) DeployVersion(ctx context.Context, id, versionID, enclaveID, location, instanceSize, tenancy, instanceID string, storageGB int) (map[string]interface{}, error) {
+	body := map[string]interface{}{}
 	if enclaveID != "" {
 		body["enclave_id"] = enclaveID
 	}
@@ -203,6 +210,11 @@ func (c *Client) DeployVersion(ctx context.Context, id, versionID, enclaveID, lo
 	}
 	if instanceID != "" {
 		body["instance_id"] = instanceID
+	}
+	if storageGB > 0 {
+		// Sizes the app's volume on FIRST deploy only (10G default); an
+		// existing volume keeps its size — growing is `volumes resize`.
+		body["storage_gb"] = storageGB
 	}
 	var out map[string]interface{}
 	if err := c.do(ctx, http.MethodPost,

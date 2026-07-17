@@ -333,10 +333,10 @@ func newAppsStoreListingCmd() *cobra.Command {
 }
 
 func newAppsDeleteCmd() *cobra.Command {
-	var force bool
+	var force, withVolume bool
 	cmd := &cobra.Command{
 		Use:   "delete <app-id>",
-		Short: "Delete an app",
+		Short: "Delete an app (its volume is KEPT and keeps billing unless --with-volume)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
@@ -344,7 +344,11 @@ func newAppsDeleteCmd() *cobra.Command {
 				return err
 			}
 			if !force && !env.NoInput {
-				fmt.Fprintf(os.Stderr, "Delete app %s? Re-run with --force to confirm.\n", args[0])
+				extra := ""
+				if withVolume {
+					extra = " Its encrypted volume will be DESTROYED with it."
+				}
+				fmt.Fprintf(os.Stderr, "Delete app %s?%s Re-run with --force to confirm.\n", args[0], extra)
 				return fmt.Errorf("confirmation required")
 			}
 			client, err := apiClient(cmd, env)
@@ -355,14 +359,24 @@ func newAppsDeleteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := client.DeleteApp(cmd.Context(), appID); err != nil {
+			if withVolume {
+				err = client.DeleteAppWithVolume(cmd.Context(), appID)
+			} else {
+				err = client.DeleteApp(cmd.Context(), appID)
+			}
+			if err != nil {
 				return err
 			}
-			output.Success(cmd.OutOrStdout(), "Deleted")
+			if withVolume {
+				output.Success(cmd.OutOrStdout(), "Deleted (app and volume)")
+			} else {
+				output.Success(cmd.OutOrStdout(), "Deleted — the app's volume is retained and keeps billing until you `privasys volumes delete` it")
+			}
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "delete without confirmation")
+	cmd.Flags().BoolVar(&withVolume, "with-volume", false, "also delete the app's encrypted volume (data destroyed; default keeps it)")
 	return cmd
 }
 
@@ -731,7 +745,7 @@ version loads cleanly with no locked-data window.`,
 
 			// 3. Deploy. The server gate verifies the measurement is promoted and
 			// stops the running version before starting the new one (no overlap).
-			dep, derr := client.DeployVersion(ctx, appID, vid, enc, "", "", "", "")
+			dep, derr := client.DeployVersion(ctx, appID, vid, enc, "", "", "", "", 0)
 			if derr != nil {
 				return derr
 			}
@@ -1576,6 +1590,7 @@ func newAppsLocationsCmd() *cobra.Command {
 
 func newAppsDeployCmd() *cobra.Command {
 	var versionID, enclaveID, location, size, tenancy, instance string
+	var storageGB int
 	var watch bool
 	cmd := &cobra.Command{
 		Use:   "deploy <app-id>",
@@ -1651,7 +1666,7 @@ func newAppsDeployCmd() *cobra.Command {
 				}
 			}
 
-			dep, err := client.DeployVersion(cmd.Context(), appID, versionID, enclaveID, location, size, tenancy, instanceID)
+			dep, err := client.DeployVersion(cmd.Context(), appID, versionID, enclaveID, location, size, tenancy, instanceID, storageGB)
 			if err != nil {
 				return err
 			}
@@ -1673,6 +1688,7 @@ func newAppsDeployCmd() *cobra.Command {
 	cmd.Flags().StringVar(&size, "size", "", "container VM size for THIS deployment: micro|small|medium|large|xlarge (default: the app's size; redeploying with a new size is the resize)")
 	cmd.Flags().StringVar(&tenancy, "tenancy", "", "mutualised (default, shared CVM) or dedicated (a whole confidential VM, Medium/Large only)")
 	cmd.Flags().StringVar(&instance, "instance", "", "deploy onto a dedicated instance you own (id or name; see `privasys instances`)")
+	cmd.Flags().IntVar(&storageGB, "storage-gb", 0, "size the app's volume on FIRST deploy (default 10 GB; grow later with `privasys volumes resize`)")
 	cmd.Flags().BoolVar(&watch, "watch", false, "poll until the deployment is active or failed")
 	return cmd
 }

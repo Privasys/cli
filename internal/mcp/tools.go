@@ -922,7 +922,8 @@ func (s *Server) registerTools() {
 				"enclave":  strProp("enclave id (admin override; adopters use location)"),
 				"size":     strProp("container VM size for this deployment: micro|small|medium|large|xlarge (default: the app's size; redeploy with a new size to resize)"),
 				"tenancy":  strProp("mutualised (default, shared CVM) or dedicated (a whole confidential VM, Medium/Large only)"),
-				"instance": strProp("deploy onto a dedicated instance id you own (multi-app; overrides location/tenancy)"),
+				"instance":   strProp("deploy onto a dedicated instance id you own (multi-app; overrides location/tenancy)"),
+				"storage_gb": intProp("size the app's encrypted volume on FIRST deploy (default 10; an existing volume keeps its size — grow with volumes_resize/the portal)"),
 			}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
@@ -956,7 +957,7 @@ func (s *Server) registerTools() {
 					}
 					location, _ = locs[0]["code"].(string)
 				}
-				return d.Client.DeployVersion(ctx, id, versionID, enclaveID, location, argStr(args, "size"), argStr(args, "tenancy"), instanceID)
+				return d.Client.DeployVersion(ctx, id, versionID, enclaveID, location, argStr(args, "size"), argStr(args, "tenancy"), instanceID, argInt(args, "storage_gb"))
 			},
 		},
 		{

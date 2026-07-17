@@ -54,6 +54,7 @@ func NewRoot() *cobra.Command {
 		newConfigCmd(),
 		newAppsCmd(),
 		newInstancesCmd(),
+		newVolumesCmd(),
 		newAccountCmd(),
 		newTeamCmd(),
 		newBillingCmd(),
