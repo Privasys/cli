@@ -304,6 +304,19 @@ func (c *Client) SetDependencies(ctx context.Context, id string, deps json.RawMe
 	return out, nil
 }
 
+// SetAllowedCallers sets the app's ingress allowed-caller set: which attested
+// caller identities may open an ingress mutual-RA-TLS handshake to this app. The
+// callee-side mirror of SetDependencies. A nil/empty set clears the restriction.
+func (c *Client) SetAllowedCallers(ctx context.Context, id string, callers json.RawMessage) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPatch,
+		"/api/v1/apps/"+id+"/allowed-callers",
+		map[string]json.RawMessage{"allowed_callers": callers}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RevokeProfile drops a staged-but-unpromoted profile. Owner-only.
 func (c *Client) RevokeProfile(ctx context.Context, id, versionID string, pendingID int) (map[string]interface{}, error) {
 	var out map[string]interface{}

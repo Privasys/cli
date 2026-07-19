@@ -2293,6 +2293,68 @@ dependency that does not match.
 	return cmd
 }
 
+func newAppsAllowedCallersCmd() *cobra.Command {
+	var data string
+	var clear bool
+	cmd := &cobra.Command{
+		Use:   "allowed-callers <app-id>",
+		Short: "Set which attested apps may call this app over ingress mutual RA-TLS",
+		Long: `Pins the set of caller identities (measurements + required OIDs per caller app)
+permitted to open an ingress mutual-RA-TLS handshake to this app. On the next
+(re)deploy the runtime installs it as the ingress verification policy: a caller
+whose attested identity does not match is rejected, and a matching caller's
+verified identity is passed to the app as X-Privasys-Peer-* headers. This is the
+callee-side mirror of "apps dependencies".
+
+  --data     allowed-caller JSON, or @file (an array of entries, or {"entries":[...]});
+             an entry may be just {"app_id":"<uuid>"} to pin the caller's current
+             published measurement automatically
+  --clear    remove the ingress restriction (server-auth only)`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !clear && data == "" {
+				return fmt.Errorf("provide --data <json|@file> or --clear")
+			}
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(ctx, client, args[0])
+			if err != nil {
+				return err
+			}
+			var callers json.RawMessage
+			if !clear {
+				b, err := parseJSONDataArg(data)
+				if err != nil {
+					return err
+				}
+				if !json.Valid(b) {
+					return fmt.Errorf("--data is not valid JSON")
+				}
+				callers = json.RawMessage(b)
+			}
+			if _, err := client.SetAllowedCallers(ctx, appID, callers); err != nil {
+				return err
+			}
+			if clear {
+				fmt.Fprintln(cmd.OutOrStdout(), "allowed callers cleared (ingress server-auth only)")
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "allowed callers updated (applied on next deploy)")
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&data, "data", "", "allowed-caller JSON (or @file)")
+	cmd.Flags().BoolVar(&clear, "clear", false, "remove the ingress restriction")
+	return cmd
+}
+
 // newAppsActionCmd runs an app action tool via the control-plane relay and, when
 // the tool declares x-privasys.progress, polls the named status tool to a
 // terminal state, printing progress.
