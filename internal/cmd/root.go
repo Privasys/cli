@@ -43,7 +43,8 @@ func NewRoot() *cobra.Command {
 	}
 
 	root.PersistentFlags().String("format", "", "output format: table|json|yaml")
-	root.PersistentFlags().String("endpoint", "", "platform API base URL")
+	root.PersistentFlags().String("endpoint", "", "platform API base URL (custom environment; overrides --test)")
+	root.PersistentFlags().Bool("test", false, "use the Privasys test/dev environment (default is production)")
 	root.PersistentFlags().String("issuer", "", "identity provider issuer URL")
 	root.PersistentFlags().String("account", "", "account id to act on")
 	root.PersistentFlags().Bool("no-input", false, "never prompt; fail instead")
@@ -118,6 +119,11 @@ func loadEnv(cmd *cobra.Command) (*Env, error) {
 	}
 	cfg := f.Active() // applies PRIVASYS_* env overrides
 
+	// Endpoint precedence: --endpoint (custom) > --test (dev preset) >
+	// PRIVASYS_ENDPOINT / config > default (production).
+	if test, _ := cmd.Flags().GetBool("test"); test {
+		cfg.Endpoint = config.TestEndpoint
+	}
 	if v, _ := cmd.Flags().GetString("endpoint"); v != "" {
 		cfg.Endpoint = v
 	}

@@ -22,6 +22,11 @@ const (
 	DefaultIssuer   = "https://privasys.id"
 	DefaultFormat   = "table"
 	defaultName     = "default"
+
+	// TestEndpoint is the Privasys test/dev platform API, selected with the
+	// global --test flag. Auth still goes through the production issuer
+	// (privasys.id), so only the platform endpoint differs.
+	TestEndpoint = "https://api-test.developer.privasys.org"
 )
 
 // Configuration is a single named profile.
