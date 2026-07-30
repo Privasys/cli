@@ -434,18 +434,6 @@ func (c *Client) Schema(ctx context.Context, id string) (map[string]interface{},
 	return out, nil
 }
 
-// Rpc invokes an app tool by name through the control-plane relay
-// (POST /api/v1/apps/{id}/rpc/{fn}). Used for owner config/management operations
-// (configure, actions, status polling); high-throughput data calls use direct
-// RA-TLS via `app call`.
-func (c *Client) Rpc(ctx context.Context, id, fn string, body interface{}) (map[string]interface{}, error) {
-	var out map[string]interface{}
-	if err := c.do(ctx, http.MethodPost, "/api/v1/apps/"+id+"/rpc/"+fn, body, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // MCP returns the app's MCP tool manifest.
 func (c *Client) MCP(ctx context.Context, id string) (map[string]interface{}, error) {
 	var out map[string]interface{}

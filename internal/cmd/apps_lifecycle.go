@@ -2215,7 +2215,7 @@ field count.
 			if err != nil {
 				return err
 			}
-			res, err := client.Rpc(ctx, appID, name, body)
+			res, err := callAppDirect(ctx, env, client, appID, name, body)
 			if err != nil {
 				return err
 			}
@@ -2397,7 +2397,7 @@ a terminal state.
 			if err != nil {
 				return err
 			}
-			res, err := client.Rpc(ctx, appID, args[1], body)
+			res, err := callAppDirect(ctx, env, client, appID, args[1], body)
 			if err != nil {
 				return err
 			}
@@ -2412,7 +2412,7 @@ a terminal state.
 			}
 			for i := 0; i < 600; i++ {
 				time.Sleep(2 * time.Second)
-				st, err := client.Rpc(ctx, appID, prog.tool, map[string]interface{}{})
+				st, err := callAppDirect(ctx, env, client, appID, prog.tool, map[string]interface{}{})
 				if err != nil {
 					return err
 				}

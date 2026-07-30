@@ -391,7 +391,7 @@ func (s *Server) registerTools() {
 				if name == "" {
 					return nil, errors.New("app declares no configuration")
 				}
-				res, err := d.Client.Rpc(ctx, appID, name, config)
+				res, err := callAppDirect(ctx, d, appID, name, config)
 				if err != nil {
 					return nil, err
 				}
@@ -400,7 +400,7 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "apps_action",
-			Description: "Run a confidential app's role:action operation by name (e.g. load_model) via the owner-authed control plane. 'args' is the JSON input (per the action tool's schema; see apps_api). Returns the result; for a long-running action, poll the app's status tool with apps_call to follow progress.",
+			Description: "Run a confidential app's role:action operation by name (e.g. load_model), direct to the enclave over RA-TLS with its attestation verified first. 'args' is the JSON input (per the action tool's schema; see apps_api). Returns the result; for a long-running action, poll the app's status tool with apps_call to follow progress.",
 			Schema: obj(map[string]interface{}{
 				"app_id": strProp("the app id"),
 				"name":   strProp("the action tool name"),
@@ -419,7 +419,7 @@ func (s *Server) registerTools() {
 				if body == nil {
 					body = map[string]interface{}{}
 				}
-				return d.Client.Rpc(ctx, appID, name, body)
+				return callAppDirect(ctx, d, appID, name, body)
 			},
 		},
 		{
