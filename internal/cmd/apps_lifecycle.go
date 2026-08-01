@@ -904,7 +904,10 @@ a fingerprint, never the key.`,
 				Issuer: env.Cfg.Issuer, Bearer: tok, Sub: sub, Handle: target.Handle,
 				Endpoints: target.Endpoints, Threshold: target.Threshold,
 				MRENCLAVE: target.MRENCLAVE, AttServer: target.AttestationServer, AttToken: attTok,
-				RequireStepUp: target.RequireStepUp, Assert: walletStepUpApprover(),
+				// Assert nil = the human ceremony (wallet push, browser
+				// fallback), the same one `apps versions promote` drives.
+				RequireStepUp: target.RequireStepUp,
+				Out:           cmd.ErrOrStderr(), Open: secrets.OpenBrowser,
 				GenerationSize: secrets.AppDEKGenerationSize,
 			})
 			if err != nil {

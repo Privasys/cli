@@ -260,8 +260,14 @@ type ExportParams struct {
 	MRENCLAVE     string           // expected vault MRENCLAVE (hex)
 	AttServer     string           // attestation server verify endpoint
 	AttToken      string           // aud=attestation-server bearer for quote verification
-	RequireStepUp bool             // when set, drive an operation-bound WebAuthn step-up (Assert)
-	Assert        StepUpAssertFunc // produces the WebAuthn step-up assertion
+	RequireStepUp bool             // when set, drive an operation-bound WebAuthn step-up
+	// Assert produces the WebAuthn step-up assertion in-process (the E2E
+	// software-authenticator path). Leave nil for a human owner: the step-up
+	// then runs the same wallet-push ceremony `apps versions promote` uses,
+	// reporting progress on Out.
+	Assert StepUpAssertFunc
+	Out    io.Writer     // progress for the human ceremony (defaults to stderr)
+	Open   BrowserOpener // optional: open the system-passkey fallback page
 	// GenerationSize > 0 means the per-vault material is generation-prefixed
 	// (`generation(GenerationSize) || share`), the layout the enclave-os manager
 	// uses for app volume DEKs. 0 (default) = raw shares (user secrets).

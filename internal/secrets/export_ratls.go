@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"os"
 
 	ratls "enclave-os-mini/clients/go/ratls"
 	vault "github.com/Privasys/enclave-vaults-client/go/vault"
@@ -62,7 +63,20 @@ func Export(ctx context.Context, p ExportParams) ([]byte, *ExportResult, error) 
 			return nil, nil, fmt.Errorf("get key info: %w", err)
 		}
 		actx := approvalContext{"key_type": string(info.KeyType)}
-		stepTok, err := requestExportStepUp(ctx, p.Issuer, p.Bearer, p.Handle, info.PolicyVersion, actx, p.Assert)
+		var stepTok string
+		if p.Assert != nil {
+			// In-process authenticator (E2E).
+			stepTok, err = requestExportStepUp(ctx, p.Issuer, p.Bearer, p.Handle, info.PolicyVersion, actx, p.Assert)
+		} else {
+			// Human owner: /begin pushes their wallet, which is where a
+			// Privasys Wallet credential can actually be approved.
+			out := p.Out
+			if out == nil {
+				out = os.Stderr
+			}
+			stepTok, err = RequestStepUpViaBrowser(ctx, p.Issuer, p.Bearer, "export",
+				p.Handle, "", info.PolicyVersion, actx, p.Open, out)
+		}
 		if err != nil {
 			return nil, nil, err
 		}

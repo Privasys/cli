@@ -21,16 +21,19 @@ import (
 // caller always prints the URL too, so a launch failure is not fatal.
 type BrowserOpener func(rawURL string) error
 
-// RequestStepUpViaBrowser drives the operation-bound WebAuthn step-up through
-// the IdP-hosted ceremony page and returns the resulting operation-bound access
-// token (amr:["webauthn"], vault_op). It is the human counterpart to
-// requestExportStepUp's software-authenticator path.
+// RequestStepUpViaBrowser drives the operation-bound WebAuthn step-up and
+// returns the resulting operation-bound access token (amr:["webauthn"],
+// vault_op). It is the human counterpart to requestExportStepUp's
+// software-authenticator path.
 //
-// The CLI holds the owner bearer and drives /begin; the browser page (served
-// same-origin by the IdP, so the assertion validates against the RP ID) runs
-// navigator.credentials.get() against the owner's passkey and POSTs the
-// assertion to /complete; the IdP stashes the issued token and the CLI collects
-// it here by polling /token with the same owner bearer.
+// The CLI holds the owner bearer and drives /begin, which does two things: it
+// PUSHES the owner's Privasys Wallet (the usual approver — its credential is
+// held in-app, so no browser can reach it) and it returns the WebAuthn options
+// for the IdP-hosted ceremony page (the fallback for a genuine system passkey).
+// Whichever surface the owner uses POSTs the assertion to /complete; the IdP
+// stashes the issued token and the CLI collects it here by polling /token with
+// the same owner bearer. The name is historical — the wallet is the primary
+// path.
 //
 // operation is "promote" or "export". measurementDigestHex is the pending
 // profile's profile_binding_digest for promote (empty for export). policyVersion
@@ -53,7 +56,9 @@ func RequestStepUpViaBrowser(ctx context.Context, issuer, bearer, operation, han
 		"handle":             handle,
 		"measurement_digest": measurementDigestHex,
 		"policy_version":     policyVersion,
-		"ttl_seconds":        240,
+		// 300 is the IdP's cap; a LARGER value silently collapses to 120
+		// (vault_approval.go), shortening the window instead of extending it.
+		"ttl_seconds": 300,
 		"context":            actx,
 	})
 	optionsJSON, err := postBearer(ctx, issuer+"/fido2/vault-approval/begin", bearer, beginBody)
@@ -88,24 +93,36 @@ func RequestStepUpViaBrowser(ctx context.Context, issuer, bearer, operation, han
 	fragJSON, _ := json.Marshal(frag)
 	pageURL := issuer + "/fido2/vault-approval#" + base64.RawURLEncoding.EncodeToString(fragJSON)
 
-	fmt.Fprintf(out, "\nThis %s needs a hardware-backed approval. Open this URL and confirm with your passkey:\n\n  %s\n\n", operation, pageURL)
+	// The wallet is the PRIMARY approver: /begin already pushed it, and a
+	// Privasys Wallet credential is in-app, not an iOS/Android system
+	// passkey — a desktop browser can never reach it. The ceremony page
+	// below is the fallback for owners whose credential really is a system
+	// passkey (a platform authenticator or a security key).
+	fmt.Fprintf(out, "\nThis %s needs a hardware-backed approval.\n\n"+
+		"  ➊ In the Privasys Wallet: tap the \"Vault approval\" push, or open\n"+
+		"     Settings → Vault approvals and confirm the request.\n\n"+
+		"  ➋ Or, if your passkey is a system passkey (platform authenticator or\n"+
+		"     security key), approve it in a browser:\n\n     %s\n\n", operation, pageURL)
 	if open != nil {
 		if err := open(pageURL); err == nil {
-			fmt.Fprintln(out, "(opened in your browser; if nothing appeared, use the URL above)")
+			fmt.Fprintln(out, "(the browser page was opened for ➋; wallet users can ignore it)")
 		}
 	}
 	fmt.Fprintln(out, "Waiting for approval…")
 
-	// 3. Poll for the token the browser's /complete stashed. Owner-scoped and
-	//    single-use server-side. Bounded by the token's freshness window.
+	// 3. Poll for the token that /complete stashed (from the wallet or the
+	//    browser page — both land in the same place). Owner-scoped and
+	//    single-use server-side.
 	tokenURL := issuer + "/fido2/vault-approval/token?challenge=" + url.QueryEscape(vaultOp)
-	deadline := time.Now().Add(4 * time.Minute)
+	// Match the pending's own lifetime (the IdP caps ttl_seconds at 300):
+	// polling longer just waits on an entry the server has already dropped.
+	deadline := time.Now().Add(5*time.Minute + 20*time.Second)
 	for {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
 		if time.Now().After(deadline) {
-			return "", fmt.Errorf("step-up timed out waiting for browser approval")
+			return "", fmt.Errorf("step-up timed out waiting for approval (wallet or browser)")
 		}
 		tok, pending, err := getStepUpToken(ctx, tokenURL, bearer)
 		if err != nil {

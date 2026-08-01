@@ -59,19 +59,10 @@ func newSecretsCmd() *cobra.Command {
 	return c
 }
 
-// walletStepUpApprover returns the WebAuthn step-up assertion for an export.
-// Export requires a fresh, operation-bound WebAuthn assertion from the owner's
-// wallet/passkey. CLI-driven wallet approval (the Privasys Wallet "Vault
-// approvals" relay) is still rolling out, so for now this surfaces a clear
-// instruction. The export MECHANISM is complete end to end (the E2E suite drives
-// it with a software authenticator); only this human hand-off is pending.
-func walletStepUpApprover() secrets.StepUpAssertFunc {
-	return func(_ context.Context, _ []byte) ([]byte, error) {
-		return nil, fmt.Errorf("this export needs WebAuthn step-up: approve it in the Privasys Wallet " +
-			"under Vault approvals. CLI-driven wallet approval is rolling out; until then complete the " +
-			"export from a device holding your passkey")
-	}
-}
+// (The former walletStepUpApprover stub is gone: `secrets export` now drives
+// the same wallet-push ceremony as `apps versions promote` — see
+// secrets.RequestStepUpViaBrowser, which /begin backs with a push to the
+// owner's wallet.)
 
 func newSecretsCreateCmd() *cobra.Command {
 	var value, fromFile string
@@ -210,7 +201,11 @@ a fingerprint, never the key.`,
 				Issuer: env.Cfg.Issuer, Bearer: tok, Sub: sub, Handle: handle,
 				Endpoints: endpoints, Threshold: threshold, MRENCLAVE: mrenclave,
 				AttServer: attServer, AttToken: attTok,
-				RequireStepUp: true, Assert: walletStepUpApprover(),
+				// Assert nil = the human ceremony: /begin pushes the owner's
+				// wallet (where a Privasys Wallet credential lives), with the
+				// IdP page as the system-passkey fallback.
+				RequireStepUp: true,
+				Out:           cmd.ErrOrStderr(), Open: secrets.OpenBrowser,
 			})
 			if err != nil {
 				return err
