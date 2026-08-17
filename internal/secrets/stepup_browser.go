@@ -35,8 +35,10 @@ type BrowserOpener func(rawURL string) error
 // the same owner bearer. The name is historical — the wallet is the primary
 // path.
 //
-// operation is "promote" or "export". measurementDigestHex is the pending
-// profile's profile_binding_digest for promote (empty for export). policyVersion
+// operation is "promote", "export", or "policy-update" (idp-v0.3.32+; a
+// key-policy update — e.g. arming the acceptable-TCB set — with an honest
+// approval card). measurementDigestHex is the pending profile's
+// profile_binding_digest for promote (empty for export/policy-update). policyVersion
 // is the key's current policy version. Both are baked into the vault_op binding
 // server-side, so the token authorises this exact operation and nothing else.
 // approvalContext is advisory display context (app name, version, source,
