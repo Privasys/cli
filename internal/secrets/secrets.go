@@ -49,18 +49,18 @@ const grantPath = "/vault/key-creation-grant"
 // so these need not track every vault cutover. The 2-of-4 SGX constellation
 // across Paris + London.
 var DefaultEndpoints = []string{
-	"141.94.219.130:8549", "141.94.219.130:8550", // Paris
-	"198.244.201.58:8549", "198.244.201.58:8550", // London
+	"141.94.219.130:8551", "141.94.219.130:8552", // Paris
+	"198.244.201.58:8551", "198.244.201.58:8552", // London
 }
 
 const (
-	// Fallback pin (prod-v0.29.0, Paris+London 8549/8550). The directory is the
+	// Fallback pin (prod-v0.30.0, Paris+London 8551/8552). The directory is the
 	// source of truth; this is only used if /api/v1/vaults can't be reached.
-	// Keep it current with the ACTIVE constellation: the pre-2026-08-01 value
-	// (vault-v0.26.0 on 8443/8444) still answers on those ports but holds none
-	// of the live keys, so a stale fallback fails obscurely — "key not found"
-	// or a policy denial — instead of simply being unreachable.
-	DefaultMRENCLAVE = "cbecd75e3a4ab742b6d8f85848d96a5058a4674a820b41928116cec4916ec407"
+	// Keep it current with the ACTIVE constellation: a stale value still
+	// answers on the old ports but holds none of the live keys, so a stale
+	// fallback fails obscurely — "key not found" or a policy denial — instead
+	// of simply being unreachable.
+	DefaultMRENCLAVE = "f3e891860b69575394f4156ce25f4b0859bbe1f83dd55a883d6a4cf4191408ff"
 	DefaultAttServer = "https://as.privasys.org/verify"
 )
 
