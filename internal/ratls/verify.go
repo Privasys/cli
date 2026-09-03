@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"fmt"
+	"strings"
 	"time"
 
 	rc "enclave-os-mini/clients/go/ratls"
@@ -82,17 +83,13 @@ func NewNonce() []byte {
 	return b
 }
 
-func teeFromOID(oid string) rc.TeeType {
-	switch oid {
-	case rc.OidTDXQuote:
+// teeOf maps the evidence family of a connection to the TEE type the
+// verification policy expects ("tdx" and "tdx-gpu" are TDX; anything else SGX).
+func teeOf(ev *rc.Evidence) rc.TeeType {
+	if ev != nil && strings.HasPrefix(ev.TEE, "tdx") {
 		return rc.TeeTypeTDX
-	case rc.OidSEVSNPReport:
-		return rc.TeeTypeSEVSNP
-	case rc.OidNVIDIAGPUEvidence:
-		return rc.TeeTypeNVIDIAGPU
-	default:
-		return rc.TeeTypeSGX
 	}
+	return rc.TeeTypeSGX
 }
 
 // Verify connects to the enclave, (optionally) challenges it, and verifies its
@@ -102,9 +99,9 @@ func Verify(ctx context.Context, p Params) (*Result, error) {
 	if p.Port == 0 {
 		p.Port = 443
 	}
-	opts := &rc.Options{ServerName: p.ServerName, Timeout: 20 * time.Second}
+	opts := &rc.Options{ServerName: p.ServerName, Timeout: 20 * time.Second, Attestation: rc.AttestationDeterministic}
 	if len(p.Challenge) > 0 {
-		opts.Challenge = p.Challenge
+		opts.Attestation = rc.AttestationChallenge
 	}
 	client, err := rc.Connect(p.Host, p.Port, opts)
 	if err != nil {
@@ -118,28 +115,18 @@ func Verify(ctx context.Context, p Params) (*Result, error) {
 		CipherSuite: client.CipherSuite(),
 		Challenged:  len(p.Challenge) > 0,
 	}
-	if res.Challenged {
-		res.NonceHex = hex.EncodeToString(p.Challenge)
+	if ev := client.Evidence(); ev != nil && len(ev.Context) > 0 {
+		res.NonceHex = hex.EncodeToString(ev.Context)
 	}
 	if ders := client.PeerCertificatesDER(); len(ders) > 0 {
 		res.CertPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ders[0]}))
 	}
 
-	// Detect the TEE from the cert's quote OID so the policy enforces the
-	// right quote type (policy.TEE defaults to SGX).
+	// The evidence family decides the policy's TEE type; the inspection keeps
+	// the unverified evidence for display when verification fails.
 	pre := client.InspectCert()
-	oid := ""
-	if pre.Quote != nil {
-		oid = pre.Quote.OID
-	}
 
-	policy := &rc.VerificationPolicy{TEE: teeFromOID(oid)}
-	if len(p.Challenge) > 0 {
-		policy.ReportData = rc.ReportDataChallengeResponse
-		policy.Nonce = p.Challenge
-	} else {
-		policy.ReportData = rc.ReportDataDeterministic
-	}
+	policy := &rc.VerificationPolicy{TEE: teeOf(client.Evidence())}
 	if p.AttServerURL != "" {
 		policy.QuoteVerification = &rc.QuoteVerificationConfig{Endpoint: p.AttServerURL, Token: p.AttServerTok}
 	}

@@ -23,7 +23,7 @@ type CallParams struct {
 	Path         string // container endpoint path (default "/"+Function)
 	Body         []byte // raw JSON request body (may be nil)
 	AppToken     string // user JWT presented as app_auth / Bearer
-	Challenge    []byte // verify-before-send nonce
+	Challenge    []byte // non-empty selects challenge mode (evidence bound to the connection)
 	AttServerURL string // set (with AttServerTok) to verify the quote remotely
 	AttServerTok string
 }
@@ -34,9 +34,9 @@ type CallParams struct {
 // plane is never in the data path. Container responses (incl. chunked/SSE)
 // stream to out; the response status is returned.
 func Call(ctx context.Context, p CallParams, out io.Writer) (int, error) {
-	opts := &rc.Options{ServerName: p.ServerName, Timeout: 60 * time.Second}
+	opts := &rc.Options{ServerName: p.ServerName, Timeout: 60 * time.Second, Attestation: rc.AttestationDeterministic}
 	if len(p.Challenge) > 0 {
-		opts.Challenge = p.Challenge
+		opts.Attestation = rc.AttestationChallenge
 	}
 	client, err := rc.Connect(p.Host, 443, opts)
 	if err != nil {
@@ -44,19 +44,9 @@ func Call(ctx context.Context, p CallParams, out io.Writer) (int, error) {
 	}
 	defer client.Close()
 
-	// Verify the enclave BEFORE sending any application data.
-	info := client.InspectCert()
-	oid := ""
-	if info.Quote != nil {
-		oid = info.Quote.OID
-	}
-	policy := &rc.VerificationPolicy{TEE: teeFromOID(oid)}
-	if len(p.Challenge) > 0 {
-		policy.ReportData = rc.ReportDataChallengeResponse
-		policy.Nonce = p.Challenge
-	} else {
-		policy.ReportData = rc.ReportDataDeterministic
-	}
+	// Verify the enclave BEFORE sending any application data (RA-TLS v2: the
+	// evidence was obtained after the handshake; this checks it).
+	policy := &rc.VerificationPolicy{TEE: teeOf(client.Evidence())}
 	if p.AttServerURL != "" && p.AttServerTok != "" {
 		policy.QuoteVerification = &rc.QuoteVerificationConfig{Endpoint: p.AttServerURL, Token: p.AttServerTok}
 	}
