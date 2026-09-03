@@ -2,9 +2,8 @@
 // Licensed under the GNU Affero General Public License v3.0.
 
 // Package ratls is the CLI's client-side RA-TLS verifier. It connects directly
-// to an enclave (through the gateway's L4 splice), optionally challenges it
-// with a fresh nonce (0xFFBB, requires the Privasys Go fork + -tags ratls),
-// and verifies the attestation quote against the attestation server — so the
+// to an enclave (through the gateway's L4 splice), obtains its evidence after
+// the handshake (RA-TLS v2, challenge mode binds it to the connection), and verifies the attestation quote against the attestation server — so the
 // CLI trusts the enclave's hardware attestation, not the control plane.
 package ratls
 

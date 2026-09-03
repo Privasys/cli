@@ -1,8 +1,6 @@
 // Copyright (c) Privasys. All rights reserved.
 // Licensed under the GNU Affero General Public License v3.0.
 
-//go:build ratls
-
 package secrets
 
 import (
@@ -29,7 +27,6 @@ func verifyPolicy(mrenclaveHex, attServer, attToken string) (*ratls.Verification
 	return &ratls.VerificationPolicy{
 		TEE:               ratls.TeeTypeSGX,
 		MRENCLAVE:         mre,
-		ReportData:        ratls.ReportDataDeterministic,
 		QuoteVerification: &ratls.QuoteVerificationConfig{Endpoint: attServer, Token: attToken},
 	}, nil
 }
@@ -351,9 +348,8 @@ func Create(ctx context.Context, p CreateParams) (*Result, error) {
 		return nil, fmt.Errorf("vault mrenclave must be 32 bytes of hex")
 	}
 	verify := &ratls.VerificationPolicy{
-		TEE:        ratls.TeeTypeSGX,
-		MRENCLAVE:  mre,
-		ReportData: ratls.ReportDataDeterministic,
+		TEE:       ratls.TeeTypeSGX,
+		MRENCLAVE: mre,
 		QuoteVerification: &ratls.QuoteVerificationConfig{
 			Endpoint: p.AttServer,
 			Token:    p.AttToken,
@@ -417,9 +413,8 @@ func CreateInVault(ctx context.Context, p VaultCreateParams) (*Result, error) {
 		return nil, fmt.Errorf("vault mrenclave must be 32 bytes of hex")
 	}
 	verify := &ratls.VerificationPolicy{
-		TEE:        ratls.TeeTypeSGX,
-		MRENCLAVE:  mre,
-		ReportData: ratls.ReportDataDeterministic,
+		TEE:       ratls.TeeTypeSGX,
+		MRENCLAVE: mre,
 		QuoteVerification: &ratls.QuoteVerificationConfig{
 			Endpoint: addr.AttServer,
 			Token:    p.AttToken,

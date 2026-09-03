@@ -15,8 +15,7 @@ require (
 )
 
 // The RA-TLS client library is a sibling checkout (the release workflow checks
-// out Privasys/ra-tls-clients next to this repo). Client-side challenge-response
-// additionally requires the Privasys Go fork built with -tags ratls.
+// out Privasys/ra-tls-clients next to this repo). RA-TLS v2 builds on upstream Go.
 replace enclave-os-mini/clients/go => ../ra-tls-clients/go
 
 require (

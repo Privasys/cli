@@ -43,7 +43,7 @@ func devVaults() (endpoints []string, mrenclave string, threshold int) {
 // gets a holder-of-key key-creation grant from the IdP, then creates a
 // user-owned, Shamir-split secret across the vaults over mutual RA-TLS.
 //
-// Needs the Go RA-TLS fork (`-tags ratls`) and an ambient authorized session.
+// Needs an ambient authorized session.
 // Set PRIVASYS_E2E=1. Creates a small key under users/<your-sub>/.
 func TestLiveSecretsCreate(t *testing.T) {
 	issuer := skipUnlessLive(t)
@@ -93,7 +93,7 @@ func TestLiveSecretsCreate(t *testing.T) {
 // it back — gated by a fresh, operation-bound WebAuthn step-up the same wallet
 // approves. The reconstructed key must equal what was created.
 //
-// Needs the Go RA-TLS fork (`-tags ratls`) AND a vault constellation + IdP that
+// Needs a vault constellation + IdP that
 // carry the operation-bound export step-up (the vault's handle_export binding +
 // the IdP's operation:"export" grant). Point it at the dev grant vaults via
 // PRIVASYS_E2E_VAULTS / PRIVASYS_E2E_VAULT_MRENCLAVE.

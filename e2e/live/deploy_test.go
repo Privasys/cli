@@ -25,7 +25,7 @@ import (
 // cold-auth onboarding/attest tests. Deliberately a NON-STORAGE container so it
 // never touches the (in-flight) vault key-creation path.
 //
-// Needs the Go RA-TLS fork (`-tags ratls`). Env:
+// Env:
 //
 //	PRIVASYS_E2E=1
 //	PRIVASYS_E2E_ENDPOINT   management-service base URL (e.g. https://api-test.developer.privasys.org)

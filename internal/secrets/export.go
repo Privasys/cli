@@ -1,8 +1,6 @@
 // Copyright (c) Privasys. All rights reserved.
 // Licensed under the GNU Affero General Public License v3.0.
 
-//go:build ratls
-
 package secrets
 
 import (
@@ -32,9 +30,8 @@ func Export(ctx context.Context, p ExportParams) ([]byte, *ExportResult, error) 
 		return nil, nil, fmt.Errorf("vault mrenclave must be 32 bytes of hex")
 	}
 	verify := &ratls.VerificationPolicy{
-		TEE:        ratls.TeeTypeSGX,
-		MRENCLAVE:  mre,
-		ReportData: ratls.ReportDataDeterministic,
+		TEE:       ratls.TeeTypeSGX,
+		MRENCLAVE: mre,
 		QuoteVerification: &ratls.QuoteVerificationConfig{
 			Endpoint: p.AttServer,
 			Token:    p.AttToken,

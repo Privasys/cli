@@ -21,7 +21,7 @@ import (
 // then connect to a real enclave over RA-TLS, challenge it with a fresh nonce,
 // and verify its hardware quote against the attestation server.
 //
-// Needs the Go RA-TLS fork: run with `-tags ratls` (under WSL on the dev box).
+// Runs against live infrastructure.
 // Set PRIVASYS_E2E=1 and PRIVASYS_E2E_HOST=<enclave gateway FQDN>, e.g.
 // container-app-lightpanda.apps.privasys.org.
 func TestLiveAttest(t *testing.T) {

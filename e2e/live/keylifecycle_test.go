@@ -21,7 +21,7 @@ import (
 // promotes it, and the data key survives). Verified via owner export of the DEK,
 // so these don't depend on the app container serving HTTP ("active").
 //
-// Needs the Go RA-TLS fork (`-tags ratls`), the AMBIENT owner session, and a TDX
+// Needs the AMBIENT owner session, and a TDX
 // container enclave (target m1-dev with PRIVASYS_E2E_ENCLAVE). Env mirrors
 // TestLiveAppExportKey.
 

@@ -26,7 +26,7 @@ scoop install privasys
 
 **Binaries:** download the archive for your OS/arch from the [releases page](https://github.com/Privasys/cli/releases) and put `privasys` on your `PATH`. Windows binaries are currently unsigned.
 
-> `go install` is not supported: the CLI does client-side RA-TLS (challenging the enclave directly), which links the RA-TLS client library and is built with the [Privasys Go fork](https://github.com/Privasys/go) (`-tags ratls`). Use the released binaries. To build from source, check out `Privasys/ra-tls-clients` next to this repo and build with the fork: `GOROOT=<go-fork> go build -tags ratls ./cmd/privasys`.
+> `go install` is not supported: the CLI links the RA-TLS client library through a `replace` directive. Use the released binaries, or check out `Privasys/ra-tls-clients` next to this repo and run `go build ./cmd/privasys`.
 
 Verify:
 ```sh

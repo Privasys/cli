@@ -20,7 +20,7 @@ import (
 // the owner directly from the vaults over RA-TLS and reconstruct it.
 //
 // Uses the AMBIENT authorized session (the app owner). Needs the Go RA-TLS fork
-// (`-tags ratls`). Env:
+// . Env:
 //
 //	PRIVASYS_E2E=1
 //	PRIVASYS_E2E_ENDPOINT   management-service base URL (dev: https://api-test.developer.privasys.org)
