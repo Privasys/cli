@@ -37,6 +37,11 @@ func Call(ctx context.Context, p CallParams, out io.Writer) (int, error) {
 	opts := &rc.Options{ServerName: p.ServerName, Timeout: 60 * time.Second, Attestation: rc.AttestationDeterministic}
 	if len(p.Challenge) > 0 {
 		opts.Attestation = rc.AttestationChallenge
+		if len(p.Challenge) == rc.ContextLen {
+			// A 32-byte challenge becomes the context itself, so the evidence
+			// commits to the value the caller chose.
+			opts.Context = p.Challenge
+		}
 	}
 	client, err := rc.Connect(p.Host, 443, opts)
 	if err != nil {

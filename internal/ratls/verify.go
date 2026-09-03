@@ -102,6 +102,11 @@ func Verify(ctx context.Context, p Params) (*Result, error) {
 	opts := &rc.Options{ServerName: p.ServerName, Timeout: 20 * time.Second, Attestation: rc.AttestationDeterministic}
 	if len(p.Challenge) > 0 {
 		opts.Attestation = rc.AttestationChallenge
+		if len(p.Challenge) == rc.ContextLen {
+			// A 32-byte challenge becomes the context itself, so the evidence
+			// commits to the value the caller chose.
+			opts.Context = p.Challenge
+		}
 	}
 	client, err := rc.Connect(p.Host, p.Port, opts)
 	if err != nil {
