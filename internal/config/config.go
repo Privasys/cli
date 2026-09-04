@@ -26,7 +26,7 @@ const (
 	// TestEndpoint is the Privasys test/dev platform API, selected with the
 	// global --test flag. Auth still goes through the production issuer
 	// (privasys.id), so only the platform endpoint differs.
-	TestEndpoint = "https://api-test.developer.privasys.org"
+	TestEndpoint = "https://api.developer.test.privasys.org"
 )
 
 // Configuration is a single named profile.
