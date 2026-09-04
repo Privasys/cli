@@ -31,7 +31,8 @@ func newAttestCmd() *cobra.Command {
 		Long: `Connects to the app's enclave over RA-TLS (through the gateway's L4 splice),
 challenges it with a fresh nonce, and verifies the quote against the attestation
 server. The CLI trusts the enclave's hardware attestation, never the control
-plane. Challenge mode requires a CLI built with the Privasys Go fork.
+plane. The evidence is obtained after the handshake (RA-TLS v2); challenge mode
+binds it to this connection.
 
   --host         enclave gateway FQDN (default: resolved from the app)
   --no-challenge use deterministic mode instead of a fresh challenge

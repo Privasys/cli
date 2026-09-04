@@ -2236,7 +2236,7 @@ field count.
 
 // newAppsDependenciesCmd sets the app's attested cross-enclave dependency set:
 // the identities it is pinned to and will only complete an RA-TLS handshake
-// with. The runtime seals the set into the OID 65230.6.1 certificate extension
+// with. The runtime seals the set into the OID 65230.7.1 certificate extension
 // and enforces it fail-closed; the app itself never writes it.
 func newAppsDependenciesCmd() *cobra.Command {
 	var data string
@@ -2246,7 +2246,7 @@ func newAppsDependenciesCmd() *cobra.Command {
 		Short: "Set the app's attested cross-enclave dependency set",
 		Long: `Pins the app to a fixed set of dependency identities (measurements + required
 OIDs per dependency app). On the next (re)deploy the runtime seals the set into
-the app's RA-TLS certificate (OID 65230.6.1) and refuses to connect to any
+the app's RA-TLS certificate (OID 65230.7.1) and refuses to connect to any
 dependency that does not match.
 
   --data     dependency-set JSON, or @file (an array of entries, or {"entries":[...]})
