@@ -181,11 +181,26 @@ func runTool(cmd *cobra.Command, name string, args ...string) error {
 func latestReleaseVersion(ctx context.Context) (string, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, releasesAPI, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
+	// Anonymous GitHub API calls share a small per-network quota; a token in
+	// the environment lifts it (the same variables gh and the Actions runner use).
+	for _, name := range []string{"GITHUB_TOKEN", "GH_TOKEN"} {
+		if tok := strings.TrimSpace(os.Getenv(name)); tok != "" {
+			req.Header.Set("Authorization", "Bearer "+tok)
+			break
+		}
+	}
 	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusForbidden && resp.Header.Get("X-RateLimit-Remaining") == "0" {
+		when := "later"
+		if secs, perr := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64); perr == nil {
+			when = "after " + time.Unix(secs, 0).Local().Format("15:04")
+		}
+		return "", fmt.Errorf("GitHub API rate limit reached for this network; retry %s, or set GITHUB_TOKEN to lift the anonymous quota", when)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("GitHub releases API: HTTP %d", resp.StatusCode)
 	}
