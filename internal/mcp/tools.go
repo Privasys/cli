@@ -1140,6 +1140,12 @@ func (s *Server) registerTools() {
 				if err != nil {
 					return nil, err
 				}
+				// A key gated on an operation-bound WebAuthn step-up cannot be
+				// promoted from here: say so plainly instead of letting the vault
+				// reject the bearer with an opaque amr error.
+				if stepUpRequired(ctx, d, id) {
+					return nil, fmt.Errorf("this app's key requires a fresh WebAuthn approval that only the owner can give: ask them to run `privasys apps upgrade %s` (it opens the approval page for their passkey or wallet). An agent cannot complete that ceremony", id)
+				}
 				return d.Client.PromoteProfile(ctx, id, vid, argInt(args, "pending_id"))
 			},
 		},
@@ -1362,6 +1368,7 @@ func (s *Server) registerTools() {
 		},
 	}
 	s.tools = append(s.tools, platformTools()...)
+	s.tools = append(s.tools, upgradeTools()...)
 }
 
 func mapKey(k string) string { return k }

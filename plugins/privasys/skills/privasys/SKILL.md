@@ -54,6 +54,24 @@ stops a running deployment (a vault-backed volume survives and reattaches),
   confirm first); then `apps_deploy` with `instance`. `instances_{list,describe,
   start,stop,delete}` manage it; stopping halts compute billing and keeps data.
 
+## Upgrading an app that holds data
+
+A vault-backed app's data key is bound to its measurement, so a new version
+cannot read the old data until the **owner** approves the new measurement.
+
+Use `apps_upgrade` (approve only) or `apps_update` (ship + approve + deploy in
+the safe order). Both are **two-phase on purpose**:
+
+1. Call it **without** `confirm`. It stages the new measurement and returns it.
+2. **Show that measurement to the human** — they check the image digest against
+   their build — and get explicit sign-off.
+3. Call again with `confirm: true` to promote (and deploy).
+
+Never set `confirm` on the first call, and never on your own judgement: it is
+irreversible consent to let new code read their data. If the reply says
+`requires_step_up`, the key needs a fresh WebAuthn approval that only the owner
+can complete — ask them to run `privasys apps upgrade <app>` themselves.
+
 ## Wiring apps together, attested
 
 An app can be restricted to attested callers and can declare what it calls:

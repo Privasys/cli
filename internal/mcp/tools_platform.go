@@ -21,12 +21,16 @@ import (
 // servers), `agents init` / `config set` / `update` (mutate the operator's own
 // machine), and `apps upload` (needs a local file path).
 //
-// Also CLI-only by design: `apps upgrade` and `apps update` are interactive
-// wrappers whose whole value is the human confirming a measurement. Agents
-// compose the same flow from the discrete, individually-gated verbs
-// (apps_versions_stage -> apps_versions_pending -> apps_versions_promote ->
-// apps_deploy), so consent is never auto-clicked. `auth list` / `auth logout`
-// are session management: logging out would strand the agent mid-task.
+// `auth list` / `auth logout` are session management: logging out would strand
+// the agent mid-task.
+//
+// NOTE: `apps upgrade` / `apps update` ARE exposed (see tools_upgrade.go). They
+// were briefly withheld on the theory that consent needs a human at a terminal,
+// but that was inconsistent: apps_versions_promote already promotes, and any
+// agent with a shell can run the CLI with --yes, so withholding the tool removed
+// usefulness without adding safety. The real boundary is the vault (owner bearer
+// + operation-bound WebAuthn step-up); the tools keep a human in the loop by
+// being two-phase (review the measurement, then confirm).
 func platformTools() []tool {
 	return []tool{
 		// ---- dedicated instances --------------------------------------------
