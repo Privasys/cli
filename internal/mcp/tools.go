@@ -495,7 +495,7 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "vault_rm",
-			Description: "Delete a vault (key container) by id.",
+			Description: "Delete a vault (a key container) by id. Remove its keys first with vault_key_rm; deleting the container does not destroy key material on the constellation. Confirm with the human.",
 			Schema:      obj(map[string]interface{}{"vault_id": strProp("the vault id")}, "vault_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				vaultID, err := requireStr(args, "vault_id")
@@ -830,7 +830,7 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "apps_create",
-			Description: "Create a new app.",
+			Description: "Create a new app. Pass the field matching source_type: commit_url (github, built reproducibly from a signed commit), image (package, a digest-pinned container ref), or upload/cloud_image. Set storage:true for an app that holds user data — it provisions an owner-controlled encrypted volume and CANNOT be added later. size is fixed at creation for container apps. Next: apps_versions_create, then apps_deploy.",
 			Schema: obj(map[string]interface{}{
 				"name":         strProp("app name (DNS-safe)"),
 				"source_type":  strProp("upload|github|package|cloud_image"),
@@ -914,14 +914,14 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "apps_deploy",
-			Description: "Deploy a version of an app (defaults to the latest version and, when there is only one, the sole location). Adopters pick a location, not an enclave.",
+			Description: "Deploy a version of an app (defaults to the latest version and, when there is only one, the sole location). Adopters pick a location, not an enclave. For a vault-backed app that already holds data, APPROVE FIRST: apps_versions_stage then apps_versions_promote (with human sign-off), then deploy — deploying an un-promoted version leaves the data locked until it is approved.",
 			Schema: obj(map[string]interface{}{
-				"app_id":   strProp("the app id"),
-				"version":  strProp("version id (default: latest)"),
-				"location": strProp("deploy location code, e.g. europe-west9 (default: the only one available)"),
-				"enclave":  strProp("enclave id (admin override; adopters use location)"),
-				"size":     strProp("container VM size for this deployment: micro|small|medium|large|xlarge (default: the app's size; redeploy with a new size to resize)"),
-				"tenancy":  strProp("mutualised (default, shared CVM) or dedicated (a whole confidential VM, Medium/Large only)"),
+				"app_id":     strProp("the app id"),
+				"version":    strProp("version id (default: latest)"),
+				"location":   strProp("deploy location code, e.g. europe-west9 (default: the only one available)"),
+				"enclave":    strProp("enclave id (admin override; adopters use location)"),
+				"size":       strProp("container VM size for this deployment: micro|small|medium|large|xlarge (default: the app's size; redeploy with a new size to resize)"),
+				"tenancy":    strProp("mutualised (default, shared CVM) or dedicated (a whole confidential VM, Medium/Large only)"),
 				"instance":   strProp("deploy onto a dedicated instance id you own (multi-app; overrides location/tenancy)"),
 				"storage_gb": intProp("size the app's encrypted volume on FIRST deploy (default 10; an existing volume keeps its size — grow with volumes_resize/the portal)"),
 			}, "app_id"),
@@ -1002,8 +1002,8 @@ func (s *Server) registerTools() {
 			Schema: obj(map[string]interface{}{
 				"app_id":   strProp("the app id"),
 				"function": strProp("the function name"),
-				"data":     map[string]interface{}{"description": "JSON request body"},
-				"attest":   map[string]interface{}{"type": "boolean", "description": "also verify the quote against the attestation server"},
+				"data":     map[string]interface{}{"description": "JSON request body: either a JSON object, or a string already containing encoded JSON (it is not re-encoded)"},
+				"attest":   boolProp("also verify the quote against the attestation server"),
 			}, "app_id", "function"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
@@ -1259,7 +1259,14 @@ func (s *Server) registerTools() {
 			Schema: obj(map[string]interface{}{
 				"app_id":       strProp("the app id (used to resolve the enclave hostname)"),
 				"host":         strProp("enclave gateway FQDN (optional; bypasses control-plane lookup)"),
-				"no_challenge": map[string]interface{}{"type": "boolean", "description": "use deterministic mode instead of a fresh challenge"},
+				"no_challenge": boolProp("use deterministic mode instead of a fresh challenge"),
+				"mrenclave":    strProp("pin an expected MRENCLAVE (hex); verification fails if the enclave differs"),
+				"mrtd":         strProp("pin an expected MRTD (hex); verification fails if the enclave differs"),
+				"allowed_platform": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "pin the physical machine(s) the evidence may come from (hex platform ids)",
+				},
 			}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				host := argStr(args, "host")
@@ -1281,6 +1288,8 @@ func (s *Server) registerTools() {
 				return ratls.Verify(ctx, ratls.Params{
 					Host: host, Port: 443, ServerName: host,
 					Challenge: nonce, AttServerURL: "https://as.privasys.org/verify", AttServerTok: attTok,
+					ExpectMRENCLA: argStr(args, "mrenclave"), ExpectMRTD: argStr(args, "mrtd"),
+					AllowedPlatformIDs: argStrSlice(args, "allowed_platform"),
 				})
 			},
 		},
@@ -1300,7 +1309,7 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "team_add",
-			Description: "Add an account member.",
+			Description: "Add a member to the account by their subject. role is admin (full control), billing, or member (default). Team membership is separate from per-app access, which is apps_owners_add.",
 			Schema: obj(map[string]interface{}{
 				"sub":   strProp("the member's subject id"),
 				"email": strProp("member email"),
@@ -1352,6 +1361,7 @@ func (s *Server) registerTools() {
 			},
 		},
 	}
+	s.tools = append(s.tools, platformTools()...)
 }
 
 func mapKey(k string) string { return k }

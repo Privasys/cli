@@ -269,3 +269,23 @@ func intProp(desc string) map[string]interface{} {
 func boolProp(desc string) map[string]interface{} {
 	return map[string]interface{}{"type": "boolean", "description": desc}
 }
+
+// argStrSlice reads a JSON string array argument (MCP sends []interface{}),
+// tolerating a single string for convenience.
+func argStrSlice(args map[string]interface{}, key string) []string {
+	switch v := args[key].(type) {
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, e := range v {
+			if s, ok := e.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		if v != "" {
+			return []string{v}
+		}
+	}
+	return nil
+}

@@ -36,6 +36,36 @@ The signing key never leaves the wallet; you never see it. Never ask the user to
 4. `attest` — challenge the enclave with a fresh nonce and verify its TEE quote. **Do this before trusting the endpoint.**
 5. `apps_call` — invoke an app API directly over RA-TLS (the control plane is not in the data path; responses stream).
 
+Before deploying, `apps_locations` and `apps_sizes` list the valid `location` and
+`size` values for `apps_deploy` — read them rather than guessing. `apps_stop`
+stops a running deployment (a vault-backed volume survives and reattaches),
+`apps_rename` changes the display title, and `apps_delete` removes the app
+(with `with_volume` it also destroys the data — confirm with the human).
+
+## Sizing, storage and dedicated machines
+
+- **Storage.** Ask for it at creation (`storage: true`); it cannot be added
+  later. The first deploy sizes the volume (`storage_gb`, default 10 GB).
+  `volumes_list` / `volumes_describe` show usage, `volumes_resize` grows it
+  online (grow-only), and `volumes_delete` destroys the data irreversibly.
+- **Dedicated instances.** By default apps share a confidential VM with other
+  tenants (still isolated from the host). For a whole CVM of their own, or to
+  run several apps together, `instances_create` provisions one (billed hourly —
+  confirm first); then `apps_deploy` with `instance`. `instances_{list,describe,
+  start,stop,delete}` manage it; stopping halts compute billing and keeps data.
+
+## Wiring apps together, attested
+
+An app can be restricted to attested callers and can declare what it calls:
+
+- `apps_allowed_callers` — only these attested apps may reach it over ingress
+  mutual RA-TLS (clearing the list lets anyone in).
+- `apps_dependencies` — the app's attested cross-enclave dependency set, pinning
+  the identity of what it is allowed to call.
+
+Both take a JSON array; both are how a multi-app system stays mutually verified
+rather than trusting the network.
+
 ## Running the user's own backend confidentially
 
 Most users already have a backend (or want to write one). Your job is to make
