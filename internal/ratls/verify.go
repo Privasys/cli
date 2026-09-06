@@ -41,7 +41,14 @@ type Result struct {
 	QuoteStatus   string   `json:"quote_status,omitempty"`
 	TcbDate       string   `json:"tcb_date,omitempty"`
 	AdvisoryIDs   []string `json:"advisory_ids,omitempty"`
-	GPU           *GPU     `json:"gpu,omitempty"`
+	// Platform identity the attestation server read from the verified evidence
+	// (PCK Platform Instance ID, else PPID; SEV-SNP CHIP_ID), the value an
+	// --allowed-platform entry is matched against.
+	PlatformID         string `json:"platform_id,omitempty"`
+	PlatformInstanceID string `json:"platform_instance_id,omitempty"`
+	PPID               string `json:"ppid,omitempty"`
+	FMSPC              string `json:"fmspc,omitempty"`
+	GPU                *GPU   `json:"gpu,omitempty"`
 	Verified      bool     `json:"verified"`
 	VerifyError   string   `json:"verify_error,omitempty"`
 	CertPEM       string   `json:"-"`
@@ -73,6 +80,10 @@ type Params struct {
 	AttServerTok  string // optional bearer for the attestation server
 	ExpectMRENCLA string // optional MRENCLAVE pin (hex)
 	ExpectMRTD    string // optional MRTD pin (hex)
+	// AllowedPlatformIDs pins the physical machines the evidence may come from
+	// (hex, matched by the attestation server and the SDK against the platform
+	// identity of the verified evidence). Needs AttServerURL.
+	AllowedPlatformIDs []string
 }
 
 // NewNonce returns a 32-byte random challenge nonce.
@@ -134,6 +145,7 @@ func Verify(ctx context.Context, p Params) (*Result, error) {
 	if p.AttServerURL != "" {
 		policy.QuoteVerification = &rc.QuoteVerificationConfig{Endpoint: p.AttServerURL, Token: p.AttServerTok}
 	}
+	policy.AllowedPlatformIDs = p.AllowedPlatformIDs
 	if p.ExpectMRENCLA != "" {
 		if b, e := hex.DecodeString(p.ExpectMRENCLA); e == nil {
 			policy.MRENCLAVE = b
@@ -172,6 +184,10 @@ func fill(res *Result, info rc.CertInfo) {
 		res.QuoteStatus = string(info.QuoteVerification.Status)
 		res.TcbDate = info.QuoteVerification.TcbDate
 		res.AdvisoryIDs = info.QuoteVerification.AdvisoryIDs
+		res.PlatformID = info.QuoteVerification.PlatformID()
+		res.PlatformInstanceID = info.QuoteVerification.PlatformInstanceID
+		res.PPID = info.QuoteVerification.PPID
+		res.FMSPC = info.QuoteVerification.FMSPC
 	}
 	if info.GPUAttestation != nil {
 		res.GPU = &GPU{

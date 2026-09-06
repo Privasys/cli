@@ -24,6 +24,7 @@ const defaultAttServer = "https://as.privasys.org/verify"
 // attestation is the client's job, not something to be told by a proxy.
 func newAttestCmd() *cobra.Command {
 	var outDir, host, attServer, mrenclave, mrtd string
+	var allowedPlatforms []string
 	var noChallenge, showExt bool
 	cmd := &cobra.Command{
 		Use:   "attest <app-id>",
@@ -38,6 +39,8 @@ binds it to this connection.
   --no-challenge use deterministic mode instead of a fresh challenge
   --att-server   attestation server verify endpoint
   --mrenclave / --mrtd  pin an expected measurement (hex)
+  --allowed-platform    pin the physical machine(s) the evidence may come from
+                 (hex platform id as printed in the "platform" row; repeatable)
   --extensions   print the certificate's OID extensions
   --out <dir>    dump artifacts: attestation.json, certificate.pem, quote.bin`,
 		Args: cobra.ExactArgs(1),
@@ -75,7 +78,7 @@ binds it to this connection.
 			res, err := ratls.Verify(ctx, ratls.Params{
 				Host: serverName, Port: 443, ServerName: serverName,
 				Challenge: nonce, AttServerURL: attServer, AttServerTok: attTok,
-				ExpectMRENCLA: mrenclave, ExpectMRTD: mrtd,
+				ExpectMRENCLA: mrenclave, ExpectMRTD: mrtd, AllowedPlatformIDs: allowedPlatforms,
 			})
 			if err != nil {
 				return err
@@ -110,6 +113,7 @@ binds it to this connection.
 	cmd.Flags().StringVar(&attServer, "att-server", defaultAttServer, "attestation server verify endpoint")
 	cmd.Flags().StringVar(&mrenclave, "mrenclave", "", "pin an expected MRENCLAVE (hex)")
 	cmd.Flags().StringVar(&mrtd, "mrtd", "", "pin an expected MRTD (hex)")
+	cmd.Flags().StringArrayVar(&allowedPlatforms, "allowed-platform", nil, "pin the physical machine(s) the evidence may come from (hex platform id; repeatable)")
 	cmd.Flags().BoolVar(&showExt, "extensions", false, "print the certificate's OID extensions")
 	cmd.Flags().StringVar(&outDir, "out", "", "directory to dump attestation artifacts into")
 	return cmd
@@ -125,6 +129,13 @@ func directTable(r *ratls.Result) output.Table {
 	}
 	if r.QuoteStatus != "" {
 		rows = append(rows, []string{"quote status", r.QuoteStatus})
+	}
+	if r.PlatformID != "" {
+		platform := r.PlatformID
+		if r.PlatformInstanceID != "" && r.PPID != "" {
+			platform += " (instance id; ppid " + r.PPID + ")"
+		}
+		rows = append(rows, []string{"platform", platform})
 	}
 	if r.GPU != nil {
 		gpu := "H100 CC verified"
