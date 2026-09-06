@@ -135,6 +135,9 @@ func directTable(r *ratls.Result) output.Table {
 		if r.PlatformInstanceID != "" && r.PPID != "" {
 			platform += " (instance id; ppid " + r.PPID + ")"
 		}
+		if r.PlatformFromQuote {
+			platform += " [read from the quote]"
+		}
 		rows = append(rows, []string{"platform", platform})
 	}
 	if r.GPU != nil {

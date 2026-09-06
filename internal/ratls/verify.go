@@ -48,11 +48,15 @@ type Result struct {
 	PlatformInstanceID string `json:"platform_instance_id,omitempty"`
 	PPID               string `json:"ppid,omitempty"`
 	FMSPC              string `json:"fmspc,omitempty"`
-	GPU                *GPU   `json:"gpu,omitempty"`
-	Verified      bool     `json:"verified"`
-	VerifyError   string   `json:"verify_error,omitempty"`
-	CertPEM       string   `json:"-"`
-	QuoteRaw      []byte   `json:"-"`
+	// PlatformFromQuote is true when the identity was read from the PCK certificate
+	// inside the quote (and cross-checked with the attestation server), false when only
+	// the server reported it.
+	PlatformFromQuote bool   `json:"platform_from_quote,omitempty"`
+	GPU               *GPU   `json:"gpu,omitempty"`
+	Verified          bool   `json:"verified"`
+	VerifyError       string `json:"verify_error,omitempty"`
+	CertPEM           string `json:"-"`
+	QuoteRaw          []byte `json:"-"`
 }
 
 // GPU is the NVIDIA Confidential-Computing attestation verdict, present when the
@@ -188,6 +192,7 @@ func fill(res *Result, info rc.CertInfo) {
 		res.PlatformInstanceID = info.QuoteVerification.PlatformInstanceID
 		res.PPID = info.QuoteVerification.PPID
 		res.FMSPC = info.QuoteVerification.FMSPC
+		res.PlatformFromQuote = info.QuoteVerification.PlatformFromQuote
 	}
 	if info.GPUAttestation != nil {
 		res.GPU = &GPU{
