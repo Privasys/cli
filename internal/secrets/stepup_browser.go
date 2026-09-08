@@ -75,8 +75,10 @@ func RequestStepUpViaBrowser(ctx context.Context, issuer, bearer, operation, han
 		} `json:"publicKey"`
 		// Additive fields from the IdP: whether a wallet push token is even
 		// registered for this owner, and the link that takes the wallet straight
-		// to this approval (rendered as a QR below).
-		PushRegistered   bool   `json:"push_registered"`
+		// to this approval (rendered as a QR below). PushRegistered is a pointer
+		// so an OLDER IdP, which omits it, stays "unknown" rather than decoding
+		// to false and wrongly announcing that no notification is coming.
+		PushRegistered   *bool  `json:"push_registered"`
 		ApprovalDeeplink string `json:"approval_deeplink"`
 	}
 	if err := json.Unmarshal(optionsJSON, &opts); err != nil || opts.PublicKey.Challenge == "" {
@@ -114,13 +116,14 @@ func RequestStepUpViaBrowser(ctx context.Context, issuer, bearer, operation, han
 			fmt.Fprintln(out, q.ToSmallString(false))
 		}
 	}
-	if opts.PushRegistered {
-		fmt.Fprint(out, "  ➊ Scan the QR with your Privasys Wallet, or tap the \"Vault approval\"\n"+
-			"     push it just sent (Settings → Vault approvals).\n\n")
-	} else {
+	switch {
+	case opts.PushRegistered != nil && !*opts.PushRegistered:
 		fmt.Fprint(out, "  ➊ Scan the QR with your Privasys Wallet.\n"+
 			"     NOTE: this account has no wallet registered for push, so no notification\n"+
 			"     is coming — scanning (or opening Vault approvals) is how you approve.\n\n")
+	default: // pushed, or an older IdP that does not report it
+		fmt.Fprint(out, "  ➊ In the Privasys Wallet: scan the QR above, tap the \"Vault approval\"\n"+
+			"     push, or open Settings → Vault approvals and confirm the request.\n\n")
 	}
 	fmt.Fprintf(out, "  ➋ Or, if your passkey is a system passkey (platform authenticator or\n"+
 		"     security key), approve it in a browser:\n\n     %s\n\n", pageURL)
