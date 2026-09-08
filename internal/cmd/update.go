@@ -141,15 +141,31 @@ func detectInstallChannel(exe string) string {
 // update — and returns immediately so this process can exit and unblock scoop.
 func spawnDetachedScoopUpdate(w io.Writer) error {
 	pid := os.Getpid()
+	// The other `privasys` processes are almost always MCP servers: an agent
+	// (Claude and friends) starts `privasys mcp serve` per session and holds it
+	// open for the session's lifetime, and on Windows the scoop shim shows up
+	// beside each one, so a handful of agent windows looks like a crowd. They
+	// are live, not stuck — but scoop still refuses to update a running app, so
+	// offer to close them rather than making the user hunt them down.
 	ps := fmt.Sprintf(
 		"Write-Host 'Updating privasys via scoop...';"+
 			"Wait-Process -Id %d -ErrorAction SilentlyContinue;"+
 			"while ($true) {"+
 			"  $o = @(Get-Process privasys -ErrorAction SilentlyContinue);"+
 			"  if ($o.Count -eq 0) { break }"+
-			"  Write-Host 'Other privasys processes are running (they block scoop). Close them, then press Enter:' -ForegroundColor Yellow;"+
+			"  Write-Host '';"+
+			"  Write-Host ('{0} other privasys process(es) are running; scoop will not update while they are.' -f $o.Count) -ForegroundColor Yellow;"+
+			"  Write-Host 'These are normally MCP servers held open by running agent sessions (plus their scoop shims).' -ForegroundColor DarkGray;"+
+			"  Write-Host 'Closing them only disconnects the privasys tools from those sessions; the sessions keep running and reconnect on their next call.' -ForegroundColor DarkGray;"+
 			"  $o | Select-Object Id,ProcessName | Format-Table | Out-Host;"+
-			"  Read-Host | Out-Null"+
+			"  $a = Read-Host 'Close them now and continue? [Y]es / [r]echeck / [c]ancel';"+
+			"  if ($a -eq 'c') { Write-Host 'Cancelled; nothing was changed.' -ForegroundColor Yellow; Read-Host 'Press Enter to close' | Out-Null; exit 1 };"+
+			"  if ($a -eq 'r') { continue };"+
+			"  foreach ($p in $o) {"+
+			"    try { Stop-Process -Id $p.Id -Force -ErrorAction Stop; Write-Host ('  closed {0}' -f $p.Id) -ForegroundColor DarkGray }"+
+			"    catch { Write-Host ('  could not close {0}: {1}' -f $p.Id, $_.Exception.Message) -ForegroundColor Red }"+
+			"  };"+
+			"  Start-Sleep -Milliseconds 700"+
 			"};"+
 			"scoop update privasys;"+
 			"Write-Host '';"+
