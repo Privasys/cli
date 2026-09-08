@@ -15,6 +15,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/skip2/go-qrcode"
 )
 
 // BrowserOpener launches a URL in the user's browser. It is best-effort: the
@@ -61,7 +63,7 @@ func RequestStepUpViaBrowser(ctx context.Context, issuer, bearer, operation, han
 		// 300 is the IdP's cap; a LARGER value silently collapses to 120
 		// (vault_approval.go), shortening the window instead of extending it.
 		"ttl_seconds": 300,
-		"context":            actx,
+		"context":     actx,
 	})
 	optionsJSON, err := postBearer(ctx, issuer+"/fido2/vault-approval/begin", bearer, beginBody)
 	if err != nil {
@@ -71,6 +73,11 @@ func RequestStepUpViaBrowser(ctx context.Context, issuer, bearer, operation, han
 		PublicKey struct {
 			Challenge string `json:"challenge"`
 		} `json:"publicKey"`
+		// Additive fields from the IdP: whether a wallet push token is even
+		// registered for this owner, and the link that takes the wallet straight
+		// to this approval (rendered as a QR below).
+		PushRegistered   bool   `json:"push_registered"`
+		ApprovalDeeplink string `json:"approval_deeplink"`
 	}
 	if err := json.Unmarshal(optionsJSON, &opts); err != nil || opts.PublicKey.Challenge == "" {
 		return "", fmt.Errorf("step-up begin: no challenge in options")
@@ -95,16 +102,28 @@ func RequestStepUpViaBrowser(ctx context.Context, issuer, bearer, operation, han
 	fragJSON, _ := json.Marshal(frag)
 	pageURL := issuer + "/fido2/vault-approval#" + base64.RawURLEncoding.EncodeToString(fragJSON)
 
-	// The wallet is the PRIMARY approver: /begin already pushed it, and a
-	// Privasys Wallet credential is in-app, not an iOS/Android system
-	// passkey — a desktop browser can never reach it. The ceremony page
-	// below is the fallback for owners whose credential really is a system
-	// passkey (a platform authenticator or a security key).
-	fmt.Fprintf(out, "\nThis %s needs a hardware-backed approval.\n\n"+
-		"  ➊ In the Privasys Wallet: tap the \"Vault approval\" push, or open\n"+
-		"     Settings → Vault approvals and confirm the request.\n\n"+
-		"  ➋ Or, if your passkey is a system passkey (platform authenticator or\n"+
-		"     security key), approve it in a browser:\n\n     %s\n\n", operation, pageURL)
+	fmt.Fprintf(out, "\nThis %s needs a hardware-backed approval.\n\n", operation)
+
+	// A Privasys Wallet credential is in-app, not a system passkey, so a desktop
+	// browser can never reach it: the wallet has to learn about this approval.
+	// A push is the convenient way, but it is best-effort — if none is
+	// registered, or it is silently dropped, the QR is the path that always
+	// works, because it carries the approval to the phone directly.
+	if link := opts.ApprovalDeeplink; link != "" {
+		if q, qErr := qrcode.New(link, qrcode.Low); qErr == nil {
+			fmt.Fprintln(out, q.ToSmallString(false))
+		}
+	}
+	if opts.PushRegistered {
+		fmt.Fprint(out, "  ➊ Scan the QR with your Privasys Wallet, or tap the \"Vault approval\"\n"+
+			"     push it just sent (Settings → Vault approvals).\n\n")
+	} else {
+		fmt.Fprint(out, "  ➊ Scan the QR with your Privasys Wallet.\n"+
+			"     NOTE: this account has no wallet registered for push, so no notification\n"+
+			"     is coming — scanning (or opening Vault approvals) is how you approve.\n\n")
+	}
+	fmt.Fprintf(out, "  ➋ Or, if your passkey is a system passkey (platform authenticator or\n"+
+		"     security key), approve it in a browser:\n\n     %s\n\n", pageURL)
 	if open != nil {
 		if err := open(pageURL); err == nil {
 			fmt.Fprintln(out, "(the browser page was opened for ➋; wallet users can ignore it)")
