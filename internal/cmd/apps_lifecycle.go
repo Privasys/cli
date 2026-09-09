@@ -2336,9 +2336,6 @@ Two shapes, which combine:
 			if !clear && data == "" && !anyAttested && len(platforms) == 0 {
 				return fmt.Errorf("provide --data <json|@file>, --any-attested with --platform, or --clear")
 			}
-			if anyAttested && len(platforms) == 0 {
-				return fmt.Errorf("--any-attested needs at least one --platform (the machines callers may run on)")
-			}
 			env, err := loadEnv(cmd)
 			if err != nil {
 				return err
@@ -2408,6 +2405,12 @@ func allowedCallersDocument(data string, anyAttested bool, platforms []string) (
 		doc.Entries = append(doc.Entries, json.RawMessage(`{"app_id":"*"}`))
 	}
 	doc.Platforms = append(doc.Platforms, platforms...)
+	// The wildcard needs platforms, whether they came from --platform or
+	// from the document; the server refuses it without them too, but say it
+	// here in the words of the flags.
+	if anyAttested && len(doc.Platforms) == 0 {
+		return nil, fmt.Errorf("--any-attested needs at least one platform (--platform, or \"platforms\" in --data): the machines callers may run on")
+	}
 	return json.Marshal(doc)
 }
 
