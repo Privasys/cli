@@ -2298,25 +2298,46 @@ dependency that does not match.
 
 func newAppsAllowedCallersCmd() *cobra.Command {
 	var data string
-	var clear bool
+	var clear, anyAttested bool
+	var platforms []string
 	cmd := &cobra.Command{
 		Use:   "allowed-callers <app-id>",
 		Short: "Set which attested apps may call this app over ingress mutual RA-TLS",
-		Long: `Pins the set of caller identities (measurements + required OIDs per caller app)
-permitted to open an ingress mutual-RA-TLS handshake to this app. On the next
-(re)deploy the runtime installs it as the ingress verification policy: a caller
-whose attested identity does not match is rejected, and a matching caller's
-verified identity is passed to the app as X-Privasys-Peer-* headers. This is the
-callee-side mirror of "apps dependencies".
+		Long: `Sets the callers permitted to open an ingress mutual-RA-TLS handshake to this
+app. On the next (re)deploy the runtime installs it as the ingress verification
+policy: a caller whose attested identity does not match is rejected, and an
+admitted caller's verified identity is passed to the app as X-Privasys-Peer-*
+headers. This is the callee-side mirror of "apps dependencies".
 
-  --data     allowed-caller JSON, or @file (an array of entries, or {"entries":[...]});
-             an entry may be just {"app_id":"<uuid>"} to pin the caller's current
-             published measurement automatically
-  --clear    remove the ingress restriction (server-auth only)`,
+Two shapes, which combine:
+
+  pinned callers   --data lists entries {app_id, measurements, required_oids};
+                   an entry may be just {"app_id":"<uuid>"} to pin the caller's
+                   current published measurement automatically. Such a pin
+                   breaks when the caller redeploys or its host rolls.
+  any attested app --any-attested admits every caller whose evidence verifies
+                   and whose certificate names an app, with no pin: the app
+                   sees who called and decides what to do with an unknown
+                   caller (an app that charges its callers refuses one it
+                   cannot bill). It is honoured only with --platform: a quote
+                   proves a genuine TEE, not whose, and the app id is asserted
+                   by the caller's own runtime, so the machines callers may run
+                   on are what make it trustworthy.
+
+  --data          allowed-caller JSON, or @file (an array of entries, or
+                  {"entries":[...],"platforms":[...]})
+  --any-attested  add the "*" entry (any attested caller)
+  --platform      platform identity callers may run on (hex, as
+                  "privasys attest" reports it; repeatable). Enforced on every
+                  caller's quote, pinned ones included.
+  --clear         remove the ingress restriction (server-auth only)`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !clear && data == "" {
-				return fmt.Errorf("provide --data <json|@file> or --clear")
+			if !clear && data == "" && !anyAttested && len(platforms) == 0 {
+				return fmt.Errorf("provide --data <json|@file>, --any-attested with --platform, or --clear")
+			}
+			if anyAttested && len(platforms) == 0 {
+				return fmt.Errorf("--any-attested needs at least one --platform (the machines callers may run on)")
 			}
 			env, err := loadEnv(cmd)
 			if err != nil {
@@ -2333,29 +2354,61 @@ callee-side mirror of "apps dependencies".
 			}
 			var callers json.RawMessage
 			if !clear {
-				b, err := parseJSONDataArg(data)
+				doc, err := allowedCallersDocument(data, anyAttested, platforms)
 				if err != nil {
 					return err
 				}
-				if !json.Valid(b) {
-					return fmt.Errorf("--data is not valid JSON")
-				}
-				callers = json.RawMessage(b)
+				callers = doc
 			}
 			if _, err := client.SetAllowedCallers(ctx, appID, callers); err != nil {
 				return err
 			}
-			if clear {
+			switch {
+			case clear:
 				fmt.Fprintln(cmd.OutOrStdout(), "allowed callers cleared (ingress server-auth only)")
-			} else {
+			case anyAttested:
+				fmt.Fprintln(cmd.OutOrStdout(), "allowed callers updated: any attested app from the listed platforms (applied on next deploy)")
+			default:
 				fmt.Fprintln(cmd.OutOrStdout(), "allowed callers updated (applied on next deploy)")
 			}
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&data, "data", "", "allowed-caller JSON (or @file)")
+	cmd.Flags().BoolVar(&anyAttested, "any-attested", false, "admit any attested app (needs --platform)")
+	cmd.Flags().StringArrayVar(&platforms, "platform", nil, "platform identity callers may run on (hex; repeatable)")
 	cmd.Flags().BoolVar(&clear, "clear", false, "remove the ingress restriction")
 	return cmd
+}
+
+// allowedCallersDocument composes the {"entries":[...],"platforms":[...]}
+// document from --data (an entry array or a document), --any-attested and
+// --platform, so the flags and a hand-written file mean the same thing.
+func allowedCallersDocument(data string, anyAttested bool, platforms []string) (json.RawMessage, error) {
+	doc := struct {
+		Entries   []json.RawMessage `json:"entries"`
+		Platforms []string          `json:"platforms,omitempty"`
+	}{Entries: []json.RawMessage{}}
+	if data != "" {
+		b, err := parseJSONDataArg(data)
+		if err != nil {
+			return nil, err
+		}
+		if !json.Valid(b) {
+			return nil, fmt.Errorf("--data is not valid JSON")
+		}
+		var entries []json.RawMessage
+		if err := json.Unmarshal(b, &entries); err == nil {
+			doc.Entries = entries
+		} else if err := json.Unmarshal(b, &doc); err != nil {
+			return nil, fmt.Errorf("--data: expected an entry array or {\"entries\":[...]}: %w", err)
+		}
+	}
+	if anyAttested {
+		doc.Entries = append(doc.Entries, json.RawMessage(`{"app_id":"*"}`))
+	}
+	doc.Platforms = append(doc.Platforms, platforms...)
+	return json.Marshal(doc)
 }
 
 // newAppsActionCmd runs an app action tool via the control-plane relay and, when
