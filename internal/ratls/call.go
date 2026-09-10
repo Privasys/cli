@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	rc "enclave-os-mini/clients/go/ratls"
@@ -23,6 +24,10 @@ type CallParams struct {
 	Path         string // container endpoint path (default "/"+Function)
 	Body         []byte // raw JSON request body (may be nil)
 	AppToken     string // user JWT presented as app_auth / Bearer
+	// Headers are extra request headers for a container call (an app's own
+	// protocol headers, e.g. X-Privasys-Reproducibility: strict). Ignored for
+	// wasm, whose connect_call carries no headers.
+	Headers      map[string][]string
 	Challenge    []byte // non-empty selects challenge mode (evidence bound to the connection)
 	AttServerURL string // set (with AttServerTok) to verify the quote remotely
 	AttServerTok string
@@ -64,7 +69,16 @@ func Call(ctx context.Context, p CallParams, out io.Writer) (int, error) {
 		if path == "" {
 			path = "/" + p.Function
 		}
-		resp, err := client.HTTPDo("POST", path, p.ServerName, p.Body, p.AppToken)
+		hdr := http.Header{}
+		for k, vs := range p.Headers {
+			for _, v := range vs {
+				hdr.Add(k, v)
+			}
+		}
+		if p.AppToken != "" {
+			hdr.Set("Authorization", "Bearer "+p.AppToken)
+		}
+		resp, err := client.HTTPDoHeader("POST", path, p.ServerName, p.Body, hdr)
 		if err != nil {
 			return 0, err
 		}

@@ -1938,6 +1938,7 @@ func newAppsMcpCmd() *cobra.Command {
 
 func newAppsCallCmd() *cobra.Command {
 	var data, host, token, path, attServer string
+	var headers []string
 	var noChallenge, doAttest bool
 	cmd := &cobra.Command{
 		Use:   "call <app-id> <function>",
@@ -2026,9 +2027,19 @@ quote verification (genuine TEE + TCB) against the attestation server.
 				nonce = ratls.NewNonce()
 			}
 
+			extra := map[string][]string{}
+			for _, h := range headers {
+				k, v, ok := strings.Cut(h, ":")
+				k = strings.TrimSpace(k)
+				if !ok || k == "" {
+					return fmt.Errorf("--header %q: expected \"Name: value\"", h)
+				}
+				extra[k] = append(extra[k], strings.TrimSpace(v))
+			}
+
 			status, err := ratls.Call(ctx, ratls.CallParams{
 				Host: serverName, ServerName: serverName, AppName: appName, AppType: aType,
-				Function: args[1], Path: path, Body: body, AppToken: appTok,
+				Function: args[1], Path: path, Body: body, AppToken: appTok, Headers: extra,
 				Challenge: nonce, AttServerURL: attURL, AttServerTok: attTok,
 			}, os.Stdout)
 			if err != nil {
@@ -2045,6 +2056,7 @@ quote verification (genuine TEE + TCB) against the attestation server.
 	cmd.Flags().StringVar(&host, "host", "", "enclave gateway FQDN (default: resolved from the app)")
 	cmd.Flags().StringVar(&token, "token", "", "token to present to the app (default: your access token)")
 	cmd.Flags().StringVar(&path, "path", "", "container endpoint path (default: /<function>)")
+	cmd.Flags().StringArrayVar(&headers, "header", nil, "extra request header \"Name: value\" for a container call (repeatable)")
 	cmd.Flags().BoolVar(&doAttest, "attest", false, "also verify the quote against the attestation server")
 	cmd.Flags().StringVar(&attServer, "att-server", "https://as.privasys.org/verify", "attestation server verify endpoint (with --attest)")
 	cmd.Flags().BoolVar(&noChallenge, "no-challenge", false, "skip the fresh-nonce challenge (deterministic verify)")
