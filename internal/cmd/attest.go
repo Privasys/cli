@@ -55,6 +55,11 @@ binds it to this connection.
 			// plane entirely; otherwise we read the app's hostname from the
 			// registry (metadata only — the verification is still client-side).
 			serverName := host
+			// The policy the platform holds, for comparison with the one the
+			// app advertises. Best-effort: with --host there is no app to ask
+			// about, and an app with no approved policy simply has none.
+			var storedPolicySeq uint64
+			var storedPolicyDigest string
 			if serverName == "" {
 				client, err := apiClient(cmd, env)
 				if err != nil {
@@ -68,6 +73,7 @@ binds it to this connection.
 				if err != nil {
 					return fmt.Errorf("%w; pass --host <enclave-fqdn>", err)
 				}
+				storedPolicySeq, storedPolicyDigest = storedPolicy(ctx, client, appID)
 			}
 
 			attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
@@ -101,6 +107,11 @@ binds it to this connection.
 					fmt.Println()
 					_ = output.Emit("table", nil, func() output.Table { return oidTable(res) })
 				}
+				// Which owner-approved policy this app is enforcing, and
+				// whether it is the one its owner last approved.
+				att, ok := policyFromResult(res)
+				fmt.Fprintln(cmd.OutOrStdout())
+				fmt.Fprintln(cmd.OutOrStdout(), policyStatus(att, ok, storedPolicySeq, storedPolicyDigest))
 			}
 			if !res.Verified {
 				return fmt.Errorf("attestation NOT verified: %s", res.VerifyError)
