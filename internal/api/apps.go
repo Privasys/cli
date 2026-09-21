@@ -482,3 +482,24 @@ func (c *Client) ListBuilds(ctx context.Context, id string) ([]map[string]interf
 	}
 	return unwrapList(raw, "builds")
 }
+
+// GetAppPolicy returns the app's owner-signed policy document, or a nil map
+// when it has none.
+func (c *Client) GetAppPolicy(ctx context.Context, id string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/apps/"+id+"/policy", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SetAppPolicy uploads a signed policy document. The platform stores and
+// delivers it; the enclave verifies the signature, so the envelope must arrive
+// byte for byte as it was signed.
+func (c *Client) SetAppPolicy(ctx context.Context, id string, envelope json.RawMessage) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPut, "/api/v1/apps/"+id+"/policy", envelope, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
