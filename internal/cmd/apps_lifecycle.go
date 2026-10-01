@@ -2078,6 +2078,17 @@ func resolveContainerPath(app map[string]interface{}, function string) string {
 				}
 			}
 		}
+		// The configure section is not a tool, yet `apps configure` calls it
+		// by its name (configDescriptor). Its endpoint is the only correct
+		// path: a named section such as {"name":"load_model","endpoint":
+		// "/v1/models/load"} must not become POST /load_model.
+		if cfg, ok := mcp["configure"].(map[string]interface{}); ok {
+			if ep := output.Str(cfg, "endpoint"); ep != "" {
+				if function == output.Str(cfg, "name") || function == output.Str(cfg, "function") || function == strings.TrimPrefix(ep, "/") {
+					return ep
+				}
+			}
+		}
 	}
 	return "/" + function
 }
