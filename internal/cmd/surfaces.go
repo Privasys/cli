@@ -59,7 +59,7 @@ func withSurfacesConfirmation(cmd *cobra.Command, env *Env, client *api.Client, 
 	}
 	printSurfaces(cmd, refusal)
 	if !preConfirmed {
-		yes, cerr := confirm(cmd, env, "Confirm these routes carry no personal data, and may be served in the clear?")
+		yes, cerr := confirm(cmd, env, "Confirm these routes carry no personal data?")
 		if cerr != nil {
 			return nil, fmt.Errorf("%w (or pass --confirm-surfaces)", cerr)
 		}
@@ -71,29 +71,26 @@ func withSurfacesConfirmation(cmd *cobra.Command, env *Env, client *api.Client, 
 		return nil, err
 	}
 	if !env.Quiet {
-		fmt.Fprintln(cmd.ErrOrStderr(), "Confirmation recorded on the version.")
+		fmt.Fprintln(cmd.ErrOrStderr(), "✓ surfaces confirmed")
 	}
 	return ship()
 }
 
 func printSurfaces(cmd *cobra.Command, r *surfacesRefusal) {
 	w := cmd.ErrOrStderr()
-	fmt.Fprintln(w, "This version serves routes IN THE CLEAR through the platform gateway, which reads them:")
 	added := map[string]bool{}
 	for _, e := range r.Added {
 		added[e] = true
 	}
+	fmt.Fprintf(w, "This version serves %d routes in the clear (%d new since the last confirmation).\n", len(r.Entries), len(r.Added))
+	fmt.Fprintln(w, "The platform gateway reads traffic on these routes; the enclave serves them anonymously.")
 	for _, e := range r.Entries {
-		mark := "  "
 		if added[e] {
-			mark = "+ "
+			fmt.Fprintf(w, "  %s  (new)\n", e)
+		} else {
+			fmt.Fprintf(w, "  %s\n", e)
 		}
-		fmt.Fprintf(w, "  %s%s\n", mark, e)
 	}
-	if len(r.Added) > 0 {
-		fmt.Fprintln(w, "(+ marks a route no owner has confirmed before.)")
-	}
-	fmt.Fprintln(w, "The enclave serves them anonymously (no credential reaches the app) and the attestation records them.")
 }
 
 // surfacesSummary renders an app's declaration from its manifest for `apps
@@ -162,7 +159,7 @@ func newVersionsConfirmSurfacesCmd() *cobra.Command {
 				return fmt.Errorf("this version serves nothing in the clear; there is nothing to confirm")
 			}
 			printSurfaces(cmd, &surfacesRefusal{Entries: entries})
-			yes, err := confirm(cmd, env, "Confirm these routes carry no personal data, and may be served in the clear?")
+			yes, err := confirm(cmd, env, "Confirm these routes carry no personal data?")
 			if err != nil {
 				return err
 			}
