@@ -42,11 +42,8 @@ func (c *Client) do(ctx context.Context, method, path string, body, out interfac
 	}
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("not authorized (%d) — check your login and account access", resp.StatusCode)
-	}
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("API error %d: %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	if err := statusError(resp.StatusCode, data); err != nil {
+		return err
 	}
 	if out != nil && len(data) > 0 {
 		if err := json.Unmarshal(data, out); err != nil {
@@ -243,6 +240,19 @@ func (c *Client) StageProfile(ctx context.Context, id, versionID, enclaveID stri
 	if err := c.do(ctx, http.MethodPost,
 		"/api/v1/apps/"+id+"/versions/"+versionID+"/stage",
 		map[string]string{"enclave_id": enclaveID}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ConfirmSurfaces records the owner's confirmation that the routes a version
+// serves in the clear (its static shell and public routes) carry no personal
+// data. entries must name exactly those routes, as the platform lists them.
+func (c *Client) ConfirmSurfaces(ctx context.Context, id, versionID string, entries []string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost,
+		"/api/v1/apps/"+id+"/versions/"+versionID+"/surfaces/confirm",
+		map[string]interface{}{"entries": entries}, &out); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -499,6 +509,16 @@ func (c *Client) GetAppPolicy(ctx context.Context, id string) (map[string]interf
 func (c *Client) SetAppPolicy(ctx context.Context, id string, envelope json.RawMessage) (map[string]interface{}, error) {
 	var out map[string]interface{}
 	if err := c.do(ctx, http.MethodPut, "/api/v1/apps/"+id+"/policy", envelope, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetVersion returns one version of an app (its status, image, measurements
+// and the routes it serves in the clear).
+func (c *Client) GetVersion(ctx context.Context, id, versionID string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.getJSON(ctx, "/api/v1/apps/"+id+"/versions/"+versionID, &out); err != nil {
 		return nil, err
 	}
 	return out, nil

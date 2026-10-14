@@ -439,6 +439,7 @@ func newAppsVersionsCmd() *cobra.Command {
 		},
 		newVersionsCreateCmd(),
 		newVersionsStageCmd(),
+		newVersionsConfirmSurfacesCmd(),
 		newVersionsPendingCmd(),
 		newVersionsPromoteCmd(),
 		newVersionsRevokeCmd(),
@@ -1250,6 +1251,7 @@ func resolveEnclaveRef(ctx context.Context, client *api.Client, appID, flag stri
 
 func newVersionsStageCmd() *cobra.Command {
 	var enclaveID string
+	var confirmSurfaces bool
 	c := &cobra.Command{
 		Use:   "stage <app> [version]",
 		Short: "Stage the new measurement for a version on the vault constellation (owner-only)",
@@ -1276,7 +1278,11 @@ func newVersionsStageCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, err := client.StageProfile(cmd.Context(), appID, vid, enc)
+			// A version that adds routes served in the clear is staged only once
+			// an owner confirms them (surfaces.go); the platform asks, we relay.
+			res, err := withSurfacesConfirmation(cmd, env, client, appID, vid, confirmSurfaces, func() (map[string]interface{}, error) {
+				return client.StageProfile(cmd.Context(), appID, vid, enc)
+			})
 			if err != nil {
 				return err
 			}
@@ -1284,6 +1290,7 @@ func newVersionsStageCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&enclaveID, "enclave", "", "target enclave id (default: the only compatible one)")
+	c.Flags().BoolVar(&confirmSurfaces, "confirm-surfaces", false, "confirm without prompting that the routes this version serves in the clear carry no personal data")
 	return c
 }
 
@@ -1594,7 +1601,7 @@ func newAppsLocationsCmd() *cobra.Command {
 func newAppsDeployCmd() *cobra.Command {
 	var versionID, enclaveID, location, size, tenancy, instance string
 	var storageGB int
-	var watch bool
+	var watch, confirmSurfaces bool
 	cmd := &cobra.Command{
 		Use:   "deploy <app-id>",
 		Short: "Deploy a version to an enclave",
@@ -1669,7 +1676,11 @@ func newAppsDeployCmd() *cobra.Command {
 				}
 			}
 
-			dep, err := client.DeployVersion(cmd.Context(), appID, versionID, enclaveID, location, size, tenancy, instanceID, storageGB)
+			// A version that adds routes served in the clear ships only once an
+			// owner confirms them (surfaces.go); the platform asks, we relay.
+			dep, err := withSurfacesConfirmation(cmd, env, client, appID, versionID, confirmSurfaces, func() (map[string]interface{}, error) {
+				return client.DeployVersion(cmd.Context(), appID, versionID, enclaveID, location, size, tenancy, instanceID, storageGB)
+			})
 			if err != nil {
 				return err
 			}
@@ -1686,6 +1697,7 @@ func newAppsDeployCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&versionID, "version", "", "version id (default: latest)")
+	cmd.Flags().BoolVar(&confirmSurfaces, "confirm-surfaces", false, "confirm without prompting that the routes this version serves in the clear carry no personal data")
 	cmd.Flags().StringVar(&location, "location", "", "deploy location code, e.g. europe-west9 (default: the only one available; see `apps locations`)")
 	cmd.Flags().StringVar(&enclaveID, "enclave", "", "target enclave id (admin override; adopters use --location)")
 	cmd.Flags().StringVar(&size, "size", "", "container VM size for THIS deployment: micro|small|medium|large|xlarge (default: the app's size; redeploying with a new size is the resize)")

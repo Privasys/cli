@@ -169,6 +169,11 @@ func newAppsDescribeCmd() *cobra.Command {
 						rows = append(rows, []string{k, v})
 					}
 				}
+				// What the app serves in the clear through the platform gateway
+				// (its manifest surfaces); absent when everything is sealed.
+				if s := surfacesSummary(app); s != "" {
+					rows = append(rows, []string{"served_in_the_clear", s})
+				}
 				return output.Table{Headers: []string{"FIELD", "VALUE"}, Rows: rows}
 			})
 		},

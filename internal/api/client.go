@@ -30,7 +30,7 @@ func New(baseURL, token string) *Client {
 		// 120s matches the server's deploy/lifecycle route timeout: some
 		// operations (dedicated instance stop/start/delete) drive the
 		// cloud-ops agent synchronously through gcloud, which takes ~40s.
-		HTTP:    &http.Client{Timeout: 120 * time.Second},
+		HTTP: &http.Client{Timeout: 120 * time.Second},
 	}
 }
 
@@ -48,11 +48,8 @@ func (c *Client) getJSON(ctx context.Context, path string, out interface{}) erro
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("not authorized (%d) — check your login and account access", resp.StatusCode)
-	}
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("API error %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	if err := statusError(resp.StatusCode, body); err != nil {
+		return err
 	}
 	if err := json.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("decode response: %w", err)
@@ -114,4 +111,42 @@ func unwrapObject(raw json.RawMessage, key string) (map[string]interface{}, erro
 		}
 	}
 	return obj, nil
+}
+
+// StatusError is a non-2xx answer from the platform, with the body kept so a
+// command can read a structured refusal (for example a version that needs an
+// owner to confirm the routes it serves in the clear) and act on it.
+type StatusError struct {
+	Status int
+	Body   []byte
+}
+
+func (e *StatusError) Error() string {
+	if e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden {
+		return fmt.Sprintf("not authorized (%d) — check your login and account access", e.Status)
+	}
+	return fmt.Sprintf("API error %d: %s", e.Status, strings.TrimSpace(string(e.Body)))
+}
+
+// Code returns the body's "error" field when the body is a JSON object.
+func (e *StatusError) Code() string {
+	var doc struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(e.Body, &doc) != nil {
+		return ""
+	}
+	return doc.Error
+}
+
+// Decode reads the body into out.
+func (e *StatusError) Decode(out interface{}) error {
+	return json.Unmarshal(e.Body, out)
+}
+
+func statusError(status int, body []byte) error {
+	if status < 400 {
+		return nil
+	}
+	return &StatusError{Status: status, Body: body}
 }
