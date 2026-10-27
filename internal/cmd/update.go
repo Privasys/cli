@@ -28,7 +28,14 @@ import (
 	"github.com/Privasys/cli/internal/output"
 )
 
-const releasesAPI = "https://api.github.com/repos/Privasys/cli/releases/latest"
+// The latest version is read from the github.com redirect first: it is not
+// subject to the GitHub API's anonymous quota (60 calls an hour shared by a
+// whole network), which offices and agents running several CLIs exhaust. The
+// API remains the fallback. Variables so tests can point them at a fake.
+var (
+	releasesLatestPage = "https://github.com/Privasys/cli/releases/latest"
+	releasesAPI        = "https://api.github.com/repos/Privasys/cli/releases/latest"
+)
 
 func newUpdateCmd() *cobra.Command {
 	var checkOnly bool
@@ -193,8 +200,48 @@ func runTool(cmd *cobra.Command, name string, args ...string) error {
 	return c.Run()
 }
 
-// latestReleaseVersion fetches the latest release tag (without the v prefix).
+// latestReleaseVersion fetches the latest release tag (without the v prefix):
+// from the releases/latest redirect, else from the GitHub API.
 func latestReleaseVersion(ctx context.Context) (string, error) {
+	v, redirErr := latestFromRedirect(ctx)
+	if redirErr == nil {
+		return v, nil
+	}
+	v, apiErr := latestFromAPI(ctx)
+	if apiErr != nil {
+		return "", fmt.Errorf("%w (and the releases page: %v)", apiErr, redirErr)
+	}
+	return v, nil
+}
+
+// latestFromRedirect reads the tag from the Location that
+// github.com/<repo>/releases/latest redirects to (…/releases/tag/vX.Y.Z),
+// without following it.
+func latestFromRedirect(ctx context.Context) (string, error) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodHead, releasesLatestPage, nil)
+	client := &http.Client{
+		Timeout:       15 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	resp.Body.Close()
+	loc := resp.Header.Get("Location")
+	if resp.StatusCode < 300 || resp.StatusCode > 399 || loc == "" {
+		return "", fmt.Errorf("releases page: HTTP %d without a redirect", resp.StatusCode)
+	}
+	_, tag, ok := strings.Cut(loc, "/releases/tag/")
+	tag = strings.TrimPrefix(strings.TrimRight(tag, "/"), "v")
+	if !ok || tag == "" || strings.ContainsAny(tag, "/?#") {
+		return "", fmt.Errorf("releases page redirected to %q, not a release tag", loc)
+	}
+	return tag, nil
+}
+
+// latestFromAPI asks the GitHub releases API.
+func latestFromAPI(ctx context.Context) (string, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, releasesAPI, nil)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	// Anonymous GitHub API calls share a small per-network quota; a token in
