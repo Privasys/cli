@@ -78,3 +78,26 @@ func TestBindingCoversDocumentAndSequence(t *testing.T) {
 		t.Error("the same inputs gave a different binding")
 	}
 }
+
+// The wallet shows this above Approve, so a widened caller list reads in
+// words, not only as a digest.
+func TestPolicySummary(t *testing.T) {
+	doc := map[string]any{
+		"allowed_callers": json.RawMessage(`{"entries":[{"app_id":"*"}],"platforms":["352d9a0b1111","b04383652222","c0553333","d4604444"]}`),
+		"dependencies":    json.RawMessage(`{"entries":[{"app_id":"1c1f8b44-1829-4806-85a1-0158f6ddcfd0"}]}`),
+	}
+	got := policySummary(doc)
+	want := "Callers: any attested app, on 4 machines (352d9a0b…, b0438365…, c0553333, …)\nDepends on: 1 app (1c1f8b44…)"
+	if got != want {
+		t.Fatalf("summary:\n%s\nwant:\n%s", got, want)
+	}
+	if got := policySummary(map[string]any{
+		"allowed_callers": json.RawMessage(`{"entries":[{"app_id":"72d84c2d52184705909518688fd68cfb"}]}`),
+		"approver":        "r2C7Km0L2j0TbNuIPWd2JaxsayWawjP7jvRtMlBzVPw",
+	}); got != "Callers: 1 app (72d84c2d…), on any machine\nHands approval of future policies to r2C7Km0L…" {
+		t.Fatalf("pinned caller: %q", got)
+	}
+	if got := policySummary(map[string]any{}); got != "Callers: none listed" {
+		t.Fatalf("empty: %q", got)
+	}
+}

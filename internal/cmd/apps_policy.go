@@ -189,6 +189,8 @@ checks that the approval binds this exact document.
 				"version":  fmt.Sprintf("policy seq %d", seq),
 				"key_type": "app policy",
 				"app_id":   appID,
+				// What the document does, in words, next to the digest it binds.
+				"summary": policySummary(doc),
 			}
 			token, err := secrets.RequestStepUpViaBrowser(ctx, env.Cfg.Issuer, bearer,
 				"app-policy", handle, digest, uint32(seq), actx, secrets.OpenBrowser, cmd.ErrOrStderr())
@@ -224,4 +226,92 @@ checks that the approval binds this exact document.
 	cmd.Flags().StringVar(&approver, "approver", "", "hand the app's policy to this subject")
 	cmd.Flags().BoolVar(&printOnly, "print", false, "print the document and its digest without approving")
 	return cmd
+}
+
+// policySummary describes a policy document in the words the approver's
+// wallet shows above the Approve button: who may call the app, from which
+// machines, which apps it depends on, and any change of owners or approver.
+// The digest the wallet binds stays the truth; this makes a widened caller
+// list visible before the tap instead of hiding it behind a hash.
+func policySummary(doc map[string]any) string {
+	var lines []string
+	type entries struct {
+		Entries []struct {
+			AppID string `json:"app_id"`
+		} `json:"entries"`
+		Platforms []string `json:"platforms"`
+	}
+	read := func(key string) (entries, bool) {
+		var e entries
+		raw, ok := doc[key].(json.RawMessage)
+		if !ok {
+			return e, false
+		}
+		return e, json.Unmarshal(raw, &e) == nil
+	}
+	short := func(ids []string) string {
+		var out []string
+		for i, id := range ids {
+			if i == 3 {
+				out = append(out, "…")
+				break
+			}
+			id = strings.ReplaceAll(id, "-", "")
+			if len(id) > 8 {
+				id = id[:8] + "…"
+			}
+			out = append(out, id)
+		}
+		return strings.Join(out, ", ")
+	}
+	count := func(n int, one, many string) string {
+		if n == 1 {
+			return "1 " + one
+		}
+		return fmt.Sprintf("%d %s", n, many)
+	}
+
+	if c, ok := read("allowed_callers"); ok {
+		var apps []string
+		anyApp := false
+		for _, e := range c.Entries {
+			if e.AppID == "*" {
+				anyApp = true
+			} else {
+				apps = append(apps, e.AppID)
+			}
+		}
+		var who string
+		switch {
+		case anyApp && len(apps) > 0:
+			who = fmt.Sprintf("any attested app (and %s named: %s)", count(len(apps), "app", "apps"), short(apps))
+		case anyApp:
+			who = "any attested app"
+		case len(apps) > 0:
+			who = fmt.Sprintf("%s (%s)", count(len(apps), "app", "apps"), short(apps))
+		default:
+			who = "no app"
+		}
+		where := "on any machine"
+		if len(c.Platforms) > 0 {
+			where = fmt.Sprintf("on %s (%s)", count(len(c.Platforms), "machine", "machines"), short(c.Platforms))
+		}
+		lines = append(lines, "Callers: "+who+", "+where)
+	} else {
+		lines = append(lines, "Callers: none listed")
+	}
+	if d, ok := read("dependencies"); ok && len(d.Entries) > 0 {
+		var apps []string
+		for _, e := range d.Entries {
+			apps = append(apps, e.AppID)
+		}
+		lines = append(lines, fmt.Sprintf("Depends on: %s (%s)", count(len(apps), "app", "apps"), short(apps)))
+	}
+	if owners, ok := doc["owners"].([]string); ok && len(owners) > 0 {
+		lines = append(lines, "Owners: "+count(len(owners), "subject", "subjects")+" ("+short(owners)+")")
+	}
+	if approver, ok := doc["approver"].(string); ok && approver != "" {
+		lines = append(lines, "Hands approval of future policies to "+short([]string{approver}))
+	}
+	return strings.Join(lines, "\n")
 }
