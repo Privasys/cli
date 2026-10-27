@@ -1378,6 +1378,19 @@ func promoteWithStepUp(cmd *cobra.Command, env *Env, client *api.Client, appID, 
 	return sc.PromoteProfile(ctx, appID, vid, pendingID, approvalTokens...)
 }
 
+// appFriendlyName returns the name an approver recognises (the display title,
+// else the app name), or "" when the lookup fails.
+func appFriendlyName(ctx context.Context, client *api.Client, appID string) string {
+	app, err := client.GetApp(ctx, appID)
+	if err != nil {
+		return ""
+	}
+	if name := output.Str(app, "display_name"); name != "" {
+		return name
+	}
+	return output.Str(app, "name")
+}
+
 // promoteApprovalContext builds the advisory display context (app friendly name
 // + target version label) attached to a promote step-up, so the approver's
 // wallet shows what they are approving rather than only a hex digest. All fields
@@ -1389,14 +1402,8 @@ func promoteApprovalContext(ctx context.Context, client *api.Client, appID, vid 
 	// published release and a GitHub compare (old→new) link — mgmt-computed, not
 	// relayed through this CLI.
 	c := map[string]string{"app_id": appID, "version_id": vid}
-	if app, err := client.GetApp(ctx, appID); err == nil {
-		name := output.Str(app, "display_name")
-		if name == "" {
-			name = output.Str(app, "name")
-		}
-		if name != "" {
-			c["app_name"] = name
-		}
+	if name := appFriendlyName(ctx, client, appID); name != "" {
+		c["app_name"] = name
 	}
 	if vs, err := client.ListVersions(ctx, appID); err == nil {
 		for _, v := range vs {

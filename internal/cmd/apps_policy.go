@@ -178,8 +178,14 @@ checks that the approval binds this exact document.
 			// The handle namespace is disjoint from vault key handles, so a
 			// policy approval can never stand for a vault operation.
 			handle := "app:" + strings.ToLower(strings.ReplaceAll(appID, "-", "")) + ":policy"
+			// What the wallet shows the approver: the app's friendly name, not
+			// the id or whatever was typed. Display only, outside the binding.
+			name := appFriendlyName(ctx, client, appID)
+			if name == "" {
+				name = args[0]
+			}
 			actx := map[string]string{
-				"app_name": args[0],
+				"app_name": name,
 				"version":  fmt.Sprintf("policy seq %d", seq),
 				"key_type": "app policy",
 				"app_id":   appID,
