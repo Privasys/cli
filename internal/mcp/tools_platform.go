@@ -39,13 +39,6 @@ import (
 // usefulness without adding safety. The real boundary is the vault (owner bearer
 // + operation-bound WebAuthn step-up); the tools keep a human in the loop by
 // being two-phase (review the measurement, then confirm).
-// backupsLaunched turns on the backup tools (apps_backup_*) and apps_deploy's
-// restore once BYOK apps and backups are live on the production control plane.
-// Until then they are hidden, as the matching CLI commands are. When it flips,
-// also put back apps_deploy's "restore" schema property: a snapshot id from
-// apps_backup_list or "latest", onto an absent volume only.
-const backupsLaunched = false
-
 func platformTools() []tool {
 	return []tool{
 		// ---- dedicated instances --------------------------------------------

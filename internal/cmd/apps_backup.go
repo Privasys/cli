@@ -15,10 +15,8 @@ import (
 
 func newAppsBackupCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use: "backup",
-		// Hidden until backups are live on the production control plane.
-		Hidden: true,
-		Short:  "Back up your app's volume, and list its restore points",
+		Use:   "backup",
+		Short: "Back up your app's volume, and list its restore points",
 		Long: `Backups of a BYOK app's volume, run by the enclave that runs the app: encrypted
 under a password derived from YOUR app key, deduplicated, and written to
 immutable object storage. Restore with 'apps deploy --restore <id|latest>'.`,

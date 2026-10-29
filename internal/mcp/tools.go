@@ -842,6 +842,7 @@ func (s *Server) registerTools() {
 				"description":  strProp("description"),
 				"storage":      boolProp("request encrypted, owner-controlled storage (for apps that hold user data)"),
 				"size":         strProp("container VM size slug: micro|small|medium|large|xlarge (default micro; container apps only, fixed at creation)"),
+				"key_provider": strProp("storage key: omit for the platform default, or byok (container apps with storage only) where the OWNER creates and holds the key with `privasys apps key create` at a terminal, never through a tool. Backups require byok; platform-keyed apps have no backups. A byok app's first deploy is refused (409) until the owner has created its key"),
 			}, "name", "source_type"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				name, err := requireStr(args, "name")
@@ -866,6 +867,9 @@ func (s *Server) registerTools() {
 				}
 				if v := argStr(args, "size"); v != "" {
 					body["instance_size"] = v // server validates the slug
+				}
+				if v := argStr(args, "key_provider"); v != "" {
+					body["key_provider"] = v // server validates it (byok: container + storage)
 				}
 				// container_port is platform-allocated (app listens on $PORT).
 				return d.Client.CreateApp(ctx, body)
@@ -926,6 +930,7 @@ func (s *Server) registerTools() {
 				"tenancy":          enumProp("mutualised (default, shared CVM) or dedicated (a whole confidential VM, Medium/Large only)", "mutualised", "dedicated"),
 				"instance":         strProp("deploy onto a dedicated instance id you own (multi-app; overrides location/tenancy)"),
 				"storage_gb":       intProp("size the app's encrypted volume on FIRST deploy (default 10; an existing volume keeps its size — grow with volumes_resize/the portal)"),
+				"restore":          strProp("fill the app's volume from a backup first: a snapshot id from apps_backup_list, or \"latest\". The volume must be absent on the target (a restore never overwrites data): over existing data, the human must stop the app and delete its volume first"),
 				"confirm_surfaces": boolProp(confirmSurfacesDesc),
 			}, "app_id"),
 			Handler: withSurfacesReview(func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
@@ -961,7 +966,7 @@ func (s *Server) registerTools() {
 					location, _ = locs[0]["code"].(string)
 				}
 				return shipSurfaces(ctx, d, args, id, versionID, func() (map[string]interface{}, error) {
-					if restore := argStr(args, "restore"); backupsLaunched && restore != "" {
+					if restore := argStr(args, "restore"); restore != "" {
 						return d.Client.DeployVersionRestoring(ctx, id, versionID, enclaveID, location, argInt(args, "storage_gb"), restore)
 					}
 					return d.Client.DeployVersion(ctx, id, versionID, enclaveID, location, argStr(args, "size"), argStr(args, "tenancy"), instanceID, argInt(args, "storage_gb"))
@@ -1412,13 +1417,7 @@ func (s *Server) registerTools() {
 			},
 		},
 	}
-	for _, t := range platformTools() {
-		// Backups stay out of the tool list until they launch in production.
-		if !backupsLaunched && strings.HasPrefix(t.Name, "apps_backup_") {
-			continue
-		}
-		s.tools = append(s.tools, t)
-	}
+	s.tools = append(s.tools, platformTools()...)
 	s.tools = append(s.tools, upgradeTools()...)
 }
 
