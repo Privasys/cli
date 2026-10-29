@@ -329,6 +329,74 @@ func platformTools() []tool {
 				return d.Client.SetAllowedCallers(ctx, id, raw)
 			},
 		},
+		{
+			Name: "apps_domains",
+			Description: "The app owner's own hostnames in front of the app. action: list (each hostname, its mode and, for direct mode, the CAA record and certificate status), add (claim a hostname; returns the TXT record that proves it), verify (check the TXT proof now), remove (release it), mode (switch where TLS ends: direct, in the enclave with its own certificate, or alias, at the gateway). " +
+				"Direct mode needs the hostname in the app's signed policy (privasys apps policy approve --domains, a wallet approval) and a CAA record on the hostname pinning the enclave's ACME account; a refused switch returns the exact record to publish.",
+			Schema: obj(map[string]interface{}{
+				"app_id":   strProp("the app id"),
+				"action":   strProp("list | add | verify | remove | mode"),
+				"hostname": strProp("the hostname (all actions but list)"),
+				"mode":     strProp("direct | alias (action mode)"),
+			}, "app_id", "action"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				action, _ := args["action"].(string)
+				if action == "list" {
+					return d.Client.ListAppDomains(ctx, id)
+				}
+				host, err := requireStr(args, "hostname")
+				if err != nil {
+					return nil, err
+				}
+				host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+				claimID := func() (string, error) {
+					list, err := d.Client.ListAppDomains(ctx, id)
+					if err != nil {
+						return "", err
+					}
+					domains, _ := list["domains"].([]interface{})
+					for _, x := range domains {
+						m, _ := x.(map[string]interface{})
+						if h, _ := m["hostname"].(string); strings.EqualFold(h, host) {
+							if cid, _ := m["id"].(string); cid != "" {
+								return cid, nil
+							}
+						}
+					}
+					return "", fmt.Errorf("the app has no claim on %s", host)
+				}
+				switch action {
+				case "add":
+					return d.Client.AddAppDomain(ctx, id, host)
+				case "verify":
+					cid, err := claimID()
+					if err != nil {
+						return nil, err
+					}
+					return d.Client.VerifyAppDomain(ctx, id, cid)
+				case "remove":
+					cid, err := claimID()
+					if err != nil {
+						return nil, err
+					}
+					if err := d.Client.DeleteAppDomain(ctx, id, cid); err != nil {
+						return nil, err
+					}
+					return map[string]string{"removed": host}, nil
+				case "mode":
+					mode, err := requireStr(args, "mode")
+					if err != nil {
+						return nil, err
+					}
+					return d.Client.SetAppDomainMode(ctx, id, host, strings.ToLower(mode))
+				}
+				return nil, fmt.Errorf("action must be list, add, verify, remove or mode")
+			},
+		},
 
 		// ---- team / account / fleet / registry --------------------------------
 		{

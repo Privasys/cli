@@ -88,6 +88,8 @@ func newAppsPolicySignCmd() *cobra.Command {
 		owners    []string
 		approver  string
 		domains   []string
+		clearDoms bool
+		fresh     bool
 		printOnly bool
 	)
 	cmd := &cobra.Command{
@@ -109,7 +111,12 @@ checks that the approval binds this exact document.
   --domains          your own hostnames the enclave may obtain a certificate
                      for and serve directly (comma-separated); see
                      privasys apps domains
-  --print            print the document and its digest without approving`,
+  --clear-domains    stop serving any hostname directly
+  --fresh            start from an empty document instead of the stored one
+  --print            print the document and its digest without approving
+
+The document starts from the one the platform holds for the app, so approving
+one change keeps the rest: the flags you pass replace their own field only.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
@@ -126,20 +133,26 @@ checks that the approval binds this exact document.
 				return err
 			}
 
+			if clearDoms && len(domains) > 0 {
+				return fmt.Errorf("--domains and --clear-domains cannot be used together")
+			}
+			cur, _ := client.GetAppPolicy(ctx, appID)
 			if seq == 0 {
 				seq = 1
-				if cur, err := client.GetAppPolicy(ctx, appID); err == nil && cur != nil {
+				if cur != nil {
 					if stored, ok := cur["seq"].(float64); ok {
 						seq = uint64(stored) + 1
 					}
 				}
 			}
 
-			doc := map[string]any{
-				"v":      1,
-				"app_id": strings.ReplaceAll(appID, "-", ""),
-				"seq":    seq,
+			doc := map[string]any{}
+			if !fresh && cur != nil {
+				doc = mergeStoredPolicy(cur["document"])
 			}
+			doc["v"] = 1
+			doc["app_id"] = strings.ReplaceAll(appID, "-", "")
+			doc["seq"] = seq
 			if approver != "" {
 				doc["approver"] = approver
 			}
@@ -166,6 +179,9 @@ checks that the approval binds this exact document.
 					return fmt.Errorf("--domains: %w", err)
 				}
 				doc["domains"] = names
+			}
+			if clearDoms {
+				doc["domains"] = []string{}
 			}
 
 			// Compact bytes: the approval binds their digest, and anything
@@ -236,8 +252,46 @@ checks that the approval binds this exact document.
 	cmd.Flags().StringArrayVar(&owners, "owner", nil, "platform subject that owns this app (repeatable)")
 	cmd.Flags().StringVar(&approver, "approver", "", "hand the app's policy to this subject")
 	cmd.Flags().StringSliceVar(&domains, "domains", nil, "hostnames the enclave may certify and serve directly (comma-separated)")
+	cmd.Flags().BoolVar(&clearDoms, "clear-domains", false, "stop serving any hostname directly")
+	cmd.Flags().BoolVar(&fresh, "fresh", false, "start from an empty document instead of the stored one")
 	cmd.Flags().BoolVar(&printOnly, "print", false, "print the document and its digest without approving")
 	return cmd
+}
+
+// mergeStoredPolicy returns the fields of the stored document that carry
+// over to the next one: owners, dependencies, allowed callers, constellation
+// and domains. Not the approver: a document without one keeps the current
+// approver, so repeating it would be at best redundant. Not v, app_id, seq or
+// issued_at, which the new document sets itself.
+func mergeStoredPolicy(stored any) map[string]any {
+	doc := map[string]any{}
+	m, ok := stored.(map[string]any)
+	if !ok {
+		return doc
+	}
+	for _, key := range []string{"dependencies", "allowed_callers", "constellation"} {
+		if v, ok := m[key]; ok && v != nil {
+			if raw, err := json.Marshal(v); err == nil {
+				doc[key] = json.RawMessage(raw)
+			}
+		}
+	}
+	for _, key := range []string{"owners", "domains"} {
+		list, ok := m[key].([]any)
+		if !ok {
+			continue
+		}
+		out := make([]string, 0, len(list))
+		for _, x := range list {
+			if s, ok := x.(string); ok {
+				out = append(out, s)
+			}
+		}
+		if len(out) > 0 {
+			doc[key] = out
+		}
+	}
+	return doc
 }
 
 // maxPolicyDomains matches what the runtime accepts in one document.
@@ -353,8 +407,12 @@ func policySummary(doc map[string]any) string {
 	if owners, ok := doc["owners"].([]string); ok && len(owners) > 0 {
 		lines = append(lines, "Owners: "+count(len(owners), "subject", "subjects")+" ("+short(owners)+")")
 	}
-	if names, ok := doc["domains"].([]string); ok && len(names) > 0 {
-		lines = append(lines, "Serves directly, with its own certificate: "+strings.Join(names, ", "))
+	if names, ok := doc["domains"].([]string); ok {
+		if len(names) > 0 {
+			lines = append(lines, "Serves directly, with its own certificate: "+strings.Join(names, ", "))
+		} else {
+			lines = append(lines, "Serves no hostname directly")
+		}
 	}
 	if approver, ok := doc["approver"].(string); ok && approver != "" {
 		lines = append(lines, "Hands approval of future policies to "+short([]string{approver}))

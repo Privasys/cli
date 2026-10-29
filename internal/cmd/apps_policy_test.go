@@ -131,3 +131,43 @@ func TestPolicySummaryNamesDomains(t *testing.T) {
 		t.Errorf("summary %q does not show the domains the approver is granting", s)
 	}
 }
+
+// Approving one change must keep the rest of the stored document.
+func TestMergeStoredPolicyKeepsTheRest(t *testing.T) {
+	var stored any
+	if err := json.Unmarshal([]byte(`{
+		"v":1,"app_id":"abc","seq":4,"issued_at":1,"approver":"someone",
+		"owners":["sub-1"],
+		"allowed_callers":{"entries":[{"app_id":"x"}],"platforms":["p1"]},
+		"dependencies":{"entries":[{"app_id":"y"}]},
+		"constellation":{"mrenclave":"m","endpoints":["e:1"]},
+		"domains":["shop.example.com"]}`), &stored); err != nil {
+		t.Fatal(err)
+	}
+	doc := mergeStoredPolicy(stored)
+	for _, key := range []string{"v", "app_id", "seq", "issued_at", "approver"} {
+		if _, ok := doc[key]; ok {
+			t.Errorf("%s must not carry over", key)
+		}
+	}
+	for _, key := range []string{"owners", "allowed_callers", "dependencies", "constellation", "domains"} {
+		if _, ok := doc[key]; !ok {
+			t.Errorf("%s must carry over", key)
+		}
+	}
+	if d := doc["domains"].([]string); len(d) != 1 || d[0] != "shop.example.com" {
+		t.Errorf("domains = %v", d)
+	}
+	if !strings.Contains(policySummary(doc), "Callers: 1 app (x), on 1 machine (p1)") {
+		t.Errorf("summary of the merged document = %q", policySummary(doc))
+	}
+	if len(mergeStoredPolicy(nil)) != 0 {
+		t.Error("no stored document gives an empty one")
+	}
+}
+
+func TestPolicySummaryClearedDomains(t *testing.T) {
+	if s := policySummary(map[string]any{"domains": []string{}}); !strings.Contains(s, "Serves no hostname directly") {
+		t.Errorf("summary = %q", s)
+	}
+}

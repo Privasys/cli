@@ -27,3 +27,27 @@ func (c *Client) SetAppDomainMode(ctx context.Context, appID, domain, mode strin
 	}
 	return out, nil
 }
+
+// AddAppDomain claims a hostname for an app. The response carries the TXT
+// record that proves ownership.
+func (c *Client) AddAppDomain(ctx context.Context, appID, hostname string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/apps/"+appID+"/domains", map[string]string{"hostname": hostname}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// VerifyAppDomain re-reads a claim's TXT proof now. domainID is the claim's id.
+func (c *Client) VerifyAppDomain(ctx context.Context, appID, domainID string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/apps/"+appID+"/domains/"+url.PathEscape(domainID)+"/verify", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// DeleteAppDomain removes a claim. domainID is the claim's id.
+func (c *Client) DeleteAppDomain(ctx context.Context, appID, domainID string) error {
+	return c.do(ctx, http.MethodDelete, "/api/v1/apps/"+appID+"/domains/"+url.PathEscape(domainID), nil, nil)
+}
