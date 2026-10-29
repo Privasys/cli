@@ -111,6 +111,68 @@ func platformTools() []tool {
 			},
 		},
 
+		// ---- backups ---------------------------------------------------------
+		// Backups of a BYOK app's volume (its key is the owner's; creating or
+		// rotating that key is a CLI step for the human, never a tool).
+		{
+			Name:        "apps_backup_run",
+			Description: "Back a BYOK app's volume up now. The enclave running the app does it: encrypted under the owner's key, deduplicated, written to immutable object storage. Returns the started job; check apps_backup_status.",
+			Schema:      obj(map[string]interface{}{"app_id": strProp("the app id")}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				return d.Client.StartBackup(ctx, id)
+			},
+		},
+		{
+			Name:        "apps_backup_list",
+			Description: "List a BYOK app's restore points (works with the app stopped). Use an id from here, or \"latest\", as apps_deploy's restore.",
+			Schema:      obj(map[string]interface{}{"app_id": strProp("the app id")}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				return d.Client.ListBackups(ctx, id)
+			},
+		},
+		{
+			Name:        "apps_backup_status",
+			Description: "Show a BYOK app's latest backup job (running, succeeded or failed, and the snapshot it made).",
+			Schema:      obj(map[string]interface{}{"app_id": strProp("the app id")}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				return d.Client.BackupStatus(ctx, id)
+			},
+		},
+		{
+			Name: "apps_backup_policy",
+			Description: "Show a BYOK app's backup schedule, or set it with interval (hourly, every-6h, daily, or off) and retention " +
+				"(standard: 10 latest + 35 daily + 13 monthly; proportionate: adds 48 hourly + 13 weekly; minimal: 3 latest + 7 daily). " +
+				"Backup storage is billed per stored GB-hour, so confirm a schedule change with the human.",
+			Schema: obj(map[string]interface{}{
+				"app_id":    strProp("the app id"),
+				"interval":  strProp("hourly, every-6h, daily, or off (omit to just show the policy)"),
+				"retention": strProp("standard (default), proportionate, or minimal"),
+			}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				interval := argStr(args, "interval")
+				if interval == "" {
+					return d.Client.GetBackupPolicy(ctx, id)
+				}
+				return d.Client.SetBackupPolicy(ctx, id, interval, argStr(args, "retention"))
+			},
+		},
+
 		// ---- volumes ---------------------------------------------------------
 		{
 			Name:        "volumes_list",

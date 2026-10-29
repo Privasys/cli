@@ -924,6 +924,7 @@ func (s *Server) registerTools() {
 				"tenancy":    strProp("mutualised (default, shared CVM) or dedicated (a whole confidential VM, Medium/Large only)"),
 				"instance":   strProp("deploy onto a dedicated instance id you own (multi-app; overrides location/tenancy)"),
 				"storage_gb": intProp("size the app's encrypted volume on FIRST deploy (default 10; an existing volume keeps its size — grow with volumes_resize/the portal)"),
+				"restore":    strProp("fill the app's volume from a backup first: a snapshot id from apps_backup_list, or \"latest\". The volume must be absent on the target (a restore never overwrites data): over existing data, the human must stop the app and delete its volume first"),
 			}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
@@ -956,6 +957,9 @@ func (s *Server) registerTools() {
 						return nil, errPickLocation
 					}
 					location, _ = locs[0]["code"].(string)
+				}
+				if restore := argStr(args, "restore"); restore != "" {
+					return d.Client.DeployVersionRestoring(ctx, id, versionID, enclaveID, location, argInt(args, "storage_gb"), restore)
 				}
 				return d.Client.DeployVersion(ctx, id, versionID, enclaveID, location, argStr(args, "size"), argStr(args, "tenancy"), instanceID, argInt(args, "storage_gb"))
 			},
