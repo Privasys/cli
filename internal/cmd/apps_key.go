@@ -175,6 +175,9 @@ func appKeyMaterial(out, fromFile string) ([]byte, error) {
 		zero(b)
 		return nil, fmt.Errorf("write %s: %w", out, werr)
 	}
+	if warn := restrictKeyFile(out); warn != "" {
+		fmt.Fprintln(os.Stderr, "Warning:", warn)
+	}
 	return b, nil
 }
 
