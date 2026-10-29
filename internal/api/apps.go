@@ -276,10 +276,26 @@ func (c *Client) DeployLocations(ctx context.Context, id string) ([]map[string]i
 // StageProfile stages a pending vault key profile for a version's measurement
 // (MRTD + image digest on the target enclave). Owner-only.
 func (c *Client) StageProfile(ctx context.Context, id, versionID, enclaveID string) (map[string]interface{}, error) {
+	return c.StageProfileForRelease(ctx, id, versionID, enclaveID, "")
+}
+
+// StageProfileForRelease stages the measurement the app will have once the
+// enclave runs an OS release (a tag, or the release's https URL): the
+// enclave's live MRTD with that release's predicted RTMRs. Promoted before a
+// host roll, the app's key unlocks at boot. An empty release stages the
+// enclave as it runs now.
+func (c *Client) StageProfileForRelease(ctx context.Context, id, versionID, enclaveID, release string) (map[string]interface{}, error) {
+	body := map[string]string{"enclave_id": enclaveID}
+	switch {
+	case strings.HasPrefix(release, "https://"):
+		body["os_release_url"] = release
+	case release != "":
+		body["os_release_tag"] = release
+	}
 	var out map[string]interface{}
 	if err := c.do(ctx, http.MethodPost,
 		"/api/v1/apps/"+id+"/versions/"+versionID+"/stage",
-		map[string]string{"enclave_id": enclaveID}, &out); err != nil {
+		body, &out); err != nil {
 		return nil, err
 	}
 	return out, nil

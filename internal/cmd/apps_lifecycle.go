@@ -1253,13 +1253,17 @@ func resolveEnclaveRef(ctx context.Context, client *api.Client, appID, flag stri
 }
 
 func newVersionsStageCmd() *cobra.Command {
-	var enclaveID string
+	var enclaveID, release string
 	var confirmSurfaces bool
 	c := &cobra.Command{
 		Use:   "stage <app> [version]",
 		Short: "Stage the new measurement for a version on the vault constellation (owner-only)",
-		Long:  "Proposes the measurement (enclave MRTD + image digest) that a later promote will authorise. Staging grants no key access on its own. Needed when an enclave or app upgrade changes the measurement of a vault-backed app.",
-		Args:  cobra.RangeArgs(1, 2),
+		Long: `Proposes the measurement (enclave MRTD + image digest) that a later promote will authorise. Staging grants no key access on its own. Needed when an enclave or app upgrade changes the measurement of a vault-backed app.
+
+With --release <tag>, stages the measurement the app will have once its enclave
+runs that OS release (the live MRTD with the release's predicted RTMRs), so the
+key can be promoted BEFORE a host roll and the app comes back on its own at boot.`,
+		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
 			if err != nil {
@@ -1284,7 +1288,7 @@ func newVersionsStageCmd() *cobra.Command {
 			// A version that adds routes served in the clear is staged only once
 			// an owner confirms them (surfaces.go); the platform asks, we relay.
 			res, err := withSurfacesConfirmation(cmd, env, client, appID, vid, confirmSurfaces, func() (map[string]interface{}, error) {
-				return client.StageProfile(cmd.Context(), appID, vid, enc)
+				return client.StageProfileForRelease(cmd.Context(), appID, vid, enc, release)
 			})
 			if err != nil {
 				return err
@@ -1293,6 +1297,7 @@ func newVersionsStageCmd() *cobra.Command {
 		},
 	}
 	c.Flags().StringVar(&enclaveID, "enclave", "", "target enclave id (default: the only compatible one)")
+	c.Flags().StringVar(&release, "release", "", "stage for the OS release the enclave is about to roll to (a release tag, or its https URL)")
 	c.Flags().BoolVar(&confirmSurfaces, "confirm-surfaces", false, "confirm without prompting that the routes this version serves in the clear carry no personal data")
 	return c
 }

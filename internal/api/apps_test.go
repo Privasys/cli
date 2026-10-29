@@ -159,3 +159,35 @@ func TestErrorStatus(t *testing.T) {
 		t.Fatalf("expected auth error, got %v", err)
 	}
 }
+
+// A release is sent as a tag, or as the release URL when it is one; without it
+// the stage body is the enclave alone.
+func TestStageProfileForRelease(t *testing.T) {
+	cases := map[string]map[string]string{
+		"":                 {"enclave_id": "enc-1"},
+		"tdx-v0.2.112":     {"enclave_id": "enc-1", "os_release_tag": "tdx-v0.2.112"},
+		"https://x/rel/v1": {"enclave_id": "enc-1", "os_release_url": "https://x/rel/v1"},
+	}
+	for release, want := range cases {
+		c, done := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost || r.URL.Path != "/api/v1/apps/app-1/versions/ver-1/stage" {
+				t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			}
+			var body map[string]string
+			json.NewDecoder(r.Body).Decode(&body)
+			if len(body) != len(want) {
+				t.Errorf("release %q: body %v, want %v", release, body, want)
+			}
+			for k, v := range want {
+				if body[k] != v {
+					t.Errorf("release %q: %s = %q, want %q", release, k, body[k], v)
+				}
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{"staged": 3})
+		})
+		if _, err := c.StageProfileForRelease(context.Background(), "app-1", "ver-1", "enc-1", release); err != nil {
+			t.Error(err)
+		}
+		done()
+	}
+}
