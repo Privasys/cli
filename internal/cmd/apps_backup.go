@@ -33,12 +33,13 @@ immutable object storage. Restore with 'apps deploy --restore <id|latest>'.`,
 func newAppsBackupPolicyCmd() *cobra.Command {
 	var interval, retention string
 	cmd := &cobra.Command{
-		Use:   "policy <app> [--interval hourly|every-6h|daily|off] [--retention standard|proportionate|minimal]",
+		Use:   "policy <app> [--interval hourly|every-6h|daily|off] [--retention standard|minimal]",
 		Short: "Show or set the app's backup schedule",
 		Long: `Without flags, shows the app's schedule. With --interval, sets it: the enclave
 running the app takes the backups itself, through reboots, and a change applies
-straight away. Retention: standard (10 latest, 35 daily, 13 monthly),
-proportionate (adds 48 hourly and 13 weekly), minimal (3 latest, 7 daily).`,
+straight away. Retention: standard (the latest 3, plus 48 hourly, 35 daily,
+13 weekly and 13 monthly; 'proportionate' is its earlier name, still accepted),
+or minimal (3 latest, 7 daily).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
@@ -75,7 +76,7 @@ proportionate (adds 48 hourly and 13 weekly), minimal (3 latest, 7 daily).`,
 		},
 	}
 	cmd.Flags().StringVar(&interval, "interval", "", "hourly, every-6h, daily, or off")
-	cmd.Flags().StringVar(&retention, "retention", "", "standard (default), proportionate, or minimal")
+	cmd.Flags().StringVar(&retention, "retention", "", "standard (default) or minimal")
 	return cmd
 }
 

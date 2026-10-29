@@ -336,10 +336,10 @@ func newAppsStoreListingCmd() *cobra.Command {
 }
 
 func newAppsDeleteCmd() *cobra.Command {
-	var force, withVolume bool
+	var force, withVolume, withBackups bool
 	cmd := &cobra.Command{
 		Use:   "delete <app-id>",
-		Short: "Delete an app (its volume is KEPT and keeps billing unless --with-volume)",
+		Short: "Delete an app (its volume and backups are KEPT and keep billing unless --with-volume / --with-backups)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
@@ -349,7 +349,10 @@ func newAppsDeleteCmd() *cobra.Command {
 			if !force && !env.NoInput {
 				extra := ""
 				if withVolume {
-					extra = " Its encrypted volume will be DESTROYED with it."
+					extra += " Its encrypted volume will be DESTROYED with it."
+				}
+				if withBackups {
+					extra += " Its backups will be DESTROYED with it."
 				}
 				fmt.Fprintf(os.Stderr, "Delete app %s?%s Re-run with --force to confirm.\n", args[0], extra)
 				return fmt.Errorf("confirmation required")
@@ -362,24 +365,21 @@ func newAppsDeleteCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if withVolume {
-				err = client.DeleteAppWithVolume(cmd.Context(), appID)
-			} else {
-				err = client.DeleteApp(cmd.Context(), appID)
-			}
+			msg, err := client.DeleteAppWith(cmd.Context(), appID, withVolume, withBackups)
 			if err != nil {
 				return err
 			}
-			if withVolume {
-				output.Success(cmd.OutOrStdout(), "Deleted (app and volume)")
-			} else {
-				output.Success(cmd.OutOrStdout(), "Deleted — the app's volume is retained and keeps billing until you `privasys volumes delete` it")
+			// The platform's message says what it kept (a volume, backups).
+			if msg == "" {
+				msg = "app deleted"
 			}
+			output.Success(cmd.OutOrStdout(), "Deleted: %s", msg)
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&force, "force", false, "delete without confirmation")
 	cmd.Flags().BoolVar(&withVolume, "with-volume", false, "also delete the app's encrypted volume (data destroyed; default keeps it)")
+	cmd.Flags().BoolVar(&withBackups, "with-backups", false, "also delete the app's backups (restore points destroyed; default keeps them, see 'privasys backups')")
 	return cmd
 }
 

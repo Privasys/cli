@@ -11,6 +11,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,16 +107,32 @@ func (c *Client) GetVaultExportTarget(ctx context.Context, id string) (*VaultExp
 	return &out, nil
 }
 
-// DeleteApp deletes an app by id.
+// DeleteApp deletes an app by id, keeping its volume and backups.
 func (c *Client) DeleteApp(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodDelete, "/api/v1/apps/"+id, nil, nil)
+	_, err := c.DeleteAppWith(ctx, id, false, false)
+	return err
 }
 
-// DeleteAppWithVolume deletes the app AND its encrypted volume in one step.
-// Without this, the volume survives (and keeps billing) until deleted from
-// `volumes delete` — the safe default.
-func (c *Client) DeleteAppWithVolume(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodDelete, "/api/v1/apps/"+id+"?with_volume=true", nil, nil)
+// DeleteAppWith deletes an app. Its encrypted volume and its backups survive
+// it, and keep billing, unless withVolume or withBackups deletes them with it:
+// the safe default. It returns the platform's message, which says what was kept.
+func (c *Client) DeleteAppWith(ctx context.Context, id string, withVolume, withBackups bool) (string, error) {
+	q := url.Values{}
+	if withVolume {
+		q.Set("with_volume", "true")
+	}
+	if withBackups {
+		q.Set("with_backups", "true")
+	}
+	path := "/api/v1/apps/" + id
+	if len(q) > 0 {
+		path += "?" + q.Encode()
+	}
+	var out struct {
+		Message string `json:"message"`
+	}
+	err := c.do(ctx, http.MethodDelete, path, nil, &out)
+	return out.Message, err
 }
 
 // CheckName reports whether an app name is available.

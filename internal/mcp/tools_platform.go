@@ -161,12 +161,12 @@ func platformTools() []tool {
 		{
 			Name: "apps_backup_policy",
 			Description: "Show a BYOK app's backup schedule, or set it with interval (hourly, every-6h, daily, or off) and retention " +
-				"(standard: 10 latest + 35 daily + 13 monthly; proportionate: adds 48 hourly + 13 weekly; minimal: 3 latest + 7 daily). " +
+				"(standard: the latest 3 + 48 hourly + 35 daily + 13 weekly + 13 monthly, \"proportionate\" being its earlier name; minimal: 3 latest + 7 daily). " +
 				"Backup storage is billed per stored GB-hour, so confirm a schedule change with the human.",
 			Schema: obj(map[string]interface{}{
 				"app_id":    strProp("the app id"),
 				"interval":  strProp("hourly, every-6h, daily, or off (omit to just show the policy)"),
-				"retention": strProp("standard (default), proportionate, or minimal"),
+				"retention": enumProp("standard (default) or minimal", "standard", "minimal"),
 			}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
@@ -178,6 +178,42 @@ func platformTools() []tool {
 					return d.Client.GetBackupPolicy(ctx, id)
 				}
 				return d.Client.SetBackupPolicy(ctx, id, interval, argStr(args, "retention"))
+			},
+		},
+		// An app's backups outlive it, as its volume does, and keep billing.
+		{
+			Name:        "backups_list",
+			Description: "List the account's backup repositories, one per app: snapshot count, stored bytes, and app_deleted_at for apps already deleted (their backups are kept and billed until deleted with backups_delete).",
+			Schema:      obj(map[string]interface{}{}),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				return d.Client.ListBackupSets(ctx)
+			},
+		},
+		{
+			Name:        "backups_show",
+			Description: "Show one app's restore points by app id, including an app that has been deleted (apps_backup_list needs a live app).",
+			Schema:      obj(map[string]interface{}{"app_id": strProp("the app id (a deleted app's id from backups_list)")}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				return d.Client.GetBackupSet(ctx, id)
+			},
+		},
+		{
+			Name:        "backups_delete",
+			Description: "DESTRUCTIVE: delete every restore point of a DELETED app, irreversibly, and stop their billing. Refused (409) while the app exists: its backups go with apps_delete with_backups. Always confirm with the human first.",
+			Schema:      obj(map[string]interface{}{"app_id": strProp("the deleted app's id (from backups_list)")}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				if err := d.Client.DeleteBackupSet(ctx, id); err != nil {
+					return nil, err
+				}
+				return map[string]interface{}{"deleted": true, "app_id": id}, nil
 			},
 		},
 
@@ -302,26 +338,24 @@ func platformTools() []tool {
 		},
 		{
 			Name:        "apps_delete",
-			Description: "DESTRUCTIVE: delete an app. With with_volume it ALSO destroys the encrypted volume and all its data, irreversibly; without it the volume is retained and still billed. Always confirm with the human first.",
+			Description: "DESTRUCTIVE: delete an app. With with_volume it ALSO destroys the encrypted volume and all its data, and with with_backups all its restore points, irreversibly; without them the volume and backups are retained and still billed (message says what was kept). Always confirm with the human first.",
 			Schema: obj(map[string]interface{}{
-				"app_id":      strProp("the app id"),
-				"with_volume": boolProp("also destroy the encrypted volume and all its data (irreversible)"),
+				"app_id":       strProp("the app id"),
+				"with_volume":  boolProp("also destroy the encrypted volume and all its data (irreversible)"),
+				"with_backups": boolProp("also destroy all the app's backups (irreversible; without it they stay listed in backups_list)"),
 			}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
 				if err != nil {
 					return nil, err
 				}
-				if withVol, _ := args["with_volume"].(bool); withVol {
-					if err := d.Client.DeleteAppWithVolume(ctx, id); err != nil {
-						return nil, err
-					}
-					return map[string]interface{}{"deleted": true, "app_id": id, "volume_destroyed": true}, nil
-				}
-				if err := d.Client.DeleteApp(ctx, id); err != nil {
+				withVol, _ := args["with_volume"].(bool)
+				withBackups, _ := args["with_backups"].(bool)
+				msg, err := d.Client.DeleteAppWith(ctx, id, withVol, withBackups)
+				if err != nil {
 					return nil, err
 				}
-				return map[string]interface{}{"deleted": true, "app_id": id, "volume_destroyed": false}, nil
+				return map[string]interface{}{"deleted": true, "app_id": id, "volume_destroyed": withVol, "backups_destroyed": withBackups, "message": msg}, nil
 			},
 		},
 
