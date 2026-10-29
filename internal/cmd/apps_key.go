@@ -29,8 +29,10 @@ const backupRepositoryInfo = "privasys/backup-repository/v1"
 
 func newAppsKeyCmd() *cobra.Command {
 	c := &cobra.Command{
-		Use:   "key",
-		Short: "Manage your app's own storage key (BYOK)",
+		Use: "key",
+		// Hidden until BYOK apps are live on the production control plane.
+		Hidden: true,
+		Short:  "Manage your app's own storage key (BYOK)",
 		Long: `An app created with --key-provider byok encrypts its storage, and its backups,
 under a key YOU create and hold. The platform never sees it: the vaults each
 keep a share, only your app's approved versions can reconstruct it, and the copy

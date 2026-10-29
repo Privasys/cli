@@ -118,6 +118,7 @@ func newAppsCreateCmd() *cobra.Command {
 	f.StringVar(&image, "image", "", "container image ref (package source)")
 	f.BoolVar(&storage, "storage", false, "request encrypted container storage")
 	f.StringVar(&keyProvider, "key-provider", "", "storage key: byok (you create and hold it: `apps key create`; required for backups) or the platform default")
+	_ = f.MarkHidden("key-provider") // until BYOK apps are live in production
 	f.StringVar(&cloudImageName, "cloud-image-name", "", "cloud image name (cloud_image source)")
 	f.StringVar(&cloudChannel, "cloud-image-channel", "", "cloud image channel (cloud_image source)")
 	f.StringVar(&enclave, "enclave", "", "target enclave id")
@@ -1719,6 +1720,7 @@ func newAppsDeployCmd() *cobra.Command {
 	cmd.Flags().StringVar(&instance, "instance", "", "deploy onto a dedicated instance you own (id or name; see `privasys instances`)")
 	cmd.Flags().IntVar(&storageGB, "storage-gb", 0, "size the app's volume on FIRST deploy (default 10 GB; grow later with `privasys volumes resize`)")
 	cmd.Flags().StringVar(&restore, "restore", "", "fill the app's volume from a backup first: a snapshot id from `apps backup list`, or latest (the volume must be absent on the target)")
+	_ = cmd.Flags().MarkHidden("restore") // until backups are live in production
 	cmd.Flags().BoolVar(&watch, "watch", false, "poll until the deployment is active or failed")
 	return cmd
 }

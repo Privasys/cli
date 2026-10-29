@@ -926,7 +926,6 @@ func (s *Server) registerTools() {
 				"tenancy":          enumProp("mutualised (default, shared CVM) or dedicated (a whole confidential VM, Medium/Large only)", "mutualised", "dedicated"),
 				"instance":         strProp("deploy onto a dedicated instance id you own (multi-app; overrides location/tenancy)"),
 				"storage_gb":       intProp("size the app's encrypted volume on FIRST deploy (default 10; an existing volume keeps its size — grow with volumes_resize/the portal)"),
-				"restore":          strProp("fill the app's volume from a backup first: a snapshot id from apps_backup_list, or \"latest\". The volume must be absent on the target (a restore never overwrites data): over existing data, the human must stop the app and delete its volume first"),
 				"confirm_surfaces": boolProp(confirmSurfacesDesc),
 			}, "app_id"),
 			Handler: withSurfacesReview(func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
@@ -962,7 +961,7 @@ func (s *Server) registerTools() {
 					location, _ = locs[0]["code"].(string)
 				}
 				return shipSurfaces(ctx, d, args, id, versionID, func() (map[string]interface{}, error) {
-					if restore := argStr(args, "restore"); restore != "" {
+					if restore := argStr(args, "restore"); backupsLaunched && restore != "" {
 						return d.Client.DeployVersionRestoring(ctx, id, versionID, enclaveID, location, argInt(args, "storage_gb"), restore)
 					}
 					return d.Client.DeployVersion(ctx, id, versionID, enclaveID, location, argStr(args, "size"), argStr(args, "tenancy"), instanceID, argInt(args, "storage_gb"))
@@ -1413,7 +1412,13 @@ func (s *Server) registerTools() {
 			},
 		},
 	}
-	s.tools = append(s.tools, platformTools()...)
+	for _, t := range platformTools() {
+		// Backups stay out of the tool list until they launch in production.
+		if !backupsLaunched && strings.HasPrefix(t.Name, "apps_backup_") {
+			continue
+		}
+		s.tools = append(s.tools, t)
+	}
 	s.tools = append(s.tools, upgradeTools()...)
 }
 
