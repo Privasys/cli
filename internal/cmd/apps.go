@@ -90,6 +90,7 @@ func newAppsCmd() *cobra.Command {
 		newAppsDependenciesCmd(),
 		newAppsAllowedCallersCmd(),
 		newAppsPolicyCmd(),
+		newAppsDomainsCmd(),
 		newAppsActionCmd(),
 		newAppsBuildsCmd(),
 		newAppsOwnersCmd(),

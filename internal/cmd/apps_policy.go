@@ -29,7 +29,7 @@ import (
 func newAppsPolicyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "policy",
-		Short: "Approve the app's own policy: owners, dependencies and allowed callers",
+		Short: "Approve the app's own policy: owners, dependencies, allowed callers and domains",
 		Long: `An app's policy says who owns it, which peers it may call and who may call
 it. You approve it on your device, the platform carries it, and the enclave
 verifies the approval, so the platform distributes the policy without being
@@ -87,6 +87,7 @@ func newAppsPolicySignCmd() *cobra.Command {
 		callers   string
 		owners    []string
 		approver  string
+		domains   []string
 		printOnly bool
 	)
 	cmd := &cobra.Command{
@@ -105,6 +106,9 @@ checks that the approval binds this exact document.
   --owner            a platform subject that owns this app (repeatable)
   --approver         hand the app's policy to this subject; you approve the
                      handover, they approve everything after it
+  --domains          your own hostnames the enclave may obtain a certificate
+                     for and serve directly (comma-separated); see
+                     privasys apps domains
   --print            print the document and its digest without approving`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -155,6 +159,13 @@ checks that the approval binds this exact document.
 					return fmt.Errorf("--allowed-callers: %w", err)
 				}
 				doc["allowed_callers"] = json.RawMessage(raw)
+			}
+			if len(domains) > 0 {
+				names, err := normalisePolicyDomains(domains)
+				if err != nil {
+					return fmt.Errorf("--domains: %w", err)
+				}
+				doc["domains"] = names
 			}
 
 			// Compact bytes: the approval binds their digest, and anything
@@ -224,8 +235,40 @@ checks that the approval binds this exact document.
 	cmd.Flags().StringVar(&callers, "allowed-callers", "", "allowed-caller JSON or @file")
 	cmd.Flags().StringArrayVar(&owners, "owner", nil, "platform subject that owns this app (repeatable)")
 	cmd.Flags().StringVar(&approver, "approver", "", "hand the app's policy to this subject")
+	cmd.Flags().StringSliceVar(&domains, "domains", nil, "hostnames the enclave may certify and serve directly (comma-separated)")
 	cmd.Flags().BoolVar(&printOnly, "print", false, "print the document and its digest without approving")
 	return cmd
+}
+
+// maxPolicyDomains matches what the runtime accepts in one document.
+const maxPolicyDomains = 20
+
+// normalisePolicyDomains lower-cases, de-duplicates and checks the hostnames
+// for the policy's "domains": plain DNS names the enclave can obtain a
+// certificate for over TLS-ALPN-01, so no wildcard (that needs DNS-01).
+func normalisePolicyDomains(in []string) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	for _, raw := range in {
+		h := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(raw)), ".")
+		if h == "" {
+			continue
+		}
+		if strings.Contains(h, "*") {
+			return nil, fmt.Errorf("%q: wildcards are not supported; list each hostname", raw)
+		}
+		if strings.Contains(h, "://") || strings.ContainsAny(h, "/: ") || !strings.Contains(h, ".") {
+			return nil, fmt.Errorf("%q is not a hostname such as app.example.com", raw)
+		}
+		if !seen[h] {
+			seen[h] = true
+			out = append(out, h)
+		}
+	}
+	if len(out) > maxPolicyDomains {
+		return nil, fmt.Errorf("at most %d hostnames per policy", maxPolicyDomains)
+	}
+	return out, nil
 }
 
 // policySummary describes a policy document in the words the approver's
@@ -309,6 +352,9 @@ func policySummary(doc map[string]any) string {
 	}
 	if owners, ok := doc["owners"].([]string); ok && len(owners) > 0 {
 		lines = append(lines, "Owners: "+count(len(owners), "subject", "subjects")+" ("+short(owners)+")")
+	}
+	if names, ok := doc["domains"].([]string); ok && len(names) > 0 {
+		lines = append(lines, "Serves directly, with its own certificate: "+strings.Join(names, ", "))
 	}
 	if approver, ok := doc["approver"].(string); ok && approver != "" {
 		lines = append(lines, "Hands approval of future policies to "+short([]string{approver}))

@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -99,5 +100,34 @@ func TestPolicySummary(t *testing.T) {
 	}
 	if got := policySummary(map[string]any{}); got != "Callers: none listed" {
 		t.Fatalf("empty: %q", got)
+	}
+}
+
+func TestNormalisePolicyDomains(t *testing.T) {
+	got, err := normalisePolicyDomains([]string{" Shop.Example.COM. ", "shop.example.com", "", "api.example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "shop.example.com" || got[1] != "api.example.com" {
+		t.Fatalf("got %v", got)
+	}
+	for _, bad := range []string{"*.example.com", "https://shop.example.com", "shop.example.com:443", "localhost", "a b.com"} {
+		if _, err := normalisePolicyDomains([]string{bad}); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	many := make([]string, maxPolicyDomains+1)
+	for i := range many {
+		many[i] = fmt.Sprintf("h%d.example.com", i)
+	}
+	if _, err := normalisePolicyDomains(many); err == nil {
+		t.Error("more than the runtime accepts was allowed")
+	}
+}
+
+func TestPolicySummaryNamesDomains(t *testing.T) {
+	s := policySummary(map[string]any{"domains": []string{"shop.example.com"}})
+	if !strings.Contains(s, "shop.example.com") {
+		t.Errorf("summary %q does not show the domains the approver is granting", s)
 	}
 }
