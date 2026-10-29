@@ -77,6 +77,7 @@ func newAppsCmd() *cobra.Command {
 		newAppsRotateKeyCmd(),
 		newAppsExportKeyCmd(),
 		newAppsKeyCmd(),
+		newAppsBackupCmd(),
 		newAppsCosignCmd(),
 		newAppsMigrateConstellationCmd(),
 		newAppsMeasurementsCmd(),
