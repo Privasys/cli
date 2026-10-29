@@ -546,3 +546,15 @@ func (c *Client) GetVersion(ctx context.Context, id, versionID string) (map[stri
 	}
 	return out, nil
 }
+
+// SetMCP records an app's MCP manifest (its privasys.json) explicitly. The
+// control plane reads image labels anonymously and so cannot see the manifest
+// of a PRIVATE image; the owner's client, which holds the pull credential at
+// `registry add` time, reads the label and records it here. Owner-only.
+func (c *Client) SetMCP(ctx context.Context, id string, manifest json.RawMessage) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPatch, "/api/v1/apps/"+id+"/mcp", manifest, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

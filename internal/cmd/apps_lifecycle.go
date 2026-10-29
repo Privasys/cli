@@ -1943,10 +1943,18 @@ func newAppsAPICmd() *cobra.Command {
 }
 
 func newAppsMcpCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "mcp <app-id>",
+	var detectToken, username, password string
+	cmd := &cobra.Command{
+		Use:   "mcp <app>",
 		Short: "Show the app's MCP tool manifest",
-		Args:  cobra.ExactArgs(1),
+		Long: `Shows the app's MCP tool manifest (its privasys.json) as the platform knows it.
+
+For a PRIVATE image the control plane cannot read the manifest label itself.
+Pass --detect-with-token (or --username and --password) to read the
+org.privasys.manifest label off the app's pinned image with that pull
+credential and record it before showing it. ` + "`privasys registry add`" + ` does
+this automatically; use this form after shipping a new private image.`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
 			if err != nil {
@@ -1956,13 +1964,32 @@ func newAppsMcpCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			m, err := client.MCP(cmd.Context(), args[0])
+			ctx := cmd.Context()
+			appID, err := resolveAppID(ctx, client, args[0])
+			if err != nil {
+				return err
+			}
+			if detectToken != "" || password != "" {
+				pass := password
+				if pass == "" {
+					pass = detectToken
+				}
+				if _, err := recordManifestFromImage(ctx, cmd.ErrOrStderr(), env.Quiet, client, appID, username, pass); err != nil {
+					return err
+				}
+			}
+			m, err := client.MCP(ctx, appID)
 			if err != nil {
 				return err
 			}
 			return output.Emit(env.Format, m, nil)
 		},
 	}
+	f := cmd.Flags()
+	f.StringVar(&detectToken, "detect-with-token", "", "read and record the manifest from the private image using this pull token / PAT")
+	f.StringVar(&username, "username", "", "registry username (with --password) for --detect")
+	f.StringVar(&password, "password", "", "registry password (with --username) for --detect")
+	return cmd
 }
 
 func newAppsCallCmd() *cobra.Command {
