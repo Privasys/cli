@@ -37,8 +37,92 @@ keep a share, only your app's approved versions can reconstruct it, and the copy
 you keep lets you re-create it on new vaults after a disaster, or open your
 backups with stock kopia without Privasys at all.`,
 	}
-	c.AddCommand(newAppsKeyCreateCmd(), newAppsKeyBackupPasswordCmd())
+	c.AddCommand(newAppsKeyCreateCmd(), newAppsKeyRotateCmd(), newAppsKeyBackupPasswordCmd())
 	return c
+}
+
+func newAppsKeyRotateCmd() *cobra.Command {
+	var out, fromFile string
+	cmd := &cobra.Command{
+		Use:   "rotate <app> (--out <new-key-file> | --from-file <new-key-file>)",
+		Short: "Rotate your app's key onto new material you hold",
+		Long: `Moves a running BYOK app onto a new key: the new key is created on the vaults
+from material you hold (generated into --out, written BEFORE anything is sent,
+or brought with --from-file), then the app's enclave re-wraps its volume and its
+backup repository onto it. No data is re-encrypted, and every backup, old and
+new, opens with the new key afterwards.
+
+Keep the OLD key file too until the backups made before the rotation have aged
+out: a point-in-time view of the repository from before the rotation still
+needs it.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if (out == "") == (fromFile == "") {
+				return fmt.Errorf("give exactly one of --out (generate the new key) or --from-file (bring it)")
+			}
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			material, err := appKeyMaterial(out, fromFile)
+			if err != nil {
+				return err
+			}
+			defer zero(material)
+			ctx := cmd.Context()
+			tok, err := auth.AccessToken(ctx, env.Cfg.Issuer)
+			if err != nil {
+				return err
+			}
+			claims, err := auth.Claims(tok)
+			if err != nil {
+				return err
+			}
+			sub, _ := claims["sub"].(string)
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			appID, err := resolveAppID(ctx, client, args[0])
+			if err != nil {
+				return err
+			}
+			attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
+			var versionID, enclaveID string
+			res, err := secrets.CreateAppKeyInVault(ctx, secrets.VaultCreateParams{
+				Sub: sub, Secret: material, Exportable: true, AttToken: attTok,
+				MintGrant: func(ctx context.Context, cnf string) (string, secrets.VaultAddressing, error) {
+					r, err := client.RotateAppKeyGrant(ctx, appID, cnf)
+					if err != nil {
+						return "", secrets.VaultAddressing{}, err
+					}
+					versionID, enclaveID = r.VersionID, r.EnclaveID
+					return r.Grant, secrets.VaultAddressing{
+						Handle: r.Handle, Endpoints: r.Constellation.Endpoints,
+						MRENCLAVE: r.Constellation.MRENCLAVE, AttServer: r.Constellation.AttestationServer,
+						Threshold: r.Constellation.Threshold,
+					}, nil
+				},
+			})
+			if err != nil {
+				return err
+			}
+			if !env.Quiet {
+				output.Success(cmd.ErrOrStderr(), "Created the new key %s (%d/%d vaults, %s); re-wrapping the app onto it...",
+					res.Handle, res.Created, res.Total, keyFingerprint(material))
+			}
+			rot, err := client.RotateKey(ctx, appID, versionID, enclaveID)
+			if err != nil {
+				return fmt.Errorf("the new key exists but the re-wrap failed (retry with `apps rotate-key %s %s --enclave %s`): %w", appID, versionID, enclaveID, err)
+			}
+			return output.Emit(env.Format, rot, func() output.Table {
+				return kvTable(rot, []string{"rotated", "new_handle", "old_handle", "warning"})
+			})
+		},
+	}
+	cmd.Flags().StringVar(&out, "out", "", "generate the new key and write your copy to this file (must not exist)")
+	cmd.Flags().StringVar(&fromFile, "from-file", "", "bring the new key: a file holding the raw 32 bytes")
+	return cmd
 }
 
 func newAppsKeyCreateCmd() *cobra.Command {
