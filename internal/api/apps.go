@@ -222,6 +222,29 @@ func (c *Client) DeployVersion(ctx context.Context, id, versionID, enclaveID, lo
 	return out, nil
 }
 
+// DeployVersionRestoring deploys a version and fills the app's volume from one
+// of its backups first (snapshotID from `apps backup list`, or "latest"). The
+// volume must be absent on the target enclave: a restore never overwrites data.
+func (c *Client) DeployVersionRestoring(ctx context.Context, id, versionID, enclaveID, location string, storageGB int, snapshotID string) (map[string]interface{}, error) {
+	body := map[string]interface{}{"restore_snapshot_id": snapshotID}
+	if enclaveID != "" {
+		body["enclave_id"] = enclaveID
+	}
+	if location != "" {
+		body["location"] = location
+	}
+	if storageGB > 0 {
+		body["storage_gb"] = storageGB
+	}
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost,
+		"/api/v1/apps/"+id+"/versions/"+versionID+"/deploy",
+		body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // DeployLocations lists the locations an app can deploy to (adopter-facing).
 func (c *Client) DeployLocations(ctx context.Context, id string) ([]map[string]interface{}, error) {
 	var out struct {

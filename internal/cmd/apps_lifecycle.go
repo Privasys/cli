@@ -48,6 +48,7 @@ func newAppsCreateCmd() *cobra.Command {
 		cloudImageName, cloudChannel   string
 		enclave                        string
 		size                           string
+		keyProvider                    string
 	)
 	cmd := &cobra.Command{
 		Use:   "create --name <name> --source <upload|github|package|cloud_image> [flags]",
@@ -83,6 +84,7 @@ func newAppsCreateCmd() *cobra.Command {
 			if storage {
 				body["container_storage"] = true
 			}
+			putStr(body, "key_provider", keyProvider)
 			if size != "" {
 				slug, err := normalizeInstanceSize(size)
 				if err != nil {
@@ -115,6 +117,7 @@ func newAppsCreateCmd() *cobra.Command {
 	f.StringVar(&commitURL, "commit-url", "", "GitHub commit URL (github source)")
 	f.StringVar(&image, "image", "", "container image ref (package source)")
 	f.BoolVar(&storage, "storage", false, "request encrypted container storage")
+	f.StringVar(&keyProvider, "key-provider", "", "storage key: byok (you create and hold it: `apps key create`; required for backups) or the platform default")
 	f.StringVar(&cloudImageName, "cloud-image-name", "", "cloud image name (cloud_image source)")
 	f.StringVar(&cloudChannel, "cloud-image-channel", "", "cloud image channel (cloud_image source)")
 	f.StringVar(&enclave, "enclave", "", "target enclave id")
@@ -1608,6 +1611,7 @@ func newAppsLocationsCmd() *cobra.Command {
 func newAppsDeployCmd() *cobra.Command {
 	var versionID, enclaveID, location, size, tenancy, instance string
 	var storageGB int
+	var restore string
 	var watch, confirmSurfaces bool
 	cmd := &cobra.Command{
 		Use:   "deploy <app-id>",
@@ -1686,6 +1690,9 @@ func newAppsDeployCmd() *cobra.Command {
 			// A version that adds routes served in the clear ships only once an
 			// owner confirms them (surfaces.go); the platform asks, we relay.
 			dep, err := withSurfacesConfirmation(cmd, env, client, appID, versionID, confirmSurfaces, func() (map[string]interface{}, error) {
+				if restore != "" {
+					return client.DeployVersionRestoring(cmd.Context(), appID, versionID, enclaveID, location, storageGB, restore)
+				}
 				return client.DeployVersion(cmd.Context(), appID, versionID, enclaveID, location, size, tenancy, instanceID, storageGB)
 			})
 			if err != nil {
@@ -1711,6 +1718,7 @@ func newAppsDeployCmd() *cobra.Command {
 	cmd.Flags().StringVar(&tenancy, "tenancy", "", "mutualised (default, shared CVM) or dedicated (a whole confidential VM, Medium/Large only)")
 	cmd.Flags().StringVar(&instance, "instance", "", "deploy onto a dedicated instance you own (id or name; see `privasys instances`)")
 	cmd.Flags().IntVar(&storageGB, "storage-gb", 0, "size the app's volume on FIRST deploy (default 10 GB; grow later with `privasys volumes resize`)")
+	cmd.Flags().StringVar(&restore, "restore", "", "fill the app's volume from a backup first: a snapshot id from `apps backup list`, or latest (the volume must be absent on the target)")
 	cmd.Flags().BoolVar(&watch, "watch", false, "poll until the deployment is active or failed")
 	return cmd
 }
