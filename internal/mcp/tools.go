@@ -842,7 +842,6 @@ func (s *Server) registerTools() {
 				"description":  strProp("description"),
 				"storage":      boolProp("request encrypted, owner-controlled storage (for apps that hold user data)"),
 				"size":         strProp("container VM size slug: micro|small|medium|large|xlarge (default micro; container apps only, fixed at creation)"),
-				"key_provider": strProp("storage key: omit for the platform default, or byok (container apps with storage only) where the OWNER creates and holds the key with `privasys apps key create` at a terminal, never through a tool. Backups require byok; platform-keyed apps have no backups. A byok app's first deploy is refused (409) until the owner has created its key"),
 			}, "name", "source_type"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				name, err := requireStr(args, "name")
@@ -867,9 +866,6 @@ func (s *Server) registerTools() {
 				}
 				if v := argStr(args, "size"); v != "" {
 					body["instance_size"] = v // server validates the slug
-				}
-				if v := argStr(args, "key_provider"); v != "" {
-					body["key_provider"] = v // server validates it (byok: container + storage)
 				}
 				// container_port is platform-allocated (app listens on $PORT).
 				return d.Client.CreateApp(ctx, body)
