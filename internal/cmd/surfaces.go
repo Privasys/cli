@@ -1,9 +1,7 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -19,29 +17,7 @@ import (
 // those routes carry no personal data; the confirmation is recorded with the
 // version. These helpers show the routes and take that confirmation.
 
-// surfacesConfirmationRequired is the platform's error code for that refusal.
-const surfacesConfirmationRequired = "surfaces_confirmation_required"
-
-// surfacesRefusal is the body of that refusal.
-type surfacesRefusal struct {
-	Message string   `json:"message"`
-	Entries []string `json:"entries"`
-	Added   []string `json:"added"`
-}
-
-// asSurfacesRefusal reports whether err is the platform asking for an
-// owner's confirmation, and what it asks about.
-func asSurfacesRefusal(err error) (*surfacesRefusal, bool) {
-	var se *api.StatusError
-	if !errors.As(err, &se) || se.Status != http.StatusConflict || se.Code() != surfacesConfirmationRequired {
-		return nil, false
-	}
-	var body surfacesRefusal
-	if se.Decode(&body) != nil {
-		return nil, false
-	}
-	return &body, true
-}
+// The refusal itself (api.AsSurfacesRefusal) is shared with the MCP tools.
 
 // withSurfacesConfirmation runs ship once; when the platform answers that the
 // version serves new routes in the clear, it shows them, asks the owner (or
@@ -53,7 +29,7 @@ func withSurfacesConfirmation(cmd *cobra.Command, env *Env, client *api.Client, 
 	if err == nil {
 		return res, nil
 	}
-	refusal, ok := asSurfacesRefusal(err)
+	refusal, ok := api.AsSurfacesRefusal(err)
 	if !ok {
 		return nil, err
 	}
@@ -76,7 +52,7 @@ func withSurfacesConfirmation(cmd *cobra.Command, env *Env, client *api.Client, 
 	return ship()
 }
 
-func printSurfaces(cmd *cobra.Command, r *surfacesRefusal) {
+func printSurfaces(cmd *cobra.Command, r *api.SurfacesRefusal) {
 	w := cmd.ErrOrStderr()
 	added := map[string]bool{}
 	for _, e := range r.Added {
@@ -154,11 +130,11 @@ func newVersionsConfirmSurfacesCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			entries := versionSurfaceEntries(v)
+			entries := api.VersionSurfaceEntries(v)
 			if len(entries) == 0 {
 				return fmt.Errorf("this version serves nothing in the clear; there is nothing to confirm")
 			}
-			printSurfaces(cmd, &surfacesRefusal{Entries: entries})
+			printSurfaces(cmd, &api.SurfacesRefusal{Entries: entries})
 			yes, err := confirm(cmd, env, "Confirm these routes carry no personal data?")
 			if err != nil {
 				return err
@@ -176,29 +152,3 @@ func newVersionsConfirmSurfacesCmd() *cobra.Command {
 		},
 	}
 }
-
-// versionSurfaceEntries lists a version's clear routes exactly as the platform
-// names them, so a confirmation matches.
-func versionSurfaceEntries(v map[string]interface{}) []string {
-	surf, _ := v["surfaces"].(map[string]interface{})
-	if surf == nil {
-		return nil
-	}
-	var entries []string
-	if st, ok := surf["static"].([]interface{}); ok {
-		for _, p := range st {
-			entries = append(entries, "static "+strings.TrimSpace(fmt.Sprint(p)))
-		}
-	}
-	if pub, ok := surf["public"].([]interface{}); ok {
-		for _, p := range pub {
-			r, _ := p.(map[string]interface{})
-			if r == nil {
-				continue
-			}
-			entries = append(entries, strings.ToUpper(strings.TrimSpace(output.Str(r, "method")))+" "+strings.TrimSpace(output.Str(r, "path")))
-		}
-	}
-	return entries
-}
-

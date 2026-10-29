@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/Privasys/cli/internal/apppolicy"
 	"github.com/Privasys/cli/internal/auth"
 	"github.com/Privasys/cli/internal/output"
 	"github.com/Privasys/cli/internal/ratls"
@@ -73,7 +74,7 @@ binds it to this connection.
 				if err != nil {
 					return fmt.Errorf("%w; pass --host <enclave-fqdn>", err)
 				}
-				storedPolicySeq, storedPolicyDigest = storedPolicy(ctx, client, appID)
+				storedPolicySeq, storedPolicyDigest = apppolicy.Stored(ctx, client, appID)
 			}
 
 			attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
@@ -109,9 +110,9 @@ binds it to this connection.
 				}
 				// Which owner-approved policy this app is enforcing, and
 				// whether it is the one its owner last approved.
-				att, ok := policyFromResult(res)
+				att, ok := apppolicy.FromResult(res)
 				fmt.Fprintln(cmd.OutOrStdout())
-				fmt.Fprintln(cmd.OutOrStdout(), policyStatus(att, ok, storedPolicySeq, storedPolicyDigest))
+				fmt.Fprintln(cmd.OutOrStdout(), apppolicy.Status(att, ok, storedPolicySeq, storedPolicyDigest))
 			}
 			if !res.Verified {
 				return fmt.Errorf("attestation NOT verified: %s", res.VerifyError)

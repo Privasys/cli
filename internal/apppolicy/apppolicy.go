@@ -1,4 +1,4 @@
-package cmd
+package apppolicy
 
 // Reading the policy an app is enforcing out of its attestation.
 //
@@ -24,42 +24,42 @@ import (
 	"github.com/Privasys/cli/internal/ratls"
 )
 
-// oidAttestedAppPolicy mirrors ratls.OidAttestedAppPolicy in the SDK (7.2 is
+// OIDAttestedAppPolicy mirrors ratls.OidAttestedAppPolicy in the SDK (7.2 is
 // reserved for allowed callers, so the policy stamp is 7.3).
-const oidAttestedAppPolicy = "1.3.6.1.4.1.65230.7.3"
+const OIDAttestedAppPolicy = "1.3.6.1.4.1.65230.7.3"
 
-// attestedPolicy is what an app's certificate says about the policy in force.
-type attestedPolicy struct {
+// Attested is what an app's certificate says about the policy in force.
+type Attested struct {
 	Seq    uint64
 	Digest string
 }
 
-// policyFromResult extracts the policy stamp, reporting whether the app
+// FromResult extracts the policy stamp, reporting whether the app
 // advertises one at all. An app whose owner has approved no policy carries no
 // stamp, which is not a fault.
-func policyFromResult(r *ratls.Result) (attestedPolicy, bool) {
+func FromResult(r *ratls.Result) (Attested, bool) {
 	for _, o := range r.CustomOIDs {
-		if o.OID != oidAttestedAppPolicy {
+		if o.OID != OIDAttestedAppPolicy {
 			continue
 		}
 		raw, err := hex.DecodeString(o.ValueHex)
 		if err != nil || len(raw) != 40 {
-			return attestedPolicy{}, false
+			return Attested{}, false
 		}
-		return attestedPolicy{
+		return Attested{
 			Seq:    binary.BigEndian.Uint64(raw[:8]),
 			Digest: hex.EncodeToString(raw[8:]),
 		}, true
 	}
-	return attestedPolicy{}, false
+	return Attested{}, false
 }
 
-// policyStatus compares the policy an app enforces with the one the platform
+// Status compares the policy an app enforces with the one the platform
 // holds for it, and returns a line to show the operator.
 //
 // stored is what the platform was given (seq and the document digest); either
 // may be zero-valued when the platform holds none.
-func policyStatus(att attestedPolicy, attested bool, storedSeq uint64, storedDigest string) string {
+func Status(att Attested, attested bool, storedSeq uint64, storedDigest string) string {
 	switch {
 	case !attested && storedSeq == 0:
 		return "no owner-approved policy: this app's policy still comes from the platform"
@@ -85,10 +85,10 @@ func short(hexStr string) string {
 	return hexStr[:12] + "…"
 }
 
-// storedPolicy reads the seq and document digest the platform holds for an
+// Stored reads the seq and document digest the platform holds for an
 // app. Best-effort: an app with no approved policy, or a platform that cannot
 // be reached, simply gives nothing to compare with.
-func storedPolicy(ctx context.Context, client *api.Client, appID string) (uint64, string) {
+func Stored(ctx context.Context, client *api.Client, appID string) (uint64, string) {
 	out, err := client.GetAppPolicy(ctx, appID)
 	if err != nil || out == nil {
 		return 0, ""
