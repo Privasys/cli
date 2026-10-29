@@ -266,6 +266,12 @@ func strProp(desc string) map[string]interface{} {
 func intProp(desc string) map[string]interface{} {
 	return map[string]interface{}{"type": "integer", "description": desc}
 }
+
+// enumProp is a string restricted to a closed set, so clients can validate it
+// and models see the choices.
+func enumProp(desc string, values ...string) map[string]interface{} {
+	return map[string]interface{}{"type": "string", "description": desc, "enum": values}
+}
 func boolProp(desc string) map[string]interface{} {
 	return map[string]interface{}{"type": "boolean", "description": desc}
 }

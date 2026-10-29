@@ -6,8 +6,11 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/Privasys/cli/internal/api"
 )
 
 // platformTools completes the agent surface over the CLI: dedicated instances,
@@ -20,6 +23,11 @@ import (
 // `registry add` (human credentials), `vault serve` / `mcp serve` (long-running
 // servers), `agents init` / `config set` / `update` (mutate the operator's own
 // machine), and `apps upload` (needs a local file path).
+//
+// Also CLI-only: `apps key create` / `rotate` / `backup-password` (a BYOK app's
+// key is the owner's: they create and keep it, and the backup password is a
+// secret), and `apps policy approve` (the owner approves the document in their
+// wallet; apps_policy_show reads it).
 //
 // `auth list` / `auth logout` are session management: logging out would strand
 // the agent mid-task.
@@ -372,19 +380,40 @@ func platformTools() []tool {
 			},
 		},
 		{
-			Name:        "apps_allowed_callers",
-			Description: "Set which attested apps may call this app over ingress mutual RA-TLS. Pass 'callers' as a JSON array, or clear:true to remove the restriction, which lets any caller in.",
+			Name: "apps_allowed_callers",
+			Description: "Set which attested apps may call this app over ingress mutual RA-TLS. Two shapes, which combine: PINNED callers in 'callers' " +
+				"(entries {app_id, measurements, required_oids}; {\"app_id\":\"<uuid>\"} alone pins the caller's current measurement, and breaks when it redeploys or its host rolls), " +
+				"and ANY ATTESTED app (any_attested:true), which admits every caller whose evidence verifies and names an app, so the app decides what to do with an unknown caller. " +
+				"any_attested is honoured only with 'platforms': a quote proves a genuine TEE, not whose, so the machines callers may run on are what make it trustworthy. " +
+				"'platforms' are hex platform ids as attest reports them, and are enforced on every caller, pinned ones included. clear:true removes the restriction, which lets any caller in.",
 			Schema: obj(map[string]interface{}{
-				"app_id":  strProp("the app id"),
-				"callers": strProp("allowed-caller JSON (array); omit when using clear"),
-				"clear":   boolProp("remove the ingress restriction"),
+				"app_id":       strProp("the app id"),
+				"callers":      strProp("allowed-caller JSON: an entry array, or {\"entries\":[...],\"platforms\":[...]}; omit when using clear"),
+				"any_attested": boolProp("also admit any attested app (adds the \"*\" entry); needs platforms"),
+				"platforms": map[string]interface{}{
+					"type": "array", "items": map[string]interface{}{"type": "string"},
+					"description": "hex platform ids callers may run on (as attest reports them); required with any_attested",
+				},
+				"clear": boolProp("remove the ingress restriction"),
 			}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
 				if err != nil {
 					return nil, err
 				}
-				raw, err := jsonSetOrClear(args, "callers")
+				anyAttested, _ := args["any_attested"].(bool)
+				platforms := argStrSlice(args, "platforms")
+				if !anyAttested && len(platforms) == 0 {
+					raw, err := jsonSetOrClear(args, "callers")
+					if err != nil {
+						return nil, err
+					}
+					return d.Client.SetAllowedCallers(ctx, id, raw)
+				}
+				if c, _ := args["clear"].(bool); c {
+					return nil, errors.New("clear cannot be combined with any_attested or platforms")
+				}
+				raw, err := allowedCallersDocument(argStr(args, "callers"), anyAttested, platforms)
 				if err != nil {
 					return nil, err
 				}
@@ -392,14 +421,63 @@ func platformTools() []tool {
 			},
 		},
 		{
+			Name: "apps_versions_confirm_surfaces",
+			Description: "Record the app OWNER's confirmation that the routes a version serves in the clear (its static shell and public routes, which the platform gateway reads) carry no personal data. " +
+				"The platform refuses to deploy or stage a version that adds such a route until this is recorded; apps_deploy, apps_versions_stage, apps_upgrade and apps_update offer the same step inline. " +
+				"TWO-PHASE: call without confirm to get the routes, show them to the owner, and only if they confirm call again with confirm:true. Never confirm on their behalf: it is recorded under their account.",
+			Schema: obj(map[string]interface{}{
+				"app_id":  strProp("the app id"),
+				"version": strProp("version id (default: latest)"),
+				"confirm": boolProp("the owner reviewed these routes and confirmed they carry no personal data; records it"),
+			}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				vid, err := resolveLatestVersion(ctx, d, id, argStr(args, "version"))
+				if err != nil {
+					return nil, err
+				}
+				v, err := d.Client.GetVersion(ctx, id, vid)
+				if err != nil {
+					return nil, err
+				}
+				entries := api.VersionSurfaceEntries(v)
+				if len(entries) == 0 {
+					return map[string]interface{}{"version": vid, "routes_in_clear": []string{},
+						"note": "This version serves nothing in the clear; there is nothing to confirm."}, nil
+				}
+				if c, _ := args["confirm"].(bool); !c {
+					return map[string]interface{}{"confirmed": false, "version": vid, "routes_in_clear": entries,
+						"next": "Show these routes to the app owner. Only if they confirm the routes carry no personal data, call again with confirm:true."}, nil
+				}
+				return d.Client.ConfirmSurfaces(ctx, id, vid, entries)
+			},
+		},
+		{
+			Name: "apps_policy_show",
+			Description: "Show the owner-approved policy the platform holds for an app: its sequence number and document (owners, dependencies, allowed callers, and the domains the enclave may certify and serve directly). " +
+				"Use it to explain a refusal, e.g. a hostname that cannot switch to direct mode because it is not in the policy. attest reports whether the running app enforces this policy. " +
+				"Changing it is `privasys apps policy approve`, which the owner runs and approves in their wallet; an agent cannot approve it.",
+			Schema: obj(map[string]interface{}{"app_id": strProp("the app id")}, "app_id"),
+			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+				id, err := requireStr(args, "app_id")
+				if err != nil {
+					return nil, err
+				}
+				return d.Client.GetAppPolicy(ctx, id)
+			},
+		},
+		{
 			Name: "apps_domains",
-			Description: "The app owner's own hostnames in front of the app. action: list (each hostname, its mode and, for direct mode, the CAA record and certificate status), add (claim a hostname; returns the TXT record that proves it), verify (check the TXT proof now), remove (release it), mode (switch where TLS ends: direct, in the enclave with its own certificate, or alias, at the gateway). " +
+			Description: "The app owner's own hostnames in front of the app. action: list (each hostname, its mode and, for direct mode, the CAA record and certificate status), add (claim a hostname; returns the TXT record that proves it), verify (check the TXT proof now), remove (DESTRUCTIVE: release it, and the app stops answering on it; confirm with the human first), mode (switch where TLS ends: direct, in the enclave with its own certificate, or alias, at the gateway). " +
 				"Direct mode needs the hostname in the app's signed policy (privasys apps policy approve --domains, a wallet approval) and a CAA record on the hostname pinning the enclave's ACME account; a refused switch returns the exact record to publish.",
 			Schema: obj(map[string]interface{}{
 				"app_id":   strProp("the app id"),
-				"action":   strProp("list | add | verify | remove | mode"),
+				"action":   enumProp("list, add, verify, remove (DESTRUCTIVE: the app stops answering on the hostname; confirm with the human), or mode", "list", "add", "verify", "remove", "mode"),
 				"hostname": strProp("the hostname (all actions but list)"),
-				"mode":     strProp("direct | alias (action mode)"),
+				"mode":     enumProp("direct or alias (action mode)", "direct", "alias"),
 			}, "app_id", "action"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")

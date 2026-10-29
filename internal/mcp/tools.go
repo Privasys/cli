@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Privasys/cli/internal/apppolicy"
 	"github.com/Privasys/cli/internal/auth"
 	"github.com/Privasys/cli/internal/ratls"
 	"github.com/Privasys/cli/internal/secrets"
@@ -245,7 +246,7 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "vault_list",
-			Description: "List the caller's vaults.",
+			Description: "List the signed-in user's vaults; vault_key_list shows the keys inside one.",
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				return d.Client.ListVaults(ctx)
 			},
@@ -811,7 +812,7 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "apps_list",
-			Description: "List the caller's apps.",
+			Description: "List the signed-in user's apps with their ids and names. Most app tools take the app id from here.",
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				return d.Client.ListApps(ctx)
 			},
@@ -833,14 +834,15 @@ func (s *Server) registerTools() {
 			Description: "Create a new app. Pass the field matching source_type: commit_url (github, built reproducibly from a signed commit), image (package, a digest-pinned container ref), or upload/cloud_image. Set storage:true for an app that holds user data — it provisions an owner-controlled encrypted volume and CANNOT be added later. size is fixed at creation for container apps. Next: apps_versions_create, then apps_deploy.",
 			Schema: obj(map[string]interface{}{
 				"name":         strProp("app name (DNS-safe)"),
-				"source_type":  strProp("upload|github|package|cloud_image"),
-				"app_type":     strProp("wasm|container"),
+				"source_type":  enumProp("where the code comes from", "upload", "github", "package", "cloud_image"),
+				"app_type":     enumProp("wasm or container", "wasm", "container"),
 				"commit_url":   strProp("GitHub commit URL (github source)"),
 				"image":        strProp("container image ref (package source)"),
 				"display_name": strProp("human-friendly name"),
 				"description":  strProp("description"),
 				"storage":      boolProp("request encrypted, owner-controlled storage (for apps that hold user data)"),
 				"size":         strProp("container VM size slug: micro|small|medium|large|xlarge (default micro; container apps only, fixed at creation)"),
+				"key_provider": strProp("storage key: omit for the platform default, or byok (container apps with storage only) where the OWNER creates and holds the key with `privasys apps key create` at a terminal, never through a tool. Backups require byok; platform-keyed apps have no backups. A byok app's first deploy is refused (409) until the owner has created its key"),
 			}, "name", "source_type"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				name, err := requireStr(args, "name")
@@ -865,6 +867,9 @@ func (s *Server) registerTools() {
 				}
 				if v := argStr(args, "size"); v != "" {
 					body["instance_size"] = v // server validates the slug
+				}
+				if v := argStr(args, "key_provider"); v != "" {
+					body["key_provider"] = v // server validates it (byok: container + storage)
 				}
 				// container_port is platform-allocated (app listens on $PORT).
 				return d.Client.CreateApp(ctx, body)
@@ -902,7 +907,7 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "apps_versions",
-			Description: "List an app's versions.",
+			Description: "List an app's versions with their ids, the latest last. Deploy, stage and promote take a version id from here and default to the latest.",
 			Schema:      obj(map[string]interface{}{"app_id": strProp("the app id")}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
@@ -913,20 +918,22 @@ func (s *Server) registerTools() {
 			},
 		},
 		{
-			Name:        "apps_deploy",
-			Description: "Deploy a version of an app (defaults to the latest version and, when there is only one, the sole location). Adopters pick a location, not an enclave. For a vault-backed app that already holds data, APPROVE FIRST: apps_versions_stage then apps_versions_promote (with human sign-off), then deploy — deploying an un-promoted version leaves the data locked until it is approved.",
+			Name: "apps_deploy",
+			Description: "Deploy a version of an app (defaults to the latest version and, when there is only one, the sole location). Adopters pick a location, not an enclave. For a vault-backed app that already holds data, APPROVE FIRST: apps_versions_stage then apps_versions_promote (with human sign-off), then deploy — deploying an un-promoted version leaves the data locked until it is approved. " +
+				"If the version serves new routes in the clear, nothing ships and the result lists them (surfaces_confirmation_required): the app owner must confirm they carry no personal data before you call again with confirm_surfaces:true.",
 			Schema: obj(map[string]interface{}{
-				"app_id":     strProp("the app id"),
-				"version":    strProp("version id (default: latest)"),
-				"location":   strProp("deploy location code, e.g. europe-west9 (default: the only one available)"),
-				"enclave":    strProp("enclave id (admin override; adopters use location)"),
-				"size":       strProp("container VM size for this deployment: micro|small|medium|large|xlarge (default: the app's size; redeploy with a new size to resize)"),
-				"tenancy":    strProp("mutualised (default, shared CVM) or dedicated (a whole confidential VM, Medium/Large only)"),
-				"instance":   strProp("deploy onto a dedicated instance id you own (multi-app; overrides location/tenancy)"),
-				"storage_gb": intProp("size the app's encrypted volume on FIRST deploy (default 10; an existing volume keeps its size — grow with volumes_resize/the portal)"),
-				"restore":    strProp("fill the app's volume from a backup first: a snapshot id from apps_backup_list, or \"latest\". The volume must be absent on the target (a restore never overwrites data): over existing data, the human must stop the app and delete its volume first"),
+				"app_id":           strProp("the app id"),
+				"version":          strProp("version id (default: latest)"),
+				"location":         strProp("deploy location code, e.g. europe-west9 (default: the only one available)"),
+				"enclave":          strProp("enclave id (admin override; adopters use location)"),
+				"size":             strProp("container VM size for this deployment: micro|small|medium|large|xlarge (default: the app's size; redeploy with a new size to resize)"),
+				"tenancy":          enumProp("mutualised (default, shared CVM) or dedicated (a whole confidential VM, Medium/Large only)", "mutualised", "dedicated"),
+				"instance":         strProp("deploy onto a dedicated instance id you own (multi-app; overrides location/tenancy)"),
+				"storage_gb":       intProp("size the app's encrypted volume on FIRST deploy (default 10; an existing volume keeps its size — grow with volumes_resize/the portal)"),
+				"restore":          strProp("fill the app's volume from a backup first: a snapshot id from apps_backup_list, or \"latest\". The volume must be absent on the target (a restore never overwrites data): over existing data, the human must stop the app and delete its volume first"),
+				"confirm_surfaces": boolProp(confirmSurfacesDesc),
 			}, "app_id"),
-			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+			Handler: withSurfacesReview(func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
 				if err != nil {
 					return nil, err
@@ -958,11 +965,13 @@ func (s *Server) registerTools() {
 					}
 					location, _ = locs[0]["code"].(string)
 				}
-				if restore := argStr(args, "restore"); restore != "" {
-					return d.Client.DeployVersionRestoring(ctx, id, versionID, enclaveID, location, argInt(args, "storage_gb"), restore)
-				}
-				return d.Client.DeployVersion(ctx, id, versionID, enclaveID, location, argStr(args, "size"), argStr(args, "tenancy"), instanceID, argInt(args, "storage_gb"))
-			},
+				return shipSurfaces(ctx, d, args, id, versionID, func() (map[string]interface{}, error) {
+					if restore := argStr(args, "restore"); restore != "" {
+						return d.Client.DeployVersionRestoring(ctx, id, versionID, enclaveID, location, argInt(args, "storage_gb"), restore)
+					}
+					return d.Client.DeployVersion(ctx, id, versionID, enclaveID, location, argStr(args, "size"), argStr(args, "tenancy"), instanceID, argInt(args, "storage_gb"))
+				})
+			}),
 		},
 		{
 			Name:        "apps_deployments",
@@ -1008,6 +1017,11 @@ func (s *Server) registerTools() {
 				"function": strProp("the function name"),
 				"data":     map[string]interface{}{"description": "JSON request body: either a JSON object, or a string already containing encoded JSON (it is not re-encoded)"},
 				"attest":   boolProp("also verify the quote against the attestation server"),
+				"headers": map[string]interface{}{
+					"type":                 "object",
+					"additionalProperties": map[string]interface{}{"type": "string"},
+					"description":          "extra request headers for a CONTAINER app's own protocol, e.g. {\"X-Privasys-Reproducibility\":\"strict\"}; ignored for wasm apps. Authorization is always the signed-in user's token and cannot be overridden",
+				},
 			}, "app_id", "function"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
@@ -1053,10 +1067,19 @@ func (s *Server) registerTools() {
 					attURL = "https://as.privasys.org/verify"
 					attTok, _ = auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")
 				}
+				var headers map[string][]string
+				if hm, ok := args["headers"].(map[string]interface{}); ok {
+					headers = map[string][]string{}
+					for k, v := range hm {
+						if s, ok := v.(string); ok && strings.TrimSpace(k) != "" && !strings.EqualFold(k, "Authorization") {
+							headers[k] = []string{s}
+						}
+					}
+				}
 				var buf bytes.Buffer
 				status, err := ratls.Call(ctx, ratls.CallParams{
 					Host: host, ServerName: host, AppName: name, AppType: aType,
-					Function: fn, Path: path, Body: body, AppToken: d.Token,
+					Function: fn, Path: path, Body: body, AppToken: d.Token, Headers: headers,
 					Challenge: ratls.NewNonce(), AttServerURL: attURL, AttServerTok: attTok,
 				}, &buf)
 				if err != nil {
@@ -1067,7 +1090,7 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "apps_builds",
-			Description: "List an app's build jobs.",
+			Description: "List an app's build jobs and their status. A github app's new version is built reproducibly from its signed commit and is not deployable until that build succeeds; check here while it is building.",
 			Schema:      obj(map[string]interface{}{"app_id": strProp("the app id")}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
@@ -1078,14 +1101,16 @@ func (s *Server) registerTools() {
 			},
 		},
 		{
-			Name:        "apps_versions_stage",
-			Description: "Stage the new measurement (enclave MRTD + image digest) for a vault-backed app version on the constellation. Owner-only. Staging grants no key access; it proposes the measurement a later promote authorises.",
+			Name: "apps_versions_stage",
+			Description: "Stage the new measurement (enclave MRTD + image digest) for a vault-backed app version on the constellation. Owner-only. Staging grants no key access; it proposes the measurement a later promote authorises. " +
+				"If the version serves new routes in the clear, nothing is staged and the result lists them: the owner confirms they carry no personal data, then call again with confirm_surfaces:true.",
 			Schema: obj(map[string]interface{}{
-				"app_id":  strProp("the app id"),
-				"version": strProp("version id (default: latest)"),
-				"enclave": strProp("enclave id (default: only compatible)"),
+				"app_id":           strProp("the app id"),
+				"version":          strProp("version id (default: latest)"),
+				"enclave":          strProp("enclave id (default: only compatible)"),
+				"confirm_surfaces": boolProp(confirmSurfacesDesc),
 			}, "app_id"),
-			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
+			Handler: withSurfacesReview(func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
 				if err != nil {
 					return nil, err
@@ -1105,8 +1130,10 @@ func (s *Server) registerTools() {
 					}
 					enc, _ = encs[0]["id"].(string)
 				}
-				return d.Client.StageProfile(ctx, id, vid, enc)
-			},
+				return shipSurfaces(ctx, d, args, id, vid, func() (map[string]interface{}, error) {
+					return d.Client.StageProfile(ctx, id, vid, enc)
+				})
+			}),
 		},
 		{
 			Name:        "apps_versions_pending",
@@ -1264,8 +1291,9 @@ func (s *Server) registerTools() {
 			},
 		},
 		{
-			Name:        "attest",
-			Description: "Verify an app's enclave client-side: connect over RA-TLS, challenge it with a fresh nonce, and verify the quote against the attestation server. Does not trust the control plane.",
+			Name: "attest",
+			Description: "Verify an app's enclave client-side: connect over RA-TLS, challenge it with a fresh nonce, and verify the quote against the attestation server. Does not trust the control plane. " +
+				"'policy.status' says whether the app enforces the policy its owner last approved (see apps_policy_show); a STALE or NOT ENFORCING status means the running app is behind its owner's approval and should be redeployed.",
 			Schema: obj(map[string]interface{}{
 				"app_id":       strProp("the app id (used to resolve the enclave hostname)"),
 				"host":         strProp("enclave gateway FQDN (optional; bypasses control-plane lookup)"),
@@ -1295,12 +1323,30 @@ func (s *Server) registerTools() {
 				if b, _ := args["no_challenge"].(bool); !b {
 					nonce = ratls.NewNonce()
 				}
-				return ratls.Verify(ctx, ratls.Params{
+				res, err := ratls.Verify(ctx, ratls.Params{
 					Host: host, Port: 443, ServerName: host,
 					Challenge: nonce, AttServerURL: "https://as.privasys.org/verify", AttServerTok: attTok,
 					ExpectMRENCLA: argStr(args, "mrenclave"), ExpectMRTD: argStr(args, "mrtd"),
 					AllowedPlatformIDs: argStrSlice(args, "allowed_platform"),
 				})
+				if err != nil {
+					return nil, err
+				}
+				// Which owner-approved policy the app enforces (stamped in its
+				// certificate), against the one the platform holds for it.
+				out := attestResult{Result: res}
+				att, advertised := apppolicy.FromResult(res)
+				var seq uint64
+				var digest string
+				if id := argStr(args, "app_id"); id != "" {
+					seq, digest = apppolicy.Stored(ctx, d.Client, id)
+				}
+				out.Policy = &policyVerdict{
+					Advertised: advertised, Seq: att.Seq, Digest: att.Digest,
+					ApprovedSeq: seq, ApprovedDigest: digest,
+					Status: apppolicy.Status(att, advertised, seq, digest),
+				}
+				return out, nil
 			},
 		},
 		{
@@ -1312,7 +1358,7 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "team_list",
-			Description: "List account members.",
+			Description: "List the members of the signed-in user's account and their roles; team_set_role and team_remove act on them.",
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				return d.Client.ListMembers(ctx)
 			},

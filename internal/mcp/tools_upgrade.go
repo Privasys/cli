@@ -21,16 +21,17 @@ import (
 // bearer, and a key whose policy demands an operation-bound WebAuthn step-up
 // still cannot be promoted without a human at an authenticator.
 func upgradeTools() []tool {
-	return []tool{
+	ts := []tool{
 		{
 			Name:        "apps_upgrade",
 			Description: "Approve a vault-backed app's upgrade so its data unlocks for a new version. TWO-PHASE: call it first WITHOUT confirm to stage the new measurement and get it back for review; show that measurement to the human (they should check the digest against their build), then call again with confirm:true to promote. Promoting is irreversible consent — never set confirm on the first call or without the human's explicit sign-off.",
 			Schema: obj(map[string]interface{}{
-				"app_id":     strProp("the app id"),
-				"version":    strProp("version id (default: latest)"),
-				"enclave":    strProp("target enclave id (default: the only compatible one)"),
-				"pending_id": intProp("pending profile id to promote (default 0)"),
-				"confirm":    boolProp("the human reviewed the staged measurement and approved it; promotes for real"),
+				"app_id":           strProp("the app id"),
+				"version":          strProp("version id (default: latest)"),
+				"enclave":          strProp("target enclave id (default: the only compatible one)"),
+				"pending_id":       intProp("pending profile id to promote (default 0)"),
+				"confirm":          boolProp("the human reviewed the staged measurement and approved it; promotes for real"),
+				"confirm_surfaces": boolProp(confirmSurfacesDesc),
 			}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
@@ -48,20 +49,21 @@ func upgradeTools() []tool {
 			Name:        "apps_update",
 			Description: "Ship, approve and deploy a new version in the safe order. For a vault-backed app this is TWO-PHASE: the first call ships the version (from image/commit_url/channel, or uses the latest), stages the new measurement and returns it for the human to review; call again with confirm:true (and the returned version id) to promote and deploy. Approving BEFORE the cutover means the new version starts with its data already unlocked. An app with no encrypted storage needs no approval and deploys in one call.",
 			Schema: obj(map[string]interface{}{
-				"app_id":     strProp("the app id"),
-				"image":      strProp("container image ref to ship (package apps)"),
-				"commit_url": strProp("GitHub commit URL to ship (github apps)"),
-				"channel":    strProp("cloud-image channel to ship (cloud_image apps)"),
-				"semver":     strProp("semver to assign the new version (default: auto-bump patch)"),
-				"version":    strProp("existing version id to use instead of shipping a new one (pass back the id from phase one)"),
-				"enclave":    strProp("target enclave id (default: the only compatible one)"),
-				"location":   strProp("deploy location code (see apps_locations)"),
-				"size":       strProp("container VM size for this deployment (see apps_sizes)"),
-				"tenancy":    strProp("mutualised (default) or dedicated"),
-				"instance":   strProp("deploy onto a dedicated instance id you own"),
-				"storage_gb": intProp("volume size on FIRST deploy (default 10)"),
-				"pending_id": intProp("pending profile id to promote (default 0)"),
-				"confirm":    boolProp("the human reviewed the staged measurement and approved it; promotes and deploys for real"),
+				"app_id":           strProp("the app id"),
+				"image":            strProp("container image ref to ship (package apps)"),
+				"commit_url":       strProp("GitHub commit URL to ship (github apps)"),
+				"channel":          strProp("cloud-image channel to ship (cloud_image apps)"),
+				"semver":           strProp("semver to assign the new version (default: auto-bump patch)"),
+				"version":          strProp("existing version id to use instead of shipping a new one (pass back the id from phase one)"),
+				"enclave":          strProp("target enclave id (default: the only compatible one)"),
+				"location":         strProp("deploy location code (see apps_locations)"),
+				"size":             strProp("container VM size for this deployment (see apps_sizes)"),
+				"tenancy":          enumProp("mutualised (default) or dedicated", "mutualised", "dedicated"),
+				"instance":         strProp("deploy onto a dedicated instance id you own"),
+				"storage_gb":       intProp("volume size on FIRST deploy (default 10)"),
+				"pending_id":       intProp("pending profile id to promote (default 0)"),
+				"confirm":          boolProp("the human reviewed the staged measurement and approved it; promotes and deploys for real"),
+				"confirm_surfaces": boolProp(confirmSurfacesDesc),
 			}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
@@ -132,6 +134,12 @@ func upgradeTools() []tool {
 			},
 		},
 	}
+	// Both ship a version, so both meet the platform's surfaces check (staging
+	// and deploying): its refusal comes back as routes for the owner to review.
+	for i := range ts {
+		ts[i].Handler = withSurfacesReview(ts[i].Handler)
+	}
+	return ts
 }
 
 // runUpgrade stages the new measurement and, only once the caller asserts the
@@ -141,7 +149,9 @@ func runUpgrade(ctx context.Context, d Deps, args map[string]interface{}, appID,
 	if err != nil {
 		return nil, err
 	}
-	staged, err := d.Client.StageProfile(ctx, appID, vid, enc)
+	staged, err := shipSurfaces(ctx, d, args, appID, vid, func() (map[string]interface{}, error) {
+		return d.Client.StageProfile(ctx, appID, vid, enc)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -227,6 +237,8 @@ func deployResolved(ctx context.Context, d Deps, args map[string]interface{}, ap
 		}
 		location, _ = locs[0]["code"].(string)
 	}
-	return d.Client.DeployVersion(ctx, appID, versionID, enclaveID, location,
-		argStr(args, "size"), argStr(args, "tenancy"), instanceID, argInt(args, "storage_gb"))
+	return shipSurfaces(ctx, d, args, appID, versionID, func() (map[string]interface{}, error) {
+		return d.Client.DeployVersion(ctx, appID, versionID, enclaveID, location,
+			argStr(args, "size"), argStr(args, "tenancy"), instanceID, argInt(args, "storage_gb"))
+	})
 }
