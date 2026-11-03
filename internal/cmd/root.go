@@ -66,6 +66,7 @@ func NewRoot() *cobra.Command {
 		newSecretsCmd(),
 		newVaultCmd(),
 		newEnclavesCmd(),
+		newOAuthClientsCmd(),
 		newRegistryCmd(),
 		newVersionCmd(),
 		newUpdateCmd(),

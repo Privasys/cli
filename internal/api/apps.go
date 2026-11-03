@@ -579,3 +579,48 @@ func (c *Client) GetVersion(ctx context.Context, id, versionID string) (map[stri
 	}
 	return out, nil
 }
+
+// SetMCP records an app's MCP manifest (its privasys.json) explicitly. The
+// control plane reads image labels anonymously and so cannot see the manifest
+// of a PRIVATE image; the owner's client, which holds the pull credential at
+// `registry add` time, reads the label and records it here. Owner-only.
+func (c *Client) SetMCP(ctx context.Context, id string, manifest json.RawMessage) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPatch, "/api/v1/apps/"+id+"/mcp", manifest, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SetFederation registers a client's own upstream registration for a provider.
+// A certificate credential's reply carries the public certificate to upload.
+func (c *Client) SetFederation(ctx context.Context, clientID, provider string, body map[string]interface{}) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPut, "/api/v1/oauth-clients/"+clientID+"/federation/"+provider, body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ConfirmFederationRotation says the rotated certificate has been uploaded.
+func (c *Client) ConfirmFederationRotation(ctx context.Context, clientID, provider string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/oauth-clients/"+clientID+"/federation/"+provider+"/confirm", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RemoveFederation returns a client's users to the platform's registration.
+func (c *Client) RemoveFederation(ctx context.Context, clientID, provider string) error {
+	return c.do(ctx, http.MethodDelete, "/api/v1/oauth-clients/"+clientID+"/federation/"+provider, nil, nil)
+}
+
+// GetFederation lists a client's own registrations, without credential material.
+func (c *Client) GetFederation(ctx context.Context, clientID string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.getJSON(ctx, "/api/v1/oauth-clients/"+clientID+"/federation", &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
