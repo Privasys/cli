@@ -32,8 +32,8 @@ func newFederationCmd() *cobra.Command {
 the same accounts: they are identified by their directory object id, whichever
 registration signed them in.
 
-The preferred credential is a certificate: the platform generates the key in its
-KMS, never shares it, and prints the public certificate for you to upload. Run
+The preferred credential is a certificate: the platform generates the key, keeps
+it, never shares it, and prints the public certificate for you to upload. Run
 'set' again before the certificate expires to rotate: the old key keeps working
 until you run 'confirm-rotation'.`,
 	}
