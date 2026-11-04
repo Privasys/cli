@@ -42,7 +42,7 @@ until you run 'confirm-rotation'.`,
 }
 
 func newFederationSetCmd() *cobra.Command {
-	var tenant, upstreamClient, displayName string
+	var tenant, upstreamClient, displayName, iconURL string
 	var certificate, secretStdin bool
 	cmd := &cobra.Command{
 		Use:   "set <client-id> <provider>",
@@ -74,7 +74,7 @@ func newFederationSetCmd() *cobra.Command {
 				return err
 			}
 			res, err := client.SetFederation(cmd.Context(), args[0], args[1], map[string]interface{}{
-				"client_id": upstreamClient, "tenant": tenant, "display_name": displayName, "credential": credential,
+				"client_id": upstreamClient, "tenant": tenant, "display_name": displayName, "icon_url": iconURL, "credential": credential,
 			})
 			if err != nil {
 				return err
@@ -85,6 +85,7 @@ func newFederationSetCmd() *cobra.Command {
 	cmd.Flags().StringVar(&tenant, "tenant", "", "Tenant id or verified domain, or 'common' for a multi-tenant registration")
 	cmd.Flags().StringVar(&upstreamClient, "client-id", "", "The registration's application (client) id")
 	cmd.Flags().StringVar(&displayName, "display-name", "", "The name on the sign-in button, e.g. your organisation")
+	cmd.Flags().StringVar(&iconURL, "icon-url", "", "An https address of the icon drawn on the sign-in button instead of the provider's (optional)")
 	cmd.Flags().BoolVar(&certificate, "certificate", false, "Generate a certificate credential and print it for upload (preferred)")
 	cmd.Flags().BoolVar(&secretStdin, "client-secret-stdin", false, "Read a client secret from stdin")
 	_ = cmd.MarkFlagRequired("tenant")
