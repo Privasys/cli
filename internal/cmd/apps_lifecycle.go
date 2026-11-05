@@ -2609,10 +2609,11 @@ func functionByRole(schema map[string]interface{}, role string) map[string]inter
 }
 
 // configDescriptor resolves the app's owner-configuration target: the dedicated
-// top-level `configure` section, or a legacy role:config tool. Returns the RPC
-// name and a descriptor map (for display), or ("", nil) when none is declared.
+// top-level `configure` section, or a role:config tool. A section that names no
+// target (only a readiness_path, say) leaves the tool as the target. Returns the
+// RPC name and a descriptor map (for display), or ("", nil) when none is declared.
 func configDescriptor(schema map[string]interface{}) (string, map[string]interface{}) {
-	if cfg, ok := schema["configure"].(map[string]interface{}); ok && len(cfg) > 0 {
+	if cfg, ok := schema["configure"].(map[string]interface{}); ok {
 		name := output.Str(cfg, "name")
 		if name == "" {
 			if f := output.Str(cfg, "function"); f != "" {
@@ -2621,7 +2622,9 @@ func configDescriptor(schema map[string]interface{}) (string, map[string]interfa
 				name = strings.TrimPrefix(ep, "/")
 			}
 		}
-		return name, cfg
+		if name != "" {
+			return name, cfg
+		}
 	}
 	if fn := functionByRole(schema, "config"); fn != nil {
 		return output.Str(fn, "name"), fn
