@@ -31,14 +31,27 @@ by the control plane.`,
 }
 
 func newRegistryAddCmd() *cobra.Command {
-	var token, username, password, enclave string
+	var token, username, password, enclave, imageHost string
+	var skipManifest bool
 	cmd := &cobra.Command{
 		Use:   "add <app> [name]",
 		Short: "Register a private-registry pull credential for an app",
 		Long: `Stores a registry pull credential in the vault for <app>'s private image.
 Provide either --token (a single pull token / PAT) or --username + --password.
 The optional [name] lets an app carry more than one credential (default
-"default").`,
+"default").
+
+The control plane reads image labels anonymously and so cannot see the
+manifest (privasys.json) of a private image. Once the credential is stored,
+this command reads the org.privasys.manifest label off the app's image with
+the same credential and records it, so the app's tools and configure section
+appear as they would for a public image. The credential goes only to the
+registry you approve: you are asked, or name it with --image-host for a script.
+--skip-manifest leaves that step out.
+
+The owner's confirmation of routes served in the clear still does not apply to
+a private image's versions: the control plane records a version's routes when
+it creates the version, from a manifest it can read itself.`,
 		Args: cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
@@ -99,6 +112,20 @@ The optional [name] lets an app carry more than one credential (default
 				output.Success(cmd.ErrOrStderr(), "Registered pull credential %s (%d/%d vaults, threshold %d)",
 					res.Handle, res.Created, res.Total, res.Threshold)
 			}
+			if !skipManifest {
+				user, pass := username, password
+				if pass == "" {
+					pass = token
+				}
+				recorded, merr := recordManifestFromImage(cmd, env, client, appID, user, pass, imageHost)
+				switch {
+				case merr != nil:
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: the credential is stored, but the app manifest could not be read from the image: %v\n"+
+						"  Retry with: privasys apps mcp %s --detect-with-token <token>\n", merr, args[0])
+				case !recorded && !env.Quiet:
+					fmt.Fprintf(cmd.ErrOrStderr(), "note: no %s label to record; the app keeps the manifest it has\n", manifestLabel)
+				}
+			}
 			return output.Emit(env.Format, res, func() output.Table {
 				return output.Table{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
 					{"handle", res.Handle},
@@ -112,6 +139,8 @@ The optional [name] lets an app carry more than one credential (default
 	f.StringVar(&username, "username", "", "registry username (with --password)")
 	f.StringVar(&password, "password", "", "registry password (with --username)")
 	f.StringVar(&enclave, "enclave", "", "target enclave id (defaults to the app's assigned enclave)")
+	f.BoolVar(&skipManifest, "skip-manifest", false, "do not read and record the app manifest from the private image")
+	f.StringVar(&imageHost, "image-host", "", imageHostFlagDesc)
 	return cmd
 }
 
