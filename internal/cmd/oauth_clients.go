@@ -33,9 +33,11 @@ the same accounts: they are identified by their directory object id, whichever
 registration signed them in.
 
 The preferred credential is a certificate: the platform generates the key, keeps
-it, never shares it, and prints the public certificate for you to upload. Run
-'set' again before the certificate expires to rotate: the old key keeps working
-until you run 'confirm-rotation'.`,
+it, never shares it, and prints the public certificate for you to upload. The
+certificate can be generated before the registration exists: run 'set' with
+--certificate alone, upload it, then run 'set' again with --client-id and
+--tenant; the key stays. Run 'set' with --rotate before the certificate expires:
+the old key keeps working until you run 'confirm-rotation'.`,
 	}
 	c.AddCommand(newFederationSetCmd(), newFederationConfirmCmd(), newFederationShowCmd(), newFederationRemoveCmd())
 	return c
@@ -43,7 +45,7 @@ until you run 'confirm-rotation'.`,
 
 func newFederationSetCmd() *cobra.Command {
 	var tenant, upstreamClient, displayName, iconURL string
-	var certificate, secretStdin bool
+	var certificate, secretStdin, rotate bool
 	cmd := &cobra.Command{
 		Use:   "set <client-id> <provider>",
 		Short: "Register or rotate a client's own registration (provider: microsoft)",
@@ -53,6 +55,9 @@ func newFederationSetCmd() *cobra.Command {
 				return errors.New("choose one credential: --certificate or --client-secret-stdin")
 			}
 			credential := map[string]interface{}{"kind": "certificate"}
+			if rotate {
+				credential["rotate"] = true
+			}
 			if secretStdin {
 				// Never on a command line, where it would reach shell history.
 				raw, err := io.ReadAll(io.LimitReader(cmd.InOrStdin(), 8<<10))
@@ -82,14 +87,13 @@ func newFederationSetCmd() *cobra.Command {
 			return emitFederation(cmd, env, res)
 		},
 	}
-	cmd.Flags().StringVar(&tenant, "tenant", "", "Tenant id or verified domain, or 'common' for a multi-tenant registration")
-	cmd.Flags().StringVar(&upstreamClient, "client-id", "", "The registration's application (client) id")
+	cmd.Flags().StringVar(&tenant, "tenant", "", "Tenant id or verified domain, or 'common' for a multi-tenant registration (with --client-id; may follow a prepared certificate)")
+	cmd.Flags().StringVar(&upstreamClient, "client-id", "", "The registration's application (client) id (with --tenant; may follow a prepared certificate)")
 	cmd.Flags().StringVar(&displayName, "display-name", "", "The name on the sign-in button, e.g. your organisation")
 	cmd.Flags().StringVar(&iconURL, "icon-url", "", "An https address of the icon drawn on the sign-in button instead of the provider's (optional)")
 	cmd.Flags().BoolVar(&certificate, "certificate", false, "Generate a certificate credential and print it for upload (preferred)")
 	cmd.Flags().BoolVar(&secretStdin, "client-secret-stdin", false, "Read a client secret from stdin")
-	_ = cmd.MarkFlagRequired("tenant")
-	_ = cmd.MarkFlagRequired("client-id")
+	cmd.Flags().BoolVar(&rotate, "rotate", false, "Generate a new key pair although a certificate exists; the old one signs until confirm-rotation")
 	return cmd
 }
 
@@ -98,7 +102,11 @@ func emitFederation(cmd *cobra.Command, env *Env, res map[string]interface{}) er
 		return output.Emit(env.Format, res, nil)
 	}
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "%s: %s in tenant %s, credential %s\n", output.Str(res, "provider"), output.Str(res, "client_id"), output.Str(res, "tenant"), output.Str(res, "credential_kind"))
+	if res["active"] == false {
+		fmt.Fprintf(out, "%s: certificate prepared; the platform's registration signs people in until --client-id and --tenant are set\n", output.Str(res, "provider"))
+	} else {
+		fmt.Fprintf(out, "%s: %s in tenant %s, credential %s\n", output.Str(res, "provider"), output.Str(res, "client_id"), output.Str(res, "tenant"), output.Str(res, "credential_kind"))
+	}
 	if exp := output.Str(res, "expires_at"); exp != "" {
 		fmt.Fprintf(out, "Certificate expires %s\n", exp)
 	}
