@@ -44,7 +44,7 @@ the old key keeps working until you run 'confirm-rotation'.`,
 }
 
 func newFederationSetCmd() *cobra.Command {
-	var tenant, upstreamClient, displayName, iconURL string
+	var tenant, upstreamClient, displayName, iconURL, mode string
 	var certificate, secretStdin, rotate bool
 	cmd := &cobra.Command{
 		Use:   "set <client-id> <provider>",
@@ -79,7 +79,7 @@ func newFederationSetCmd() *cobra.Command {
 				return err
 			}
 			res, err := client.SetFederation(cmd.Context(), args[0], args[1], map[string]interface{}{
-				"client_id": upstreamClient, "tenant": tenant, "display_name": displayName, "icon_url": iconURL, "credential": credential,
+				"client_id": upstreamClient, "tenant": tenant, "display_name": displayName, "icon_url": iconURL, "mode": mode, "credential": credential,
 			})
 			if err != nil {
 				return err
@@ -94,6 +94,7 @@ func newFederationSetCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&certificate, "certificate", false, "Generate a certificate credential and print it for upload (preferred)")
 	cmd.Flags().BoolVar(&secretStdin, "client-secret-stdin", false, "Read a client secret from stdin")
 	cmd.Flags().BoolVar(&rotate, "rotate", false, "Generate a new key pair although a certificate exists; the old one signs until confirm-rotation")
+	cmd.Flags().StringVar(&mode, "mode", "", "replace (default): your registration stands in for the provider's button for all your users; beside: a button of its own, and the platform's registration stays for everyone else")
 	return cmd
 }
 
@@ -105,7 +106,7 @@ func emitFederation(cmd *cobra.Command, env *Env, res map[string]interface{}) er
 	if res["active"] == false {
 		fmt.Fprintf(out, "%s: certificate prepared; the platform's registration signs people in until --client-id and --tenant are set\n", output.Str(res, "provider"))
 	} else {
-		fmt.Fprintf(out, "%s: %s in tenant %s, credential %s\n", output.Str(res, "provider"), output.Str(res, "client_id"), output.Str(res, "tenant"), output.Str(res, "credential_kind"))
+		fmt.Fprintf(out, "%s: %s in tenant %s, credential %s, mode %s\n", output.Str(res, "provider"), output.Str(res, "client_id"), output.Str(res, "tenant"), output.Str(res, "credential_kind"), output.Str(res, "mode"))
 	}
 	if exp := output.Str(res, "expires_at"); exp != "" {
 		fmt.Fprintf(out, "Certificate expires %s\n", exp)
