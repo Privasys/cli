@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -66,5 +67,68 @@ func TestBackupSets(t *testing.T) {
 		if calls[i] != want[i] {
 			t.Errorf("call %d = %q, want %q", i, calls[i], want[i])
 		}
+	}
+}
+
+// A policy change sends only what changes: the platform keeps the rest.
+func TestSetBackupPolicySendsOnlyChanges(t *testing.T) {
+	cases := []struct {
+		interval, retention, redundancy string
+		want                            map[string]string
+	}{
+		{"daily", "", "", map[string]string{"interval": "daily"}},
+		{"", "", "zones", map[string]string{"redundancy": "zones"}},
+		{"hourly", "minimal", "region", map[string]string{"interval": "hourly", "retention": "minimal", "redundancy": "region"}},
+	}
+	for _, tc := range cases {
+		c, done := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPut || r.URL.Path != "/api/v1/apps/app-1/backups/policy" {
+				t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			}
+			var body map[string]string
+			json.NewDecoder(r.Body).Decode(&body)
+			if len(body) != len(tc.want) {
+				t.Errorf("body %v, want %v", body, tc.want)
+			}
+			for k, v := range tc.want {
+				if body[k] != v {
+					t.Errorf("%s = %q, want %q", k, body[k], v)
+				}
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{"enabled": true})
+		})
+		if _, err := c.SetBackupPolicy(context.Background(), "app-1", tc.interval, tc.retention, tc.redundancy); err != nil {
+			t.Error(err)
+		}
+		done()
+	}
+}
+
+// A live app's access goes through the app; kept backups through /backups.
+func TestBackupAccessPaths(t *testing.T) {
+	var calls []string
+	c, done := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		json.NewEncoder(w).Encode(map[string]interface{}{"exists": false})
+	})
+	defer done()
+	ctx := context.Background()
+	for _, live := range []bool{true, false} {
+		if _, err := c.GetBackupAccess(ctx, "app-1", live); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.CreateBackupAccess(ctx, "app-1", live); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.RevokeBackupAccess(ctx, "app-1", live); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []string{
+		"GET /api/v1/apps/app-1/backups/access", "POST /api/v1/apps/app-1/backups/access", "DELETE /api/v1/apps/app-1/backups/access",
+		"GET /api/v1/backups/app-1/access", "POST /api/v1/backups/app-1/access", "DELETE /api/v1/backups/app-1/access",
+	}
+	if strings.Join(calls, "|") != strings.Join(want, "|") {
+		t.Errorf("calls = %v", calls)
 	}
 }

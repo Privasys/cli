@@ -26,20 +26,28 @@ immutable object storage. Restore with 'apps deploy --restore <id|latest>'.`,
 		newAppsBackupSimpleCmd("list", "List the app's restore points", (*api.Client).ListBackups),
 		newAppsBackupSimpleCmd("status", "Show the app's latest backup job", (*api.Client).BackupStatus),
 		newAppsBackupPolicyCmd(),
+		newBackupAccessCmd(true),
 	)
 	return c
 }
 
 func newAppsBackupPolicyCmd() *cobra.Command {
-	var interval, retention string
+	var interval, retention, redundancy string
 	cmd := &cobra.Command{
-		Use:   "policy <app> [--interval hourly|every-6h|daily|off] [--retention standard|minimal]",
-		Short: "Show or set the app's backup schedule",
-		Long: `Without flags, shows the app's schedule. With --interval, sets it: the enclave
-running the app takes the backups itself, through reboots, and a change applies
-straight away. Retention: standard (the latest 3, plus 48 hourly, 35 daily,
-13 weekly and 13 monthly; 'proportionate' is its earlier name, still accepted),
-or minimal (3 latest, 7 daily).`,
+		Use:   "policy <app> [--interval hourly|every-6h|daily|off] [--retention standard|minimal] [--redundancy region|zones]",
+		Short: "Show or set the app's backup schedule and where its backups are kept",
+		Long: `Without flags, shows the app's policy. With any flag, changes that part and keeps
+the rest: the enclave running the app takes the backups itself, through
+reboots, and a change applies straight away.
+
+Retention: standard (the latest 3, plus 48 hourly, 35 daily, 13 weekly and 13
+monthly; 'proportionate' is its earlier name, still accepted), or minimal (3
+latest, 7 daily).
+
+Redundancy: region (one region) or zones (three zones of one region), billed at
+different rates (the portal's Backups tab shows them). Changing it for an app
+that already has backups moves them, with their restore points, which needs the
+app running; the response shows the move.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
@@ -56,13 +64,10 @@ or minimal (3 latest, 7 daily).`,
 				return err
 			}
 			var v map[string]interface{}
-			if interval == "" {
-				if retention != "" {
-					return fmt.Errorf("--retention goes with --interval")
-				}
+			if interval == "" && retention == "" && redundancy == "" {
 				v, err = client.GetBackupPolicy(ctx, appID)
 			} else {
-				v, err = client.SetBackupPolicy(ctx, appID, interval, retention)
+				v, err = client.SetBackupPolicy(ctx, appID, interval, retention, redundancy)
 			}
 			if err != nil {
 				return err
@@ -70,13 +75,18 @@ or minimal (3 latest, 7 daily).`,
 			if w, ok := v["warning"].(string); ok && w != "" && !env.Quiet {
 				fmt.Fprintln(cmd.ErrOrStderr(), "Warning:", w)
 			}
+			if m, ok := v["move"].(map[string]interface{}); ok && !env.Quiet {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Moving the backups to %s; the policy shows %s until the move succeeds.\n",
+					output.Str(m, "to"), output.Str(v, "redundancy"))
+			}
 			return output.Emit(env.Format, v, func() output.Table {
-				return kvTable(v, []string{"enabled", "interval", "retention", "applied", "updated_at"})
+				return kvTable(v, []string{"enabled", "interval", "retention", "redundancy", "applied", "updated_at"})
 			})
 		},
 	}
 	cmd.Flags().StringVar(&interval, "interval", "", "hourly, every-6h, daily, or off")
 	cmd.Flags().StringVar(&retention, "retention", "", "standard (default) or minimal")
+	cmd.Flags().StringVar(&redundancy, "redundancy", "", "region (default) or zones; moves existing backups")
 	return cmd
 }
 

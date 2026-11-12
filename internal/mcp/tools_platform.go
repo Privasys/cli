@@ -26,8 +26,9 @@ import (
 //
 // Also CLI-only: `apps key create` / `rotate` / `backup-password` (a BYOK app's
 // key is the owner's: they create and keep it, and the backup password is a
-// secret), and `apps policy approve` (the owner approves the document in their
-// wallet; apps_policy_show reads it).
+// secret), `apps backup access` / `backups access` (a read-only key to the
+// backups, its secret shown once), and `apps policy approve` (the owner
+// approves the document in their wallet; apps_policy_show reads it).
 //
 // `auth list` / `auth logout` are session management: logging out would strand
 // the agent mid-task.
@@ -160,24 +161,26 @@ func platformTools() []tool {
 		},
 		{
 			Name: "apps_backup_policy",
-			Description: "Show a BYOK app's backup schedule, or set it with interval (hourly, every-6h, daily, or off) and retention " +
-				"(standard: the latest 3 + 48 hourly + 35 daily + 13 weekly + 13 monthly, \"proportionate\" being its earlier name; minimal: 3 latest + 7 daily). " +
-				"Backup storage is billed per stored GB-hour, so confirm a schedule change with the human.",
+			Description: "Show a BYOK app's backup policy, or change any part of it: interval (hourly, every-6h, daily, or off), retention " +
+				"(standard: the latest 3 + 48 hourly + 35 daily + 13 weekly + 13 monthly, \"proportionate\" being its earlier name; minimal: 3 latest + 7 daily), " +
+				"and redundancy (region, or zones: three zones, at a higher rate; changing it moves existing backups, which needs the app running, and the reply carries the move). " +
+				"Backup storage is billed per stored GB-hour, so confirm a change with the human.",
 			Schema: obj(map[string]interface{}{
-				"app_id":    strProp("the app id"),
-				"interval":  strProp("hourly, every-6h, daily, or off (omit to just show the policy)"),
-				"retention": enumProp("standard (default) or minimal", "standard", "minimal"),
+				"app_id":     strProp("the app id"),
+				"interval":   strProp("hourly, every-6h, daily, or off (omit every field but app_id to just show the policy)"),
+				"retention":  enumProp("standard (default) or minimal", "standard", "minimal"),
+				"redundancy": enumProp("region (default) or zones; moves existing backups", "region", "zones"),
 			}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
 				if err != nil {
 					return nil, err
 				}
-				interval := argStr(args, "interval")
-				if interval == "" {
+				interval, retention, redundancy := argStr(args, "interval"), argStr(args, "retention"), argStr(args, "redundancy")
+				if interval == "" && retention == "" && redundancy == "" {
 					return d.Client.GetBackupPolicy(ctx, id)
 				}
-				return d.Client.SetBackupPolicy(ctx, id, interval, argStr(args, "retention"))
+				return d.Client.SetBackupPolicy(ctx, id, interval, retention, redundancy)
 			},
 		},
 		// An app's backups outlive it, as its volume does, and keep billing.

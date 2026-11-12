@@ -30,6 +30,7 @@ To back a live app up or change its schedule, use 'apps backup'.`,
 		newBackupsListCmd(),
 		newBackupsShowCmd(),
 		newBackupsDeleteCmd(),
+		newBackupAccessCmd(false),
 	)
 	return c
 }
