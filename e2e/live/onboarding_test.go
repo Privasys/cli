@@ -7,7 +7,7 @@
 //
 // Targets (see .operations/infrastructure.md):
 //   - Auth:  the prod IdP https://privasys.id (device grant + FIDO2).
-//   - Apps:  the dev management-service api-test.developer.privasys.org, which
+//   - Apps:  the dev management-service api.developer.test.privasys.org, which
 //     manages the dev enclaves (SGX Paris :8446 for wasm, m1-dev for
 //     containers) and validates privasys-platform tokens from the IdP.
 package live

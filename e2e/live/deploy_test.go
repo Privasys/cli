@@ -28,7 +28,7 @@ import (
 // Env:
 //
 //	PRIVASYS_E2E=1
-//	PRIVASYS_E2E_ENDPOINT   management-service base URL (e.g. https://api-test.developer.privasys.org)
+//	PRIVASYS_E2E_ENDPOINT   management-service base URL (e.g. https://api.developer.test.privasys.org)
 //	PRIVASYS_E2E_IMAGE      optional container image (default: container-app-example:v2.0.2)
 //	PRIVASYS_E2E_ENCLAVE    optional enclave id (default: the only compatible one)
 func TestLiveDeploy(t *testing.T) {

@@ -23,7 +23,7 @@ import (
 // . Env:
 //
 //	PRIVASYS_E2E=1
-//	PRIVASYS_E2E_ENDPOINT   management-service base URL (dev: https://api-test.developer.privasys.org)
+//	PRIVASYS_E2E_ENDPOINT   management-service base URL (dev: https://api.developer.test.privasys.org)
 //	PRIVASYS_E2E_IMAGE      optional container image
 //	PRIVASYS_E2E_ENCLAVE    optional enclave id (default: the only compatible one)
 func TestLiveAppExportKey(t *testing.T) {
