@@ -125,6 +125,19 @@ func TestNormalisePolicyDomains(t *testing.T) {
 	}
 }
 
+func TestPolicySummaryNamesApps(t *testing.T) {
+	names := map[string]string{"aaaa1111bbbb2222": "Drive", "cccc3333dddd4444": "Confidential AI"}
+	doc := map[string]any{
+		"allowed_callers": json.RawMessage(`{"entries":[{"app_id":"aaaa1111bbbb2222"}]}`),
+		"dependencies":    json.RawMessage(`{"entries":[{"app_id":"cccc3333dddd4444"},{"app_id":"eeee5555ffff6666"}]}`),
+	}
+	got := policySummaryNamed(doc, func(id string) string { return names[id] })
+	want := "Callers: 1 app (Drive), on any machine\nDepends on: 2 apps (Confidential AI, eeee5555…)"
+	if got != want {
+		t.Fatalf("summary:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestPolicySummaryNamesDomains(t *testing.T) {
 	s := policySummary(map[string]any{"domains": []string{"shop.example.com"}})
 	if !strings.Contains(s, "shop.example.com") {

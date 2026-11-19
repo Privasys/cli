@@ -384,8 +384,9 @@ func (p *builtPolicy) approvalContext(ctx context.Context, client *api.Client, t
 		"version":  fmt.Sprintf("policy seq %d", p.seq),
 		"key_type": "app policy",
 		"app_id":   p.appID,
-		// What the document does, in words, next to the digest it binds.
-		"summary": policySummary(p.doc),
+		// What the document does, in words, next to the digest it binds,
+		// with the apps it lists named as the control plane names them.
+		"summary": policySummaryNamed(p.doc, func(id string) string { return appFriendlyName(ctx, client, id) }),
 	}
 }
 
@@ -546,6 +547,13 @@ func normalisePolicyDomains(in []string) ([]string, error) {
 // The digest the wallet binds stays the truth; this makes a widened caller
 // list visible before the tap instead of hiding it behind a hash.
 func policySummary(doc map[string]any) string {
+	return policySummaryNamed(doc, nil)
+}
+
+// policySummaryNamed is policySummary with the apps it lists named: nameOf
+// answers an app id with its name, or "" when it has none, and an app without
+// a name keeps its short id. A nil nameOf names nothing.
+func policySummaryNamed(doc map[string]any, nameOf func(appID string) string) string {
 	var lines []string
 	type entries struct {
 		Entries []struct {
@@ -576,6 +584,26 @@ func policySummary(doc map[string]any) string {
 		}
 		return strings.Join(out, ", ")
 	}
+	// Apps by name, where one is known. Names are longer than short ids and
+	// mean more, so up to six are listed rather than three.
+	appList := func(ids []string) string {
+		if nameOf == nil {
+			return short(ids)
+		}
+		var out []string
+		for i, id := range ids {
+			if i == 6 {
+				out = append(out, "…")
+				break
+			}
+			name := strings.TrimSpace(nameOf(id))
+			if name == "" {
+				name = short([]string{id})
+			}
+			out = append(out, name)
+		}
+		return strings.Join(out, ", ")
+	}
 	count := func(n int, one, many string) string {
 		if n == 1 {
 			return "1 " + one
@@ -596,11 +624,11 @@ func policySummary(doc map[string]any) string {
 		var who string
 		switch {
 		case anyApp && len(apps) > 0:
-			who = fmt.Sprintf("any attested app (and %s named: %s)", count(len(apps), "app", "apps"), short(apps))
+			who = fmt.Sprintf("any attested app (and %s named: %s)", count(len(apps), "app", "apps"), appList(apps))
 		case anyApp:
 			who = "any attested app"
 		case len(apps) > 0:
-			who = fmt.Sprintf("%s (%s)", count(len(apps), "app", "apps"), short(apps))
+			who = fmt.Sprintf("%s (%s)", count(len(apps), "app", "apps"), appList(apps))
 		default:
 			who = "no app"
 		}
@@ -617,7 +645,7 @@ func policySummary(doc map[string]any) string {
 		for _, e := range d.Entries {
 			apps = append(apps, e.AppID)
 		}
-		lines = append(lines, fmt.Sprintf("Depends on: %s (%s)", count(len(apps), "app", "apps"), short(apps)))
+		lines = append(lines, fmt.Sprintf("Depends on: %s (%s)", count(len(apps), "app", "apps"), appList(apps)))
 	}
 	if owners, ok := doc["owners"].([]string); ok && len(owners) > 0 {
 		lines = append(lines, "Owners: "+count(len(owners), "subject", "subjects")+" ("+short(owners)+")")
