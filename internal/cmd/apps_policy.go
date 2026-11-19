@@ -14,15 +14,20 @@ package cmd
 // back authorises that one operation.
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/Privasys/cli/internal/api"
 	"github.com/Privasys/cli/internal/auth"
+	"github.com/Privasys/cli/internal/output"
 	"github.com/Privasys/cli/internal/secrets"
 )
 
@@ -91,9 +96,13 @@ func newAppsPolicySignCmd() *cobra.Command {
 		clearDoms bool
 		fresh     bool
 		printOnly bool
+		fromFile  string
+		label     string
+		dryRun    bool
+		oneByOne  bool
 	)
 	cmd := &cobra.Command{
-		Use:     "approve <app-id>",
+		Use:     "approve <app-id> [<app-id>...]",
 		Aliases: []string{"sign"},
 		Short:   "Approve this app's policy and upload it",
 		Long: `Builds the policy document, asks you to approve it on your device, and uploads
@@ -116,9 +125,30 @@ checks that the approval binds this exact document.
   --print            print the document and its digest without approving
 
 The document starts from the one the platform holds for the app, so approving
-one change keeps the rest: the flags you pass replace their own field only.`,
-		Args: cobra.ExactArgs(1),
+one change keeps the rest: the flags you pass replace their own field only.
+
+Several apps take one approval. Name them to apply the same flags to each, or
+give each app its own changes with --from-file:
+
+  {"apps":[{"app":"drive","allowed_callers":{"entries":[...]}},
+           {"app":"mail-connector","dependencies":{"entries":[...]},"seq":12}]}
+
+An entry takes app, seq, dependencies, allowed_callers, owners, approver,
+domains, clear_domains and fresh.
+
+  --from-file        the apps to approve and each one's changes
+  --label            the description on the approval card
+  --dry-run          print the exact operations without asking for an approval
+  --one-by-one       one approval per app`,
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			change := policyChange{
+				Seq: seq, Dependencies: deps, AllowedCallers: callers, Owners: owners, Approver: approver,
+				Domains: domains, ClearDomains: clearDoms, Fresh: fresh,
+			}
+			if err := change.check(); err != nil {
+				return err
+			}
 			env, err := loadEnv(cmd)
 			if err != nil {
 				return err
@@ -128,70 +158,28 @@ one change keeps the rest: the flags you pass replace their own field only.`,
 				return err
 			}
 			ctx := cmd.Context()
+			if fromFile != "" || len(args) > 1 || dryRun || oneByOne {
+				if printOnly {
+					return fmt.Errorf("--print shows one app's document; use --dry-run for several")
+				}
+				changes, err := policyChanges(args, fromFile, change, cmd.Flags().Changed("seq"))
+				if err != nil {
+					return err
+				}
+				return runPolicyApprovals(cmd, env, client, changes, label, dryRun, oneByOne)
+			}
+			if len(args) != 1 {
+				return fmt.Errorf("name an app, or give --from-file")
+			}
 			appID, err := resolveAppID(ctx, client, args[0])
 			if err != nil {
 				return err
 			}
-
-			if clearDoms && len(domains) > 0 {
-				return fmt.Errorf("--domains and --clear-domains cannot be used together")
-			}
-			cur, _ := client.GetAppPolicy(ctx, appID)
-			if seq == 0 {
-				seq = 1
-				if cur != nil {
-					if stored, ok := cur["seq"].(float64); ok {
-						seq = uint64(stored) + 1
-					}
-				}
-			}
-
-			doc := map[string]any{}
-			if !fresh && cur != nil {
-				doc = mergeStoredPolicy(cur["document"])
-			}
-			doc["v"] = 1
-			doc["app_id"] = strings.ReplaceAll(appID, "-", "")
-			doc["seq"] = seq
-			if approver != "" {
-				doc["approver"] = approver
-			}
-			if len(owners) > 0 {
-				doc["owners"] = owners
-			}
-			if deps != "" {
-				raw, err := parseJSONDataArg(deps)
-				if err != nil {
-					return fmt.Errorf("--dependencies: %w", err)
-				}
-				doc["dependencies"] = json.RawMessage(raw)
-			}
-			if callers != "" {
-				raw, err := parseJSONDataArg(callers)
-				if err != nil {
-					return fmt.Errorf("--allowed-callers: %w", err)
-				}
-				doc["allowed_callers"] = json.RawMessage(raw)
-			}
-			if len(domains) > 0 {
-				names, err := normalisePolicyDomains(domains)
-				if err != nil {
-					return fmt.Errorf("--domains: %w", err)
-				}
-				doc["domains"] = names
-			}
-			if clearDoms {
-				doc["domains"] = []string{}
-			}
-
-			// Compact bytes: the approval binds their digest, and anything
-			// that re-encoded the JSON on the way would break it.
-			docBytes, err := json.Marshal(doc)
+			policy, err := buildPolicy(ctx, client, appID, change)
 			if err != nil {
 				return err
 			}
-			sum := sha256.Sum256(docBytes)
-			digest := hex.EncodeToString(sum[:])
+			docBytes, digest := policy.bytes, policy.digest
 			if printOnly {
 				fmt.Fprintln(cmd.OutOrStdout(), string(docBytes))
 				fmt.Fprintln(cmd.ErrOrStderr(), "digest: "+digest)
@@ -202,41 +190,18 @@ one change keeps the rest: the flags you pass replace their own field only.`,
 			if err != nil {
 				return err
 			}
-			// The handle namespace is disjoint from vault key handles, so a
-			// policy approval can never stand for a vault operation.
-			handle := "app:" + strings.ToLower(strings.ReplaceAll(appID, "-", "")) + ":policy"
-			// What the wallet shows the approver: the app's friendly name, not
-			// the id or whatever was typed. Display only, outside the binding.
-			name := appFriendlyName(ctx, client, appID)
-			if name == "" {
-				name = args[0]
-			}
-			actx := map[string]string{
-				"app_name": name,
-				"version":  fmt.Sprintf("policy seq %d", seq),
-				"key_type": "app policy",
-				"app_id":   appID,
-				// What the document does, in words, next to the digest it binds.
-				"summary": policySummary(doc),
-			}
+			actx := policy.approvalContext(ctx, client, args[0])
 			token, err := secrets.RequestStepUpViaBrowser(ctx, env.Cfg.Issuer, bearer,
-				"app-policy", handle, digest, uint32(seq), actx, secrets.OpenBrowser, cmd.ErrOrStderr())
+				"app-policy", policy.handle(), digest, uint32(policy.seq), actx, secrets.OpenBrowser, cmd.ErrOrStderr())
 			if err != nil {
 				return fmt.Errorf("approval: %w", err)
 			}
 
-			envelope, err := json.Marshal(map[string]any{
-				"document":       json.RawMessage(docBytes),
-				"approval_token": token,
-			})
+			out, err := policy.upload(ctx, client, token)
 			if err != nil {
 				return err
 			}
-			out, err := client.SetAppPolicy(ctx, appID, envelope)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), fmt.Sprintf("policy approved and uploaded (seq %d)", seq))
+			fmt.Fprintln(cmd.OutOrStdout(), fmt.Sprintf("policy approved and uploaded (seq %d)", policy.seq))
 			if delivered, ok := out["delivered"].(bool); ok && !delivered {
 				fmt.Fprintln(cmd.OutOrStdout(), "not delivered to a running app yet; it applies on the next deploy")
 			}
@@ -255,7 +220,257 @@ one change keeps the rest: the flags you pass replace their own field only.`,
 	cmd.Flags().BoolVar(&clearDoms, "clear-domains", false, "stop serving any hostname directly")
 	cmd.Flags().BoolVar(&fresh, "fresh", false, "start from an empty document instead of the stored one")
 	cmd.Flags().BoolVar(&printOnly, "print", false, "print the document and its digest without approving")
+	cmd.Flags().StringVar(&fromFile, "from-file", "", "JSON file naming the apps to approve and each one's changes")
+	cmd.Flags().StringVar(&label, "label", "", "the description on the approval card, for several apps")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the exact operations without asking for an approval")
+	cmd.Flags().BoolVar(&oneByOne, "one-by-one", false, "one approval per app")
 	return cmd
+}
+
+// policyChange is what an approval changes in one app's policy document.
+type policyChange struct {
+	App            string          `json:"app"`
+	Seq            uint64          `json:"seq"`
+	Dependencies   string          `json:"-"`
+	AllowedCallers string          `json:"-"`
+	RawDeps        json.RawMessage `json:"dependencies"`
+	RawCallers     json.RawMessage `json:"allowed_callers"`
+	Owners         []string        `json:"owners"`
+	Approver       string          `json:"approver"`
+	Domains        []string        `json:"domains"`
+	ClearDomains   bool            `json:"clear_domains"`
+	Fresh          bool            `json:"fresh"`
+}
+
+func (c policyChange) check() error {
+	if c.ClearDomains && len(c.Domains) > 0 {
+		return fmt.Errorf("--domains and --clear-domains cannot be used together")
+	}
+	return nil
+}
+
+// policyChanges lists the apps to approve: each from --from-file with its own
+// changes, or each named app with the same flags.
+func policyChanges(args []string, fromFile string, flags policyChange, seqSet bool) ([]policyChange, error) {
+	if fromFile == "" {
+		if len(args) == 0 {
+			return nil, fmt.Errorf("name the apps, or give --from-file")
+		}
+		if seqSet && len(args) > 1 {
+			return nil, fmt.Errorf("--seq applies to one app; give each its own in --from-file")
+		}
+		out := make([]policyChange, len(args))
+		for i, app := range args {
+			out[i] = flags
+			out[i].App = app
+		}
+		return out, nil
+	}
+	if len(args) > 0 {
+		return nil, fmt.Errorf("--from-file names the apps; give no app on the command line")
+	}
+	raw, err := os.ReadFile(fromFile)
+	if err != nil {
+		return nil, err
+	}
+	var plan struct {
+		Apps []policyChange `json:"apps"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&plan); err != nil {
+		return nil, fmt.Errorf("%s: %w", fromFile, err)
+	}
+	if len(plan.Apps) == 0 {
+		return nil, fmt.Errorf("%s names no apps", fromFile)
+	}
+	for i := range plan.Apps {
+		c := &plan.Apps[i]
+		if c.App == "" {
+			return nil, fmt.Errorf("%s: entry %d names no app", fromFile, i)
+		}
+		if err := c.check(); err != nil {
+			return nil, fmt.Errorf("%s: %s: %w", fromFile, c.App, err)
+		}
+		c.Dependencies, c.AllowedCallers = string(c.RawDeps), string(c.RawCallers)
+	}
+	return plan.Apps, nil
+}
+
+// builtPolicy is a policy document ready for approval.
+type builtPolicy struct {
+	appID  string
+	seq    uint64
+	doc    map[string]any
+	bytes  []byte
+	digest string
+}
+
+// buildPolicy starts from the document the platform holds, so approving one
+// change keeps the rest.
+func buildPolicy(ctx context.Context, client *api.Client, appID string, c policyChange) (*builtPolicy, error) {
+	cur, _ := client.GetAppPolicy(ctx, appID)
+	seq := c.Seq
+	if seq == 0 {
+		seq = 1
+		if cur != nil {
+			if stored, ok := cur["seq"].(float64); ok {
+				seq = uint64(stored) + 1
+			}
+		}
+	}
+	doc := map[string]any{}
+	if !c.Fresh && cur != nil {
+		doc = mergeStoredPolicy(cur["document"])
+	}
+	doc["v"] = 1
+	doc["app_id"] = strings.ReplaceAll(appID, "-", "")
+	doc["seq"] = seq
+	if c.Approver != "" {
+		doc["approver"] = c.Approver
+	}
+	if len(c.Owners) > 0 {
+		doc["owners"] = c.Owners
+	}
+	if c.Dependencies != "" {
+		raw, err := parseJSONDataArg(c.Dependencies)
+		if err != nil {
+			return nil, fmt.Errorf("--dependencies: %w", err)
+		}
+		doc["dependencies"] = json.RawMessage(raw)
+	}
+	if c.AllowedCallers != "" {
+		raw, err := parseJSONDataArg(c.AllowedCallers)
+		if err != nil {
+			return nil, fmt.Errorf("--allowed-callers: %w", err)
+		}
+		doc["allowed_callers"] = json.RawMessage(raw)
+	}
+	if len(c.Domains) > 0 {
+		names, err := normalisePolicyDomains(c.Domains)
+		if err != nil {
+			return nil, fmt.Errorf("--domains: %w", err)
+		}
+		doc["domains"] = names
+	}
+	if c.ClearDomains {
+		doc["domains"] = []string{}
+	}
+	// Compact bytes: the approval binds their digest, and anything that
+	// re-encoded the JSON on the way would break it.
+	docBytes, err := json.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(docBytes)
+	return &builtPolicy{appID: appID, seq: seq, doc: doc, bytes: docBytes, digest: hex.EncodeToString(sum[:])}, nil
+}
+
+// handle is what the approval binds. The namespace is disjoint from vault key
+// handles, so a policy approval can never stand for a vault operation.
+func (p *builtPolicy) handle() string {
+	return "app:" + strings.ToLower(strings.ReplaceAll(p.appID, "-", "")) + ":policy"
+}
+
+// approvalContext is what the wallet shows the approver: the app's friendly
+// name, not the id or whatever was typed. Display only, outside the binding.
+func (p *builtPolicy) approvalContext(ctx context.Context, client *api.Client, typed string) map[string]string {
+	name := appFriendlyName(ctx, client, p.appID)
+	if name == "" {
+		name = typed
+	}
+	return map[string]string{
+		"app_name": name,
+		"version":  fmt.Sprintf("policy seq %d", p.seq),
+		"key_type": "app policy",
+		"app_id":   p.appID,
+		// What the document does, in words, next to the digest it binds.
+		"summary": policySummary(p.doc),
+	}
+}
+
+// upload hands the platform the document with its approval.
+func (p *builtPolicy) upload(ctx context.Context, client *api.Client, token string) (map[string]interface{}, error) {
+	envelope, err := json.Marshal(map[string]any{
+		"document":       json.RawMessage(p.bytes),
+		"approval_token": token,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return client.SetAppPolicy(ctx, p.appID, envelope)
+}
+
+// runPolicyApprovals approves several apps' policies under one approval.
+func runPolicyApprovals(cmd *cobra.Command, env *Env, client *api.Client, changes []policyChange, label string, dryRun, oneByOne bool) error {
+	ctx := cmd.Context()
+	targets := make([]approvalTarget, 0, len(changes))
+	seen := map[string]bool{}
+	for _, change := range changes {
+		change := change
+		appID, err := resolveAppID(ctx, client, change.App)
+		if err != nil {
+			return err
+		}
+		if seen[appID] {
+			return fmt.Errorf("%s is named twice", change.App)
+		}
+		seen[appID] = true
+		targets = append(targets, approvalTarget{Name: change.App, Prepare: func(ctx context.Context) ([]*approvalOp, error) {
+			return preparePolicy(ctx, client, appID, change)
+		}})
+	}
+	if label == "" {
+		label = fmt.Sprintf("Policies of %d apps", len(targets))
+		if len(targets) == 1 {
+			label = "Policy of " + changes[0].App
+		}
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "Platform: %s\n", env.Cfg.Endpoint)
+	run := &approvalRun{
+		Label: label, Issuer: env.Cfg.Issuer, Targets: targets, Parallel: 4, DryRun: dryRun, OneByOne: oneByOne,
+		Bearer: func(ctx context.Context) (string, error) { return auth.AccessToken(ctx, env.Cfg.Issuer) },
+		Refresh: func(ctx context.Context) error {
+			tok, err := auth.AccessToken(ctx, env.Cfg.Issuer)
+			if err == nil {
+				client.Token = tok
+			}
+			return err
+		},
+		Ask:  func(prompt string) (bool, error) { return confirm(cmd, env, prompt) },
+		Open: secrets.OpenBrowser,
+		Out:  cmd.ErrOrStderr(),
+	}
+	return run.Run(ctx)
+}
+
+func preparePolicy(ctx context.Context, client *api.Client, appID string, change policyChange) ([]*approvalOp, error) {
+	policy, err := buildPolicy(ctx, client, appID, change)
+	if err != nil {
+		return nil, err
+	}
+	display := policy.approvalContext(ctx, client, change.App)
+	return []*approvalOp{{
+		BatchEntry: secrets.BatchEntry{
+			Operation: "app-policy", Handle: policy.handle(), MeasurementDigest: policy.digest,
+			PolicyVersion: policy.seq, Context: display,
+		},
+		Name: display["app_name"],
+		Kind: "app policy",
+		Apply: func(ctx context.Context, token string) (string, error) {
+			out, err := policy.upload(ctx, client, token)
+			if err != nil {
+				return "", err
+			}
+			if msg := output.Str(out, "delivery_error"); msg != "" {
+				return "", fmt.Errorf("uploaded, but delivery failed: %s", msg)
+			}
+			if delivered, ok := out["delivered"].(bool); ok && !delivered {
+				return fmt.Sprintf("seq %d, applies on the next deploy", policy.seq), nil
+			}
+			return fmt.Sprintf("seq %d", policy.seq), nil
+		},
+	}}, nil
 }
 
 // mergeStoredPolicy returns the fields of the stored document that carry

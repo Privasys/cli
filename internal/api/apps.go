@@ -286,16 +286,34 @@ func (c *Client) StageProfile(ctx context.Context, id, versionID, enclaveID stri
 // enclave as it runs now.
 func (c *Client) StageProfileForRelease(ctx context.Context, id, versionID, enclaveID, release string) (map[string]interface{}, error) {
 	body := map[string]string{"enclave_id": enclaveID}
+	setOSRelease(body, release)
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost,
+		"/api/v1/apps/"+id+"/versions/"+versionID+"/stage",
+		body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// setOSRelease names an OS release in a stage request: a tag, or its https URL.
+func setOSRelease(body map[string]string, release string) {
 	switch {
 	case strings.HasPrefix(release, "https://"):
 		body["os_release_url"] = release
 	case release != "":
 		body["os_release_tag"] = release
 	}
+}
+
+// PromoteRegistryCred promotes a staged profile on the app's registry
+// credential alone, with that credential's own step-up token as the bearer. The
+// platform answers 200 only with a quorum of vaults.
+func (c *Client) PromoteRegistryCred(ctx context.Context, id, versionID string, pendingID uint32) (map[string]interface{}, error) {
 	var out map[string]interface{}
 	if err := c.do(ctx, http.MethodPost,
-		"/api/v1/apps/"+id+"/versions/"+versionID+"/stage",
-		body, &out); err != nil {
+		"/api/v1/apps/"+id+"/versions/"+versionID+"/promote",
+		map[string]uint32{"registry_cred_pending_id": pendingID}, &out); err != nil {
 		return nil, err
 	}
 	return out, nil

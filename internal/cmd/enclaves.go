@@ -22,7 +22,7 @@ func newEnclavesCmd() *cobra.Command {
 platform-operator view over GET /api/v1/admin/enclaves and requires the
 privasys-platform:manager role; without it the API returns not-authorized.`,
 	}
-	c.AddCommand(newEnclavesListCmd(), newEnclavesGetCmd())
+	c.AddCommand(newEnclavesListCmd(), newEnclavesGetCmd(), newEnclavesPromoteReleaseCmd())
 	return c
 }
 
