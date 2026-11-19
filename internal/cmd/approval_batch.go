@@ -31,6 +31,18 @@ type approvalOp struct {
 type approvalTarget struct {
 	Name    string
 	Prepare func(ctx context.Context) ([]*approvalOp, error)
+	// Preview lists the operations without changing anything, for a target
+	// whose Prepare does: a dry run must not leave staged profiles on real keys.
+	Preview func(ctx context.Context) ([]approvalPreview, error)
+}
+
+// approvalPreview is an operation a real run would carry out.
+type approvalPreview struct {
+	Kind    string
+	Enclave string
+	App     string
+	Version string
+	Handle  string
 }
 
 // approvalRun approves and carries out a list of operations.
@@ -63,6 +75,9 @@ type approvalResult struct {
 // Run returns nil only when every operation succeeded: a host roll must not
 // continue to the swap otherwise.
 func (r *approvalRun) Run(ctx context.Context) error {
+	if r.DryRun && r.canPreview() {
+		return r.preview(ctx)
+	}
 	var left map[string]bool // nil on the first attempt: everything
 	for {
 		ops, err := r.prepare(ctx, left)
@@ -94,6 +109,52 @@ func (r *approvalRun) Run(ctx context.Context) error {
 		}
 		left = failed
 	}
+}
+
+func (r *approvalRun) canPreview() bool {
+	for _, t := range r.Targets {
+		if t.Preview == nil {
+			return false
+		}
+	}
+	return len(r.Targets) > 0
+}
+
+// preview lists what a real run would do, reading only.
+func (r *approvalRun) preview(ctx context.Context) error {
+	type listed struct {
+		ops []approvalPreview
+		err error
+	}
+	results := make([]listed, len(r.Targets))
+	r.forEach(len(r.Targets), func(i int) {
+		results[i].ops, results[i].err = r.Targets[i].Preview(ctx)
+	})
+	var ops []approvalPreview
+	var problems []string
+	for i, res := range results {
+		if res.err != nil {
+			problems = append(problems, fmt.Sprintf("  %s: %v", r.Targets[i].Name, res.err))
+		}
+		ops = append(ops, res.ops...)
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("%d could not be listed:\n%s", len(problems), strings.Join(problems, "\n"))
+	}
+	fmt.Fprintf(r.Out, "\n%s: a real run would approve %d operations\n", r.Label, len(ops))
+	for _, op := range ops {
+		fmt.Fprintf(r.Out, "\n  %s\n", op.Kind)
+		for _, field := range [][2]string{{"enclave", op.Enclave}, {"app", op.App}, {"version id", op.Version}, {"handle", op.Handle}} {
+			if field[1] != "" {
+				fmt.Fprintf(r.Out, "    %-11s %s\n", field[0], field[1])
+			}
+		}
+	}
+	if len(ops) > secrets.MaxBatchEntries {
+		fmt.Fprintf(r.Out, "\nThat is more than the %d one approval may cover: leave some out, or use --one-by-one.\n", secrets.MaxBatchEntries)
+	}
+	fmt.Fprintln(r.Out, "\nNothing was staged, approved or promoted. Digests and policy versions appear only at the real run, once each key is staged.")
+	return nil
 }
 
 // prepare runs every target, bounded, and keeps the operations still left. One

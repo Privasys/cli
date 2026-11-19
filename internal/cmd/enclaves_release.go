@@ -43,8 +43,9 @@ promoted: do not swap the boot disk otherwise. After a partial failure it offers
 a new approval for the keys left.
 
   --release     the release tag (or its https URL) the host is rolling to
-  --dry-run     stage, then print the exact operations without asking for an
-                approval. Staging authorises nothing on its own
+  --dry-run     list the operations a real run would carry out, changing
+                nothing: no key is staged. Digests and policy versions appear
+                only at the real run
   --one-by-one  one approval per key, as before. Used automatically when the
                 identity provider does not offer batches yet
   --exclude     leave an app out, by name or id (repeatable). Its key will not
@@ -103,7 +104,6 @@ The default environment is production; pass --test for the test environment.`,
 				return err
 			}
 			if dryRun {
-				fmt.Fprintln(out, "\nStaged. Nothing was approved or promoted.")
 				return nil
 			}
 			output.Success(out, "Every key on %s admits %s", name, release)
@@ -112,7 +112,7 @@ The default environment is production; pass --test for the test environment.`,
 	}
 	f := cmd.Flags()
 	f.StringVar(&release, "release", "", "the release tag (or its https URL) the host is rolling to")
-	f.BoolVar(&dryRun, "dry-run", false, "stage and print the exact operations, without asking for an approval")
+	f.BoolVar(&dryRun, "dry-run", false, "list the operations a real run would carry out, staging nothing")
 	f.BoolVar(&oneByOne, "one-by-one", false, "one approval per key")
 	f.StringArrayVar(&exclude, "exclude", nil, "leave this app out, by name or id (repeatable)")
 	f.IntVar(&parallel, "parallel", 4, "how many stages or promotes run at once")
@@ -157,6 +157,9 @@ func releaseTargets(ctx context.Context, client *api.Client, enclaveID, enclaveN
 		Prepare: func(ctx context.Context) ([]*approvalOp, error) {
 			return prepareManagerKey(ctx, client, enclaveID, enclaveName, release)
 		},
+		Preview: func(ctx context.Context) ([]approvalPreview, error) {
+			return previewManagerKey(ctx, client, enclaveID, enclaveName)
+		},
 	}}
 	excluded := map[string]bool{}
 	for _, ref := range exclude {
@@ -190,6 +193,9 @@ func releaseTargets(ctx context.Context, client *api.Client, enclaveID, enclaveN
 			Prepare: func(ctx context.Context) ([]*approvalOp, error) {
 				return prepareAppKeys(ctx, client, appID, deploymentID, enclaveID, release)
 			},
+			Preview: func(ctx context.Context) ([]approvalPreview, error) {
+				return previewAppKeys(ctx, client, appID, deploymentID, enclaveName)
+			},
 		})
 	}
 	for ref, used := range excluded {
@@ -198,6 +204,44 @@ func releaseTargets(ctx context.Context, client *api.Client, enclaveID, enclaveN
 		}
 	}
 	return targets, nil
+}
+
+// previewManagerKey names the manager key, reading only.
+func previewManagerKey(ctx context.Context, client *api.Client, enclaveID, enclaveName string) ([]approvalPreview, error) {
+	pending, err := client.DataKeyPending(ctx, enclaveID)
+	if err != nil {
+		return nil, err
+	}
+	handle := output.Str(pending, "handle")
+	if handle == "" {
+		return nil, fmt.Errorf("the platform named no key")
+	}
+	return []approvalPreview{{Kind: "manager /data key", Enclave: enclaveName, Handle: handle}}, nil
+}
+
+// previewAppKeys names an app's key and registry credential, reading only.
+func previewAppKeys(ctx context.Context, client *api.Client, appID, deploymentID, enclaveName string) ([]approvalPreview, error) {
+	app, err := client.GetApp(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+	handle := output.Str(app, "vault_key_handle")
+	if handle == "" {
+		return nil, nil // no vault-backed key: nothing to promote
+	}
+	versionID, err := deployedVersion(ctx, client, appID, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	name := output.Str(app, "display_name")
+	if name == "" {
+		name = output.Str(app, "name")
+	}
+	ops := []approvalPreview{{Kind: "app key", Enclave: enclaveName, App: name, Version: versionID, Handle: handle}}
+	if cred := output.Str(app, "registry_secret_handle"); cred != "" {
+		ops = append(ops, approvalPreview{Kind: "registry credential", Enclave: enclaveName, App: name, Version: versionID, Handle: cred})
+	}
+	return ops, nil
 }
 
 func prepareManagerKey(ctx context.Context, client *api.Client, enclaveID, enclaveName, release string) ([]*approvalOp, error) {

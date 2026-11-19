@@ -33,6 +33,7 @@ type fakeRoll struct {
 	issued     map[string]string // handle -> vault_op of the latest approval
 	promoted   map[string]int    // handle -> promotes that succeeded
 	stages     []string          // what each app stage asked for
+	writes     []string          // every request that was not a read
 	singles    int               // single-operation approvals
 	failOnce   map[string]bool   // handles whose next promote fails
 	failStageB bool
@@ -106,6 +107,11 @@ func (f *fakeRoll) promote(w http.ResponseWriter, handle, token string, ok inter
 
 func (f *fakeRoll) serve(w http.ResponseWriter, r *http.Request) {
 	bearer := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if r.Method != http.MethodGet {
+		f.mu.Lock()
+		f.writes = append(f.writes, r.Method+" "+r.URL.Path)
+		f.mu.Unlock()
+	}
 	stagedVaults := func(pending, version int) []interface{} {
 		// As the platform does, a zero pending id is left out.
 		m := map[string]interface{}{"ok": true, "policy_version": version}
@@ -155,7 +161,7 @@ func (f *fakeRoll) serve(w http.ResponseWriter, r *http.Request) {
 		v := map[string]interface{}{"Success": true, "PendingID": 0, "PolicyVersion": 4}
 		f.reply(w, map[string]interface{}{"handle": mgrHandle, "vaults": []interface{}{v, v}})
 	case p == "/api/v1/admin/enclaves/enc-1/data-key/pending":
-		f.reply(w, map[string]interface{}{"vaults": []interface{}{map[string]interface{}{"Pending": []interface{}{
+		f.reply(w, map[string]interface{}{"handle": mgrHandle, "vaults": []interface{}{map[string]interface{}{"Pending": []interface{}{
 			map[string]interface{}{"id": 0, "profile": fakeProfile},
 		}}}})
 	case p == "/api/v1/admin/enclaves/enc-1/data-key/promote":
@@ -376,18 +382,43 @@ func TestAFailedStageAsksForNoApproval(t *testing.T) {
 	}
 }
 
-func TestDryRunPrintsTheOperationsAndApprovesNothing(t *testing.T) {
+// A preview must not leave staged profiles on real keys: it only reads.
+func TestDryRunListsTheOperationsAndChangesNothing(t *testing.T) {
 	f := newFakeRoll(t)
 	out, err := f.run(t, declined, func(r *approvalRun) { r.DryRun = true })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(f.begins) != 0 || len(f.promoted) != 0 {
-		t.Errorf("approvals %v, promoted %v", f.begins, f.promoted)
+	if len(f.writes) != 0 {
+		t.Errorf("the dry run wrote: %v", f.writes)
 	}
-	for _, want := range []string{mgrHandle, aHandle, bHandle, bCred, fakeDigest, "policy_version      4", "policy_version      2"} {
+	for _, want := range []string{mgrHandle, aHandle, bHandle, bCred, "ver-a2", "ver-b", "m1",
+		"registry credential", "Nothing was staged", "Digests and policy versions appear only at the real run"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the dry run lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "ver-a1") || strings.Contains(out, fakeDigest) {
+		t.Errorf("the dry run shows an old version or a digest:\n%s", out)
+	}
+}
+
+// A target with nothing to change, such as a policy, still shows what it binds.
+func TestDryRunOfPreparedOperationsShowsTheirBinding(t *testing.T) {
+	var out bytes.Buffer
+	run := &approvalRun{Label: "Policies", Parallel: 1, DryRun: true, Out: &out, Targets: []approvalTarget{{
+		Name: "drive",
+		Prepare: func(context.Context) ([]*approvalOp, error) {
+			return []*approvalOp{{BatchEntry: secrets.BatchEntry{Operation: "app-policy", Handle: "app:aa:policy",
+				MeasurementDigest: fakeDigest, PolicyVersion: 5}, Name: "drive", Kind: "app policy"}}, nil
+		},
+	}}}
+	if err := run.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"app:aa:policy", fakeDigest, "policy_version      5"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the dry run lacks %q:\n%s", want, out.String())
 		}
 	}
 }
