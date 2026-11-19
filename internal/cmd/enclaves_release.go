@@ -253,10 +253,14 @@ func prepareManagerKey(ctx context.Context, client *api.Client, enclaveID, encla
 	if handle == "" {
 		return nil, fmt.Errorf("stage: the platform named no key")
 	}
-	pendingID, policyVersion, err := agreedStage(staged["vaults"], "Success", "PendingID", "PolicyVersion", vaultQuorum)
+	stage, err := agreedStage(staged["vaults"], managerStageFields, vaultQuorum)
 	if err != nil {
 		return nil, err
 	}
+	if stage.admitted {
+		return []*approvalOp{admittedOp(handle, enclaveName, "manager /data key")}, nil
+	}
+	pendingID, policyVersion := stage.pending, stage.version
 	pending, err := client.DataKeyPending(ctx, enclaveID)
 	if err != nil {
 		return nil, fmt.Errorf("read the staged profile: %w", err)
@@ -304,11 +308,7 @@ func prepareAppKeys(ctx context.Context, client *api.Client, appID, deploymentID
 	if msg := output.Str(staged, "registry_cred_error"); msg != "" {
 		return nil, fmt.Errorf("stage the registry credential: %s", msg)
 	}
-	pendingID, _, err := agreedStage(staged["vaults"], "ok", "pending_id", "policy_version", vaultQuorum)
-	if err != nil {
-		return nil, err
-	}
-	digest, policyVersion, err := pendingStepUpBinding(ctx, client, appID, versionID, int(pendingID))
+	stage, err := agreedStage(staged["vaults"], appStageFields, vaultQuorum)
 	if err != nil {
 		return nil, err
 	}
@@ -317,23 +317,33 @@ func prepareAppKeys(ctx context.Context, client *api.Client, appID, deploymentID
 		name = output.Str(app, "name")
 	}
 	display := promoteApprovalContext(ctx, client, appID, versionID)
-	keyContext := withKeyType(display, "app key")
-	ops := []*approvalOp{{
-		BatchEntry: secrets.BatchEntry{
-			Operation: "promote", Handle: handle, MeasurementDigest: digest, PolicyVersion: uint64(policyVersion), Context: keyContext,
-		},
-		Name: name,
-		Kind: "app key",
-		Apply: func(ctx context.Context, token string) (string, error) {
-			sc := *client
-			sc.Token = token
-			res, err := sc.PromoteProfile(ctx, appID, versionID, int(pendingID))
-			if err != nil {
-				return "", err
-			}
-			return quorumNote(int(jsonNum(res["promoted"])))
-		},
-	}}
+	var ops []*approvalOp
+	if stage.admitted {
+		ops = append(ops, admittedOp(handle, name, "app key"))
+	} else {
+		pendingID := stage.pending
+		digest, policyVersion, err := pendingStepUpBinding(ctx, client, appID, versionID, int(pendingID))
+		if err != nil {
+			return nil, err
+		}
+		ops = append(ops, &approvalOp{
+			BatchEntry: secrets.BatchEntry{
+				Operation: "promote", Handle: handle, MeasurementDigest: digest, PolicyVersion: uint64(policyVersion),
+				Context: withKeyType(display, "app key"),
+			},
+			Name: name,
+			Kind: "app key",
+			Apply: func(ctx context.Context, token string) (string, error) {
+				sc := *client
+				sc.Token = token
+				res, err := sc.PromoteProfile(ctx, appID, versionID, int(pendingID))
+				if err != nil {
+					return "", err
+				}
+				return quorumNote(int(jsonNum(res["promoted"])))
+			},
+		})
+	}
 
 	cred, ok := staged["registry_cred"].(map[string]interface{})
 	if !ok {
@@ -343,10 +353,14 @@ func prepareAppKeys(ctx context.Context, client *api.Client, appID, deploymentID
 	if credHandle == "" {
 		credHandle = "apps.privasys.org/" + strings.ReplaceAll(appID, "-", "") + "/registry-cred/default"
 	}
-	credPending, credVersion, err := agreedStage(cred["vaults"], "ok", "pending_id", "policy_version", vaultQuorum)
+	credStage, err := agreedStage(cred["vaults"], appStageFields, vaultQuorum)
 	if err != nil {
 		return nil, fmt.Errorf("registry credential: %w", err)
 	}
+	if credStage.admitted {
+		return append(ops, admittedOp(credHandle, name, "registry credential")), nil
+	}
+	credPending, credVersion := credStage.pending, credStage.version
 	listed, err := client.ListPending(ctx, appID, versionID)
 	if err != nil {
 		return nil, fmt.Errorf("read the staged credential: %w", err)
@@ -402,32 +416,54 @@ func deployedVersion(ctx context.Context, client *api.Client, appID, deploymentI
 	return "", fmt.Errorf("deployment %s names no version", deploymentID)
 }
 
-// agreedStage reads the pending id and policy version a quorum of vaults
-// reported for a stage. The platform omits a zero, and pending id 0 is real.
-func agreedStage(vaults interface{}, okKey, pendingKey, versionKey string, quorum int) (uint32, uint64, error) {
-	type stage struct {
-		pending uint32
-		version uint64
-	}
+// stageFields names the fields of one vault's stage result: the manager key's
+// route returns the vault client's own field names, the app routes their JSON.
+type stageFields struct{ ok, pending, version, admitted string }
+
+var (
+	managerStageFields = stageFields{"Success", "PendingID", "PolicyVersion", "AutoPromoted"}
+	appStageFields     = stageFields{"ok", "pending_id", "policy_version", "auto_promoted"}
+)
+
+// stagedKey is what a quorum of vaults agreed a stage did.
+type stagedKey struct {
+	pending  uint32
+	version  uint64
+	admitted bool // the key already admits the profile: no pending, no promote
+}
+
+// agreedStage reads what a quorum of vaults reported for a stage. The platform
+// omits a zero, and pending id 0 is real unless the vault says the profile was
+// accepted without a promote, as it does when the key already admits it.
+func agreedStage(vaults interface{}, f stageFields, quorum int) (stagedKey, error) {
 	list, _ := vaults.([]interface{})
-	counts := map[stage]int{}
+	counts := map[stagedKey]int{}
 	for _, v := range list {
 		m, _ := v.(map[string]interface{})
-		if m[okKey] != true {
+		if m[f.ok] != true {
 			continue
 		}
-		counts[stage{uint32(jsonNum(m[pendingKey])), uint64(jsonNum(m[versionKey]))}]++
+		if m[f.admitted] == true {
+			counts[stagedKey{admitted: true}]++
+			continue
+		}
+		counts[stagedKey{pending: uint32(jsonNum(m[f.pending])), version: uint64(jsonNum(m[f.version]))}]++
 	}
-	var agreed []stage
+	var agreed []stagedKey
 	for s, n := range counts {
 		if n >= quorum {
 			agreed = append(agreed, s)
 		}
 	}
 	if len(agreed) != 1 {
-		return 0, 0, fmt.Errorf("no %d vaults agree on what was staged (%d answered)", quorum, len(list))
+		return stagedKey{}, fmt.Errorf("no %d vaults agree on what was staged (%d answered)", quorum, len(list))
 	}
-	return agreed[0].pending, agreed[0].version, nil
+	return agreed[0], nil
+}
+
+// admittedOp reports a key that already admits the release.
+func admittedOp(handle, name, kind string) *approvalOp {
+	return &approvalOp{BatchEntry: secrets.BatchEntry{Operation: "promote", Handle: handle}, Name: name, Kind: kind, Admitted: true}
 }
 
 // pendingDigest computes the binding digest of a staged profile as the vault

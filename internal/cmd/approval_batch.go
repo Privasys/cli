@@ -21,6 +21,9 @@ type approvalOp struct {
 	secrets.BatchEntry
 	Name string // what the owner recognises: the app or the enclave
 	Kind string // what kind of key or document this is
+	// Admitted says the key already admits what was staged (the vaults
+	// accepted it without a promote): nothing to approve or carry out.
+	Admitted bool
 	// Apply carries the operation out. It returns a note for the report.
 	Apply func(ctx context.Context, token string) (string, error)
 }
@@ -91,13 +94,28 @@ func (r *approvalRun) Run(ctx context.Context) error {
 			r.printOperations(ops)
 			return nil
 		}
-		if !r.OneByOne && len(ops) > secrets.MaxBatchEntries {
-			return fmt.Errorf("%d operations exceed the %d one approval may cover: leave some out, or use --one-by-one", len(ops), secrets.MaxBatchEntries)
+		// A key that already admits the release needs no tap and is not a failure.
+		var needed []*approvalOp
+		var results []approvalResult
+		for _, op := range ops {
+			if op.Admitted {
+				results = append(results, approvalResult{op: op, note: "already admits it, nothing to approve"})
+			} else {
+				needed = append(needed, op)
+			}
 		}
-		results, err := r.approveAndApply(ctx, ops)
+		if len(needed) == 0 {
+			r.report(results)
+			return nil
+		}
+		if !r.OneByOne && len(needed) > secrets.MaxBatchEntries {
+			return fmt.Errorf("%d operations exceed the %d one approval may cover: leave some out, or use --one-by-one", len(needed), secrets.MaxBatchEntries)
+		}
+		applied, err := r.approveAndApply(ctx, needed)
 		if err != nil {
 			return err
 		}
+		results = append(results, applied...)
 		failed := r.report(results)
 		if len(failed) == 0 {
 			return nil
@@ -307,6 +325,10 @@ func (r *approvalRun) printSummary(ops []*approvalOp) {
 func (r *approvalRun) printOperations(ops []*approvalOp) {
 	fmt.Fprintf(r.Out, "\n%s: %d operations, none approved\n", r.Label, len(ops))
 	for _, op := range ops {
+		if op.Admitted {
+			fmt.Fprintf(r.Out, "\n  %s: %s\n    handle              %s\n    already admits it, nothing to approve\n", op.Kind, op.Name, op.Handle)
+			continue
+		}
 		fmt.Fprintf(r.Out, "\n  %s: %s\n    operation           %s\n    handle              %s\n    measurement_digest  %s\n    policy_version      %d\n",
 			op.Kind, op.Name, op.Operation, op.Handle, op.MeasurementDigest, op.PolicyVersion)
 	}

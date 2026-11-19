@@ -37,6 +37,7 @@ type fakeRoll struct {
 	singles    int               // single-operation approvals
 	failOnce   map[string]bool   // handles whose next promote fails
 	failStageB bool
+	admitted   map[string]bool // stages the vaults accept without a promote
 	noBatch    bool
 	tamper     bool
 	entries    []secrets.BatchEntry
@@ -62,7 +63,7 @@ var fakeProfile = map[string]interface{}{
 }
 
 func newFakeRoll(t *testing.T) *fakeRoll {
-	f := &fakeRoll{t: t, promoted: map[string]int{}, failOnce: map[string]bool{}, issued: map[string]string{}}
+	f := &fakeRoll{t: t, promoted: map[string]int{}, failOnce: map[string]bool{}, issued: map[string]string{}, admitted: map[string]bool{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -112,7 +113,11 @@ func (f *fakeRoll) serve(w http.ResponseWriter, r *http.Request) {
 		f.writes = append(f.writes, r.Method+" "+r.URL.Path)
 		f.mu.Unlock()
 	}
-	stagedVaults := func(pending, version int) []interface{} {
+	stagedVaults := func(pending, version int, handle string) []interface{} {
+		if f.admitted[handle] {
+			m := map[string]interface{}{"ok": true, "auto_promoted": true, "policy_version": version}
+			return []interface{}{m, m}
+		}
 		// As the platform does, a zero pending id is left out.
 		m := map[string]interface{}{"ok": true, "policy_version": version}
 		if pending != 0 {
@@ -158,7 +163,8 @@ func (f *fakeRoll) serve(w http.ResponseWriter, r *http.Request) {
 		if body["os_release_tag"] != "tdx-v9" {
 			f.t.Errorf("manager stage body %v", body)
 		}
-		v := map[string]interface{}{"Success": true, "PendingID": 0, "PolicyVersion": 4}
+		// The vault client's own field names, as the platform passes them on.
+		v := map[string]interface{}{"Success": true, "PendingID": 0, "PolicyVersion": 4, "AutoPromoted": f.admitted[mgrHandle]}
 		f.reply(w, map[string]interface{}{"handle": mgrHandle, "vaults": []interface{}{v, v}})
 	case p == "/api/v1/admin/enclaves/enc-1/data-key/pending":
 		f.reply(w, map[string]interface{}{"handle": mgrHandle, "vaults": []interface{}{map[string]interface{}{"Pending": []interface{}{
@@ -193,10 +199,10 @@ func (f *fakeRoll) serve(w http.ResponseWriter, r *http.Request) {
 				f.reply(w, map[string]string{"error": "below quorum"})
 				return
 			}
-			f.reply(w, map[string]interface{}{"vaults": stagedVaults(5, 7), "registry_cred": map[string]interface{}{"vaults": stagedVaults(0, 2)}})
+			f.reply(w, map[string]interface{}{"vaults": stagedVaults(5, 7, bHandle), "registry_cred": map[string]interface{}{"vaults": stagedVaults(0, 2, bCred)}})
 			return
 		}
-		f.reply(w, map[string]interface{}{"vaults": stagedVaults(0, 7)})
+		f.reply(w, map[string]interface{}{"vaults": stagedVaults(0, 7, aHandle)})
 	case strings.HasSuffix(p, "/pending"):
 		if strings.Contains(p, "app-b") {
 			f.reply(w, map[string]interface{}{"vaults": listed(5), "registry_cred": map[string]interface{}{"vaults": listed(0)}})
@@ -370,6 +376,43 @@ func TestARetryLeavesOutTheOtherKeyOfTheSameApp(t *testing.T) {
 	}
 }
 
+// A key that already admits the release (the host already runs it, or a retry
+// re-staged it) is reported, needs no tap and is not a failure.
+func TestAKeyThatAlreadyAdmitsTheReleaseNeedsNoApproval(t *testing.T) {
+	f := newFakeRoll(t)
+	f.admitted[mgrHandle], f.admitted[aHandle], f.admitted[bHandle] = true, true, true
+	out, err := f.run(t, declined, nil)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if len(f.begins) != 1 || strings.Join(f.begins[0], ",") != bCred {
+		t.Fatalf("approvals %v", f.begins)
+	}
+	if len(f.promoted) != 1 || f.promoted[bCred] != 1 {
+		t.Errorf("promoted %v", f.promoted)
+	}
+	if n := strings.Count(out, "already admits it"); n != 3 {
+		t.Errorf("%d keys reported as already admitting:\n%s", n, out)
+	}
+}
+
+func TestAHostThatAlreadyRunsTheReleaseAsksForNothing(t *testing.T) {
+	f := newFakeRoll(t)
+	for _, h := range []string{mgrHandle, aHandle, bHandle, bCred} {
+		f.admitted[h] = true
+	}
+	out, err := f.run(t, declined, nil)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if len(f.begins) != 0 || len(f.promoted) != 0 || f.singles != 0 {
+		t.Errorf("approvals %v, singles %d, promoted %v", f.begins, f.singles, f.promoted)
+	}
+	if n := strings.Count(out, "already admits it"); n != 4 {
+		t.Errorf("%d keys reported as already admitting:\n%s", n, out)
+	}
+}
+
 func TestAFailedStageAsksForNoApproval(t *testing.T) {
 	f := newFakeRoll(t)
 	f.failStageB = true
@@ -474,12 +517,20 @@ func TestAgreedStage(t *testing.T) {
 		}
 		return m
 	}
-	p, ver, err := agreedStage([]interface{}{v(true, 0, 3), v(true, 0, 3), v(false, 9, 9)}, "ok", "pending_id", "policy_version", 2)
-	if err != nil || p != 0 || ver != 3 {
-		t.Errorf("pending 0: %d, %d, %v", p, ver, err)
+	s, err := agreedStage([]interface{}{v(true, 0, 3), v(true, 0, 3), v(false, 9, 9)}, appStageFields, 2)
+	if err != nil || s.pending != 0 || s.version != 3 || s.admitted {
+		t.Errorf("pending 0: %+v, %v", s, err)
 	}
-	if _, _, err := agreedStage([]interface{}{v(true, 1, 3), v(true, 2, 3)}, "ok", "pending_id", "policy_version", 2); err == nil {
+	if _, err := agreedStage([]interface{}{v(true, 1, 3), v(true, 2, 3)}, appStageFields, 2); err == nil {
 		t.Error("vaults that disagree were accepted")
+	}
+	// The vault's answer when the key already admits the profile.
+	auto := map[string]interface{}{"ok": true, "auto_promoted": true, "policy_version": 3}
+	if s, err := agreedStage([]interface{}{auto, auto, v(true, 4, 3)}, appStageFields, 2); err != nil || !s.admitted {
+		t.Errorf("auto-promoted quorum: %+v, %v", s, err)
+	}
+	if s, err := agreedStage([]interface{}{auto, v(true, 4, 3), v(true, 4, 3)}, appStageFields, 2); err != nil || s.admitted || s.pending != 4 {
+		t.Errorf("auto-promoted on one vault only: %+v, %v", s, err)
 	}
 }
 
