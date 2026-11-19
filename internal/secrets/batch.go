@@ -52,6 +52,22 @@ const (
 // ErrBatchUnavailable says the identity provider has no batch endpoints yet.
 var ErrBatchUnavailable = errors.New("the identity provider does not offer batch approvals yet")
 
+// ErrDeclined says the owner declined the approval in the wallet: the token
+// poll answers 410 {"status":"declined"}, once. Nothing may be carried out, and
+// nothing should be asked again on its own.
+var ErrDeclined = errors.New("declined on the phone")
+
+// isDeclined reads a token poll's answer after the owner declined.
+func isDeclined(status int, body []byte) bool {
+	if status != http.StatusGone {
+		return false
+	}
+	var s struct {
+		Status string `json:"status"`
+	}
+	return json.Unmarshal(body, &s) == nil && s.Status == "declined"
+}
+
 // batchDeeplink is the only link the CLI renders as a QR for a batch.
 var batchDeeplink = regexp.MustCompile(`^privasys-wallet(-dev|-preview)?://vault-approvals\?batch_id=[A-Za-z0-9_-]+$`)
 
@@ -274,6 +290,9 @@ func pollBatchToken(ctx context.Context, u, bearer string) ([]batchToken, bool, 
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode == http.StatusAccepted {
 		return nil, true, nil
+	}
+	if isDeclined(resp.StatusCode, data) {
+		return nil, false, ErrDeclined
 	}
 	if resp.StatusCode >= 400 {
 		return nil, false, fmt.Errorf("batch token -> %d", resp.StatusCode)

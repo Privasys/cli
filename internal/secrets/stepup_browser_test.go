@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"image/png"
 	"io"
 	"net/http"
@@ -90,6 +91,40 @@ func TestStepUpPageCarriesWalletQR(t *testing.T) {
 	}
 	if len(gotQR) > 2048 {
 		t.Errorf("qr data URI is %d chars; keep the page URL small", len(gotQR))
+	}
+}
+
+// A decline on the phone ends the wait at once, and says so.
+func TestStepUpStopsWhenDeclined(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /fido2/vault-approval/begin", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"publicKey": map[string]string{"challenge": "dGVzdA"}})
+	})
+	polls := 0
+	mux.HandleFunc("GET /fido2/vault-approval/token", func(w http.ResponseWriter, r *http.Request) {
+		polls++
+		w.WriteHeader(http.StatusGone)
+		_, _ = w.Write([]byte(`{"status":"declined"}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	_, err := RequestStepUpViaBrowser(context.Background(), srv.URL, "bearer", "promote",
+		"apps.privasys.org/x/storage-kek/v1", "abcd", 1, nil, nil, io.Discard)
+	if !errors.Is(err, ErrDeclined) || polls != 1 {
+		t.Errorf("err = %v after %d polls", err, polls)
+	}
+}
+
+// A 410 that is not a decline stays an ordinary refusal.
+func TestIsDeclinedNeedsTheStatus(t *testing.T) {
+	cases := map[string]bool{`{"status":"declined"}`: true, `{"status":"expired"}`: false, `gone`: false}
+	for body, want := range cases {
+		if isDeclined(http.StatusGone, []byte(body)) != want {
+			t.Errorf("410 %s", body)
+		}
+	}
+	if isDeclined(http.StatusBadRequest, []byte(`{"status":"declined"}`)) {
+		t.Error("a 400 was read as a decline")
 	}
 }
 

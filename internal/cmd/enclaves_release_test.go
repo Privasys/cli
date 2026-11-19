@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,9 +41,12 @@ type fakeRoll struct {
 	admitted   map[string]bool // stages the vaults accept without a promote
 	noBatch    bool
 	tamper     bool
-	entries    []secrets.BatchEntry
-	exp        int64
-	srv        *httptest.Server
+	// The owner declines on the phone: the whole batch, or one single approval.
+	declineBatch  bool
+	declineSingle string
+	entries       []secrets.BatchEntry
+	exp           int64
+	srv           *httptest.Server
 }
 
 const (
@@ -148,6 +152,11 @@ func (f *fakeRoll) serve(w http.ResponseWriter, r *http.Request) {
 		f.reply(w, map[string]interface{}{"publicKey": map[string]string{"challenge": base64.RawURLEncoding.EncodeToString([]byte(req.Handle))}})
 	case p == "/fido2/vault-approval/token":
 		raw, _ := base64.RawURLEncoding.DecodeString(r.URL.Query().Get("challenge"))
+		if string(raw) == f.declineSingle {
+			w.WriteHeader(http.StatusGone)
+			f.reply(w, map[string]string{"status": "declined"})
+			return
+		}
 		f.reply(w, map[string]string{"access_token": fakeToken("single-"+string(raw), "n", 0)})
 
 	case p == "/api/v1/admin/enclaves/enc-1/apps":
@@ -273,6 +282,11 @@ func (f *fakeRoll) batchBegin(w http.ResponseWriter, r *http.Request) {
 func (f *fakeRoll) batchToken(w http.ResponseWriter) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.declineBatch {
+		w.WriteHeader(http.StatusGone)
+		f.reply(w, map[string]string{"status": "declined"})
+		return
+	}
 	var tokens []map[string]string
 	for _, e := range f.entries {
 		tokens = append(tokens, map[string]string{"operation": e.Operation, "handle": e.Handle, "vault_op": e.VaultOp,
@@ -302,6 +316,45 @@ func (f *fakeRoll) run(t *testing.T, ask func(string) (bool, error), mutate func
 }
 
 func declined(string) (bool, error) { return false, nil }
+
+// neverAsk fails the test if a new approval is offered.
+func neverAsk(t *testing.T) func(string) (bool, error) {
+	return func(prompt string) (bool, error) {
+		t.Errorf("offered after a decline: %s", prompt)
+		return false, nil
+	}
+}
+
+func TestADeclinedBatchStopsTheRoll(t *testing.T) {
+	f := newFakeRoll(t)
+	f.declineBatch = true
+	out, err := f.run(t, neverAsk(t), nil)
+	if !errors.Is(err, secrets.ErrDeclined) || !strings.Contains(err.Error(), "nothing was promoted") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	if len(f.promoted) != 0 || len(f.begins) != 1 {
+		t.Errorf("promoted %v after %d approvals", f.promoted, len(f.begins))
+	}
+}
+
+func TestADeclineOneByOneStopsAtThatKey(t *testing.T) {
+	f := newFakeRoll(t)
+	f.declineSingle = aHandle
+	out, err := f.run(t, neverAsk(t), func(r *approvalRun) { r.OneByOne = true })
+	if !errors.Is(err, secrets.ErrDeclined) {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	// The manager key comes first and was approved before the decline.
+	if f.promoted[mgrHandle] != 1 || len(f.promoted) != 1 {
+		t.Errorf("promoted %v", f.promoted)
+	}
+	if f.singles != 2 {
+		t.Errorf("%d approvals asked, want 2", f.singles)
+	}
+	if !strings.Contains(out, "ok") || !strings.Contains(err.Error(), "the 1 before it were carried out") {
+		t.Errorf("the report does not say what was done: %v\n%s", err, out)
+	}
+}
 
 func TestPromoteReleaseUnderOneApproval(t *testing.T) {
 	f := newFakeRoll(t)

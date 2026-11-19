@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -1375,6 +1376,9 @@ func promoteWithStepUp(cmd *cobra.Command, env *Env, client *api.Client, appID, 
 	actx := promoteApprovalContext(ctx, client, appID, vid)
 	stepTok, err := secrets.RequestStepUpViaBrowser(ctx, env.Cfg.Issuer, bearer, "promote",
 		tgt.Handle, digest, policyVersion, actx, secrets.OpenBrowser, cmd.ErrOrStderr())
+	if errors.Is(err, secrets.ErrDeclined) {
+		return nil, fmt.Errorf("%w: nothing was promoted", err)
+	}
 	if err != nil {
 		return nil, err
 	}

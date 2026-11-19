@@ -196,6 +196,20 @@ func TestBeginBatchSurfacesTheServersRefusal(t *testing.T) {
 	}
 }
 
+func TestCollectBatchTokensStopsWhenDeclined(t *testing.T) {
+	polls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		polls++
+		w.WriteHeader(http.StatusGone)
+		_, _ = w.Write([]byte(`{"status":"declined"}`))
+	}))
+	defer srv.Close()
+	b := &Batch{ID: "id", Exp: time.Now().Unix() + 300}
+	if _, err := CollectBatchTokens(context.Background(), srv.URL, "tok", b); !errors.Is(err, ErrDeclined) || polls != 1 {
+		t.Errorf("err = %v after %d polls", err, polls)
+	}
+}
+
 func TestBeginBatchSaysWhenTheServerHasNoBatches(t *testing.T) {
 	cases := []struct {
 		status      int

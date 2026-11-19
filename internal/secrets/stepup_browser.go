@@ -200,6 +200,9 @@ func getStepUpToken(ctx context.Context, u, bearer string) (string, bool, error)
 	if resp.StatusCode == http.StatusAccepted {
 		return "", true, nil
 	}
+	if isDeclined(resp.StatusCode, data) {
+		return "", false, ErrDeclined
+	}
 	if resp.StatusCode >= 400 {
 		return "", false, fmt.Errorf("step-up poll -> %d: %s", resp.StatusCode, data)
 	}

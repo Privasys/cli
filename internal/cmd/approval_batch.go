@@ -112,6 +112,13 @@ func (r *approvalRun) Run(ctx context.Context) error {
 			return fmt.Errorf("%d operations exceed the %d one approval may cover: leave some out, or use --one-by-one", len(needed), secrets.MaxBatchEntries)
 		}
 		applied, err := r.approveAndApply(ctx, needed)
+		if errors.Is(err, secrets.ErrDeclined) {
+			// The owner said no: report what one-by-one already did, offer nothing.
+			if len(applied) > 0 {
+				r.report(append(results, applied...))
+			}
+			return err
+		}
 		if err != nil {
 			return err
 		}
@@ -249,6 +256,9 @@ func (r *approvalRun) approveAndApply(ctx context.Context, ops []*approvalOp) ([
 	}
 	secrets.ShowBatch(r.Out, batch)
 	tokens, err := secrets.CollectBatchTokens(ctx, r.Issuer, bearer, batch)
+	if errors.Is(err, secrets.ErrDeclined) {
+		return nil, fmt.Errorf("%w: nothing was promoted or changed", err)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -280,6 +290,13 @@ func (r *approvalRun) applyOneByOne(ctx context.Context, ops []*approvalOp) ([]a
 		fmt.Fprintf(r.Out, "\n[%d/%d] %s: %s\n", i+1, len(ops), op.Kind, op.Name)
 		token, err := secrets.RequestStepUpViaBrowser(ctx, r.Issuer, bearer, op.Operation, op.Handle,
 			op.MeasurementDigest, uint32(op.PolicyVersion), op.Context, r.Open, r.Out)
+		if errors.Is(err, secrets.ErrDeclined) {
+			msg := "nothing was promoted or changed"
+			if i > 0 {
+				msg = fmt.Sprintf("the %d before it were carried out, it and the %d after it were not", i, len(ops)-i-1)
+			}
+			return results[:i], fmt.Errorf("%w at %s %s: %s", err, op.Kind, op.Name, msg)
+		}
 		if err != nil {
 			results[i].err = err
 			continue
