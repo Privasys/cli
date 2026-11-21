@@ -119,9 +119,10 @@ func RequestStepUpViaBrowser(ctx context.Context, issuer, bearer, operation, han
 		Summary: summary,
 	}
 	if qr != nil {
-		// 4px per module keeps the fragment small (~0.6 KB); the page scales it
-		// up without smoothing.
-		if png, err := qr.PNG(-4); err == nil {
+		// The page's code carries the Privasys logo, like every Privasys QR
+		// code. 4px per module keeps the fragment small (about 1 KB); the
+		// page scales it without smoothing. The terminal's code stays plain.
+		if png, err := qrLogoPNG(opts.ApprovalDeeplink, 4); err == nil {
 			frag.Deeplink = opts.ApprovalDeeplink
 			frag.QR = "data:image/png;base64," + base64.StdEncoding.EncodeToString(png)
 		}
