@@ -1726,7 +1726,7 @@ func newAppsDeployCmd() *cobra.Command {
 	cmd.Flags().StringVar(&size, "size", "", "container VM size for THIS deployment: micro|small|medium|large|xlarge (default: the app's size; redeploying with a new size is the resize)")
 	cmd.Flags().StringVar(&tenancy, "tenancy", "", "mutualised (default, shared CVM) or dedicated (a whole confidential VM, Medium/Large only)")
 	cmd.Flags().StringVar(&instance, "instance", "", "deploy onto a dedicated instance you own (id or name; see 'privasys instances')")
-	cmd.Flags().IntVar(&storageGB, "storage-gb", 0, "size the app's volume on FIRST deploy (default 10 GB; grow later with 'privasys volumes resize')")
+	cmd.Flags().IntVar(&storageGB, "storage-gb", 0, "size the app's volume on FIRST deploy (default 1 GB; grow later with 'privasys volumes resize')")
 	cmd.Flags().StringVar(&restore, "restore", "", "fill the app's volume from a backup first: a snapshot id from 'apps backup list', or latest (the volume must be absent on the target)")
 	cmd.Flags().BoolVar(&watch, "watch", false, "poll until the deployment is active or failed")
 	return cmd

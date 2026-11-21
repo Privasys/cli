@@ -226,7 +226,7 @@ func (c *Client) DeployVersion(ctx context.Context, id, versionID, enclaveID, lo
 		body["instance_id"] = instanceID
 	}
 	if storageGB > 0 {
-		// Sizes the app's volume on FIRST deploy only (10G default); an
+		// Sizes the app's volume on FIRST deploy only (1G default); an
 		// existing volume keeps its size — growing is `volumes resize`.
 		body["storage_gb"] = storageGB
 	}

@@ -929,7 +929,7 @@ func (s *Server) registerTools() {
 				"size":             strProp("container VM size for this deployment: micro|small|medium|large|xlarge (default: the app's size; redeploy with a new size to resize)"),
 				"tenancy":          enumProp("mutualised (default, shared CVM) or dedicated (a whole confidential VM, Medium/Large only)", "mutualised", "dedicated"),
 				"instance":         strProp("deploy onto a dedicated instance id you own (multi-app; overrides location/tenancy)"),
-				"storage_gb":       intProp("size the app's encrypted volume on FIRST deploy (default 10; an existing volume keeps its size — grow with volumes_resize/the portal)"),
+				"storage_gb":       intProp("size the app's encrypted volume on FIRST deploy (default 1; an existing volume keeps its size — grow with volumes_resize/the portal)"),
 				"restore":          strProp("fill the app's volume from a backup first: a snapshot id from apps_backup_list, or \"latest\". The volume must be absent on the target (a restore never overwrites data): over existing data, the human must stop the app and delete its volume first"),
 				"confirm_surfaces": boolProp(confirmSurfacesDesc),
 			}, "app_id"),

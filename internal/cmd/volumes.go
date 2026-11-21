@@ -12,7 +12,7 @@ import (
 
 // First-class volumes: an app's encrypted storage is an object you own,
 // independent of the app. It is created at the first deploy (sized by
-// --storage-gb, 10 GB default), bills per GB-hour at its provider/region rate
+// --storage-gb, 1 GB default), bills per GB-hour at its provider/region rate
 // whether attached or not, SURVIVES app deletion by default, and exists until
 // you delete it here (or delete the app with --with-volume).
 

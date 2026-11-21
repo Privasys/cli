@@ -45,7 +45,7 @@ stops a running deployment (a vault-backed volume survives and reattaches),
 ## Sizing, storage and dedicated machines
 
 - **Storage.** Ask for it at creation (`storage: true`); it cannot be added
-  later. The first deploy sizes the volume (`storage_gb`, default 10 GB).
+  later. The first deploy sizes the volume (`storage_gb`, default 1 GB).
   `volumes_list` / `volumes_describe` show usage, `volumes_resize` grows it
   online (grow-only), and `volumes_delete` destroys the data irreversibly.
 - **Dedicated instances.** By default apps share a confidential VM with other

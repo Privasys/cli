@@ -60,7 +60,7 @@ func upgradeTools() []tool {
 				"size":             strProp("container VM size for this deployment (see apps_sizes)"),
 				"tenancy":          enumProp("mutualised (default) or dedicated", "mutualised", "dedicated"),
 				"instance":         strProp("deploy onto a dedicated instance id you own"),
-				"storage_gb":       intProp("volume size on FIRST deploy (default 10)"),
+				"storage_gb":       intProp("volume size on FIRST deploy (default 1)"),
 				"pending_id":       intProp("pending profile id to promote (default 0)"),
 				"confirm":          boolProp("the human reviewed the staged measurement and approved it; promotes and deploys for real"),
 				"confirm_surfaces": boolProp(confirmSurfacesDesc),
