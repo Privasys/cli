@@ -418,7 +418,7 @@ func platformTools() []tool {
 		},
 		{
 			Name: "apps_allowed_callers",
-			Description: "Set which attested apps may call this app over ingress mutual RA-TLS. Two shapes, which combine: PINNED callers in 'callers' " +
+			Description: "Set which attested apps are recognised as callers of this app over ingress mutual RA-TLS. A recognition list, not an access list: callers that present no client certificate (browsers, wallet sign-ins) are still accepted as anonymous, so the app must require X-Privasys-Peer-Verified: true on routes meant only for attested apps. Two shapes, which combine: PINNED callers in 'callers' " +
 				"(entries {app_id, measurements, required_oids}; {\"app_id\":\"<uuid>\"} alone pins the caller's current measurement, and breaks when it redeploys or its host rolls), " +
 				"and ANY ATTESTED app (any_attested:true), which admits every caller whose evidence verifies and names an app, so the app decides what to do with an unknown caller. " +
 				"any_attested is honoured only with 'platforms': a quote proves a genuine TEE, not whose, so the machines callers may run on are what make it trustworthy. " +

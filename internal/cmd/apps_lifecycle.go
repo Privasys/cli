@@ -2393,12 +2393,17 @@ func newAppsAllowedCallersCmd() *cobra.Command {
 	var platforms []string
 	cmd := &cobra.Command{
 		Use:   "allowed-callers <app-id>",
-		Short: "Set which attested apps may call this app over ingress mutual RA-TLS",
-		Long: `Sets the callers permitted to open an ingress mutual-RA-TLS handshake to this
-app. On the next (re)deploy the runtime installs it as the ingress verification
-policy: a caller whose attested identity does not match is rejected, and an
-admitted caller's verified identity is passed to the app as X-Privasys-Peer-*
-headers. This is the callee-side mirror of "apps dependencies".
+		Short: "Set which attested apps are recognised as callers over ingress mutual RA-TLS",
+		Long: `Sets the attested apps recognised as callers of this app over ingress mutual
+RA-TLS. On the next (re)deploy the runtime installs it as the ingress verification
+policy: a caller that presents a client certificate must match an entry, or it is
+rejected, and a matched caller's verified identity is passed to the app as
+X-Privasys-Peer-* headers. This is the callee-side mirror of "apps dependencies".
+
+This is a recognition list, not an access list. Callers that present no client
+certificate (browsers, wallet sign-ins, plain clients) are still accepted, as
+anonymous requests with no X-Privasys-Peer-* headers. On routes meant only for
+attested apps, the app must require X-Privasys-Peer-Verified: true.
 
 Two shapes, which combine:
 
