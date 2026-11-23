@@ -5,6 +5,7 @@ package cmd
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -29,7 +30,7 @@ func expiryCell(expiresAt string, now time.Time) string {
 	if left <= 0 {
 		return date + " (expired)"
 	}
-	days := int(left.Hours() / 24)
+	days := int(math.Round(left.Hours() / 24))
 	switch {
 	case days < 1:
 		return date + " (today, renew now)"

@@ -29,10 +29,12 @@ func LocateSecret(ctx context.Context, dir Directory, handle, ownerTok, attTok s
 		cons = []api.LiveConstellation{{}}
 	}
 	var lastErr error
+	unreachable := []string{}
 	for _, c := range cons {
 		d, derr := dir.VaultDirectoryAt(ctx, c.ID)
 		if derr != nil {
 			lastErr = derr
+			unreachable = append(unreachable, c.Name)
 			continue
 		}
 		info, ierr := GetPublicKeyInVault(ctx, VaultOpParams{
@@ -44,10 +46,15 @@ func LocateSecret(ctx context.Context, dir Directory, handle, ownerTok, attTok s
 		}
 		if !errors.Is(ierr, ErrKeyNotFound) {
 			lastErr = ierr
+			unreachable = append(unreachable, d.Name)
 		}
 	}
-	if lastErr != nil {
-		return nil, nil, fmt.Errorf("secret %s not found on any constellation (last error: %v)", handle, lastErr)
+	if len(unreachable) == len(cons) && lastErr != nil {
+		return nil, nil, fmt.Errorf("could not reach any vault constellation to find secret %s: %v", handle, lastErr)
+	}
+	if len(unreachable) > 0 {
+		return nil, nil, fmt.Errorf("secret %s not found (it may have expired, or never existed); %d constellation(s) did not answer: %v",
+			handle, len(unreachable), unreachable)
 	}
 	return nil, nil, fmt.Errorf("secret %s not found on any constellation: it may have expired, or never existed", handle)
 }
