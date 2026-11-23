@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
@@ -52,6 +53,30 @@ func newSecretSession(cmd *cobra.Command) (*secretSession, error) {
 }
 
 func (s *secretSession) handle(name string) string { return "users/" + s.sub + "/" + name }
+
+// refresh re-reads the session tokens (refreshing them when close to expiry).
+func (s *secretSession) refresh(ctx context.Context) error {
+	tok, err := auth.AccessToken(ctx, s.env.Cfg.Issuer)
+	if err != nil {
+		return err
+	}
+	s.tok = tok
+	if attTok, aerr := auth.AccessTokenForAudience(ctx, s.env.Cfg.Issuer, "attestation-server"); aerr == nil {
+		s.attTok = attTok
+	}
+	return nil
+}
+
+// renewCreateParams re-creates a renewed secret on the active constellation:
+// the same value, exportable (it was just exported to renew it).
+func renewCreateParams(s *secretSession, handle string, material []byte, threshold int, active *api.VaultDirectory) secrets.CreateParams {
+	return secrets.CreateParams{
+		Issuer: s.env.Cfg.Issuer, Bearer: s.tok, Sub: s.sub, Handle: handle,
+		Secret: material, Exportable: true,
+		Endpoints: active.Endpoints, Threshold: threshold,
+		MRENCLAVE: active.MRENCLAVE, AttServer: active.AttestationServer, AttToken: s.attTok,
+	}
+}
 
 func newSecretsInfoCmd() *cobra.Command {
 	return &cobra.Command{
@@ -143,17 +168,21 @@ An expired secret cannot be renewed: its value can no longer be exported.`,
 				}
 			}()
 
+			// The wallet step-up can outlast the session token read at the
+			// start (a cached token may have only a minute left): take fresh
+			// ones for the delete and the re-create.
+			if err := s.refresh(ctx); err != nil {
+				return err
+			}
 			oldOp := secrets.VaultOpParams{
 				Handle: handle, Endpoints: home.Endpoints, MRENCLAVE: home.MRENCLAVE,
 				AttServer: home.AttestationServer, AttToken: s.attTok, OwnerToken: s.tok,
 			}
 			create := func() (*secrets.Result, error) {
-				return secrets.Create(ctx, secrets.CreateParams{
-					Issuer: s.env.Cfg.Issuer, Bearer: s.tok, Sub: s.sub, Handle: handle,
-					Secret: material, Exportable: true, // it was exported to renew it Endpoints: active.Endpoints,
-					Threshold: threshold, MRENCLAVE: active.MRENCLAVE, AttServer: active.AttestationServer,
-					AttToken: s.attTok,
-				})
+				if err := s.refresh(ctx); err != nil {
+					return nil, err
+				}
+				return secrets.Create(ctx, renewCreateParams(s, handle, material, threshold, active))
 			}
 
 			var res *secrets.Result
