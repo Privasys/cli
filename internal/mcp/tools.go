@@ -202,6 +202,11 @@ func (s *Server) registerTools() {
 				}
 				attTok, _ := auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")
 				endpoints, mrenclave, attServer := mcpConstellation(ctx, d)
+				// The secret's home: after a vault roll it may be a
+				// constellation other than the active one.
+				if home, _, lerr := secrets.LocateSecret(ctx, d.Client, "users/"+sub+"/"+name, d.Token, attTok); lerr == nil {
+					endpoints, mrenclave, attServer = home.Endpoints, home.MRENCLAVE, home.AttestationServer
+				}
 				material, res, err := secrets.Export(ctx, secrets.ExportParams{
 					Issuer: d.Issuer, Bearer: d.Token, Sub: sub,
 					Handle:    "users/" + sub + "/" + name,
@@ -1527,19 +1532,16 @@ func configRPCName(schema map[string]interface{}) string {
 }
 
 // vaultKeyAddr resolves the constellation addressing for a vault key (mirrors
-// the CLI's vaultKeyAddressing): the active directory pin + the key's handle +
-// the owner/attestation tokens. Vault key data-plane ops dial the constellation
+// the CLI's vaultKeyAddressing): the key's home constellation (the one it was
+// created on, the active one when none is recorded) + the key's handle + the
+// owner/attestation tokens. Vault key data-plane ops dial the constellation
 // directly over RA-TLS (the platform is not in the path).
 func vaultKeyAddr(ctx context.Context, d Deps, vaultID, name string, version int) (secrets.VaultOpParams, error) {
-	dir, err := d.Client.VaultDirectory(ctx)
-	if err != nil {
-		return secrets.VaultOpParams{}, err
-	}
 	keys, err := d.Client.ListVaultKeys(ctx, vaultID)
 	if err != nil {
 		return secrets.VaultOpParams{}, err
 	}
-	handle, best := "", -1
+	handle, home, best := "", "", -1
 	for _, k := range keys {
 		if fmt.Sprintf("%v", k["name"]) != name {
 			continue
@@ -1549,19 +1551,24 @@ func vaultKeyAddr(ctx context.Context, d Deps, vaultID, name string, version int
 			v = int(vf)
 		}
 		h, _ := k["handle"].(string)
+		c, _ := k["constellation_id"].(string)
 		if version > 0 {
 			if v == version {
-				handle = h
+				handle, home = h, c
 				break
 			}
 			continue
 		}
 		if v > best {
-			best, handle = v, h
+			best, handle, home = v, h, c
 		}
 	}
 	if handle == "" {
 		return secrets.VaultOpParams{}, fmt.Errorf("key %q not found in vault %s", name, vaultID)
+	}
+	dir, err := d.Client.VaultDirectoryAt(ctx, home)
+	if err != nil {
+		return secrets.VaultOpParams{}, fmt.Errorf("the constellation holding key %q: %w", name, err)
 	}
 	ownerTok, err := auth.AccessTokenForAudience(ctx, d.Issuer, "privasys-platform")
 	if err != nil {

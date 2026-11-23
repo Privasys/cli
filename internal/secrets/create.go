@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	ratls "enclave-os-mini/clients/go/ratls"
 	vault "github.com/Privasys/enclave-vaults-client/go/vault"
@@ -314,7 +315,14 @@ func GetPublicKeyInVault(ctx context.Context, p VaultOpParams) (*PublicKeyResult
 			lastErr = ierr
 			continue
 		}
-		return &PublicKeyResult{KeyType: string(info.KeyType), PublicKey: info.PublicKey, Vault: ep}, nil
+		res := &PublicKeyResult{KeyType: string(info.KeyType), PublicKey: info.PublicKey, Vault: ep, PolicyVersion: info.PolicyVersion}
+		if info.ExpiresAt > 0 {
+			res.ExpiresAt = time.Unix(int64(info.ExpiresAt), 0).UTC().Format(time.RFC3339)
+		}
+		return res, nil
+	}
+	if lastErr == nil {
+		return nil, fmt.Errorf("no vault has key %q: %w", p.Handle, ErrKeyNotFound)
 	}
 	return nil, fmt.Errorf("no vault has key %q: %v", p.Handle, lastErr)
 }

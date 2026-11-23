@@ -316,6 +316,9 @@ constellation. The platform never sees the key material.
 					rows = append(rows, []string{"vaults", fmt.Sprintf("%d/%d (threshold %d)", res.Created, res.Total, res.Threshold)})
 				}
 				rows = append(rows, []string{"exportable", fmt.Sprintf("%t", res.Exportable)})
+				if addressing.ExpiresAt != "" {
+					rows = append(rows, []string{"expires", expiryCell(addressing.ExpiresAt, time.Now())})
+				}
 				return output.Table{Headers: []string{"FIELD", "VALUE"}, Rows: rows}
 			})
 		},
@@ -355,27 +358,31 @@ func mintVaultKeyGrant(ctx context.Context, client *api.Client, vaultID, name, k
 		return "", secrets.VaultAddressing{}, err
 	}
 	handle, _ := r.Key["handle"].(string)
+	expires, _ := r.Key["expires_at"].(string)
 	return r.Grant, secrets.VaultAddressing{
 		Handle:    handle,
 		Endpoints: r.Constellation.Endpoints,
 		MRENCLAVE: r.Constellation.MRENCLAVE,
 		AttServer: r.Constellation.AttestationServer,
 		Threshold: r.Constellation.Threshold,
+		ExpiresAt: expires,
 	}, nil
 }
 
 // vaultKeyAddressing builds the params to dial the constellation for an
 // owner-authenticated op (sign / public) on an existing key.
-// resolveVaultKeyHandle resolves a key name to its constellation handle via the
-// catalogue. version 0 = the current primary (highest version); version N pins a
-// specific version (so data signed/wrapped under an old version still
-// verifies/unwraps). Falls back to the v1 handle shape for uncatalogued keys.
-func resolveVaultKeyHandle(ctx context.Context, client *api.Client, vaultID, name string, version int) (string, error) {
+// resolveVaultKeyHandle resolves a key name to its constellation handle and its
+// home (the constellation it was created on; "" when the catalogue has none, so
+// the active one) via the catalogue. version 0 = the current primary (highest
+// version); version N pins a specific version (so data signed/wrapped under an
+// old version still verifies/unwraps). Falls back to the v1 handle shape for
+// uncatalogued keys.
+func resolveVaultKeyHandle(ctx context.Context, client *api.Client, vaultID, name string, version int) (handle, home string, err error) {
 	keys, err := client.ListVaultKeys(ctx, vaultID)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	best, bestV := "", -1
+	best, bestHome, bestV := "", "", -1
 	for _, k := range keys {
 		if fmt.Sprintf("%v", k["name"]) != name {
 			continue
@@ -385,33 +392,36 @@ func resolveVaultKeyHandle(ctx context.Context, client *api.Client, vaultID, nam
 			v = int(vf)
 		}
 		h, _ := k["handle"].(string)
+		home, _ := k["constellation_id"].(string)
 		if version > 0 {
 			if v == version {
-				return h, nil
+				return h, home, nil
 			}
 			continue
 		}
 		if v > bestV {
-			bestV, best = v, h
+			bestV, best, bestHome = v, h, home
 		}
 	}
 	if best != "" {
-		return best, nil
+		return best, bestHome, nil
 	}
 	if version > 0 {
-		return "", fmt.Errorf("version %d of key %q not found", version, name)
+		return "", "", fmt.Errorf("version %d of key %q not found", version, name)
 	}
-	return "vaults/" + vaultID + "/" + name, nil // legacy / uncatalogued
+	return "vaults/" + vaultID + "/" + name, "", nil // legacy / uncatalogued
 }
 
 func vaultKeyAddressing(ctx context.Context, cmd *cobra.Command, env *Env, client *api.Client, vaultID, name string, version int) (secrets.VaultOpParams, error) {
-	dir, err := client.VaultDirectory(ctx)
+	handle, home, err := resolveVaultKeyHandle(ctx, client, vaultID, name, version)
 	if err != nil {
 		return secrets.VaultOpParams{}, err
 	}
-	handle, err := resolveVaultKeyHandle(ctx, client, vaultID, name, version)
+	// The key lives on its home constellation, which after a vault roll is no
+	// longer the active one; a key with no recorded home is on the active one.
+	dir, err := client.VaultDirectoryAt(ctx, home)
 	if err != nil {
-		return secrets.VaultOpParams{}, err
+		return secrets.VaultOpParams{}, fmt.Errorf("the constellation holding key %q: %w", name, err)
 	}
 	// The vault audience the owner principal is checked against.
 	ownerTok, err := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "privasys-platform")
@@ -677,13 +687,15 @@ func newVaultKeyListCmd() *cobra.Command {
 			}
 			return output.Emit(env.Format, keys, func() output.Table {
 				rows := make([][]string, 0, len(keys))
+				now := time.Now()
 				for _, k := range keys {
+					exp, _ := k["expires_at"].(string)
 					rows = append(rows, []string{
-						fmt.Sprintf("%v", k["name"]), fmt.Sprintf("%v", k["key_type"]),
-						fmt.Sprintf("%v", k["kind"]), fmt.Sprintf("%v", k["exportable"]),
+						fmt.Sprintf("%v", k["name"]), fmt.Sprintf("%v", k["version"]), fmt.Sprintf("%v", k["key_type"]),
+						fmt.Sprintf("%v", k["kind"]), fmt.Sprintf("%v", k["exportable"]), expiryCell(exp, now),
 					})
 				}
-				return output.Table{Headers: []string{"NAME", "TYPE", "KIND", "EXPORTABLE"}, Rows: rows}
+				return output.Table{Headers: []string{"NAME", "VERSION", "TYPE", "KIND", "EXPORTABLE", "EXPIRES"}, Rows: rows}
 			})
 		},
 	}
@@ -775,12 +787,14 @@ func rotateVaultKeyGrant(ctx context.Context, client *api.Client, vaultID, name,
 		return "", secrets.VaultAddressing{}, err
 	}
 	handle, _ := r.Key["handle"].(string)
+	expires, _ := r.Key["expires_at"].(string)
 	return r.Grant, secrets.VaultAddressing{
 		Handle:    handle,
 		Endpoints: r.Constellation.Endpoints,
 		MRENCLAVE: r.Constellation.MRENCLAVE,
 		AttServer: r.Constellation.AttestationServer,
 		Threshold: r.Constellation.Threshold,
+		ExpiresAt: expires,
 	}, nil
 }
 

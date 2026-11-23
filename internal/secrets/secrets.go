@@ -32,6 +32,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -49,18 +50,18 @@ const grantPath = "/vault/key-creation-grant"
 // so these need not track every vault cutover. The 2-of-4 SGX constellation
 // across Paris + London.
 var DefaultEndpoints = []string{
-	"141.94.219.130:8551", "141.94.219.130:8552", // Paris
-	"198.244.201.58:8551", "198.244.201.58:8552", // London
+	"141.94.219.130:8579", "141.94.219.130:8580", // Paris
+	"198.244.201.58:8579", "198.244.201.58:8580", // London
 }
 
 const (
-	// Fallback pin (prod-v0.30.0, Paris+London 8551/8552). The directory is the
+	// Fallback pin (prod-v0.37.0, Paris+London 8579/8580). The directory is the
 	// source of truth; this is only used if /api/v1/vaults can't be reached.
 	// Keep it current with the ACTIVE constellation: a stale value still
 	// answers on the old ports but holds none of the live keys, so a stale
 	// fallback fails obscurely — "key not found" or a policy denial — instead
 	// of simply being unreachable.
-	DefaultMRENCLAVE = "f3e891860b69575394f4156ce25f4b0859bbe1f83dd55a883d6a4cf4191408ff"
+	DefaultMRENCLAVE = "56d750ed732327497c0424efa8f764a49d960bffc46f4b64490ea9cf5eaaf901"
 	DefaultAttServer = "https://as.privasys.org/verify"
 )
 
@@ -87,6 +88,7 @@ type VaultAddressing struct {
 	MRENCLAVE string
 	AttServer string
 	Threshold int
+	ExpiresAt string // RFC 3339, from the catalogue; "" if unknown
 }
 
 // VaultCreateParams creates a key in a user-facing vault using a grant the
@@ -138,7 +140,18 @@ type PublicKeyResult struct {
 	KeyType   string `json:"key_type"`
 	PublicKey []byte `json:"-"`
 	Vault     string `json:"vault"`
+	// ExpiresAt is when the vaults stop serving the key (RFC 3339). Nothing
+	// extends it; a long-lived key needs renewing before then.
+	ExpiresAt     string `json:"expires_at,omitempty"`
+	PolicyVersion uint32 `json:"policy_version"`
 }
+
+// ErrKeyNotFound: every vault reached answered that it holds no such key.
+var ErrKeyNotFound = errors.New("key not found")
+
+// UserKeyTTLSeconds is the lifetime of a user-owned key: the vaults' 90-day cap.
+// Without it in the policy the vaults apply their 30-day default.
+const UserKeyTTLSeconds = 90 * 24 * 60 * 60
 
 // AuditRecord is one entry of a key's tamper-evident audit log (who did what).
 type AuditRecord struct {
@@ -240,6 +253,7 @@ func userKeyPolicyJSON(issuer, sub string, exportable bool) json.RawMessage {
 		},
 		"operations": operations,
 		"mutability": map[string]interface{}{"immutable": []string{"Owner"}},
+		"lifecycle":  map[string]interface{}{"ttl_seconds": UserKeyTTLSeconds},
 	}
 	b, _ := json.Marshal(policy)
 	return b

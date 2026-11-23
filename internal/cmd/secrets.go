@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -56,6 +57,8 @@ func newSecretsCmd() *cobra.Command {
 	}
 	c.AddCommand(newSecretsCreateCmd())
 	c.AddCommand(newSecretsExportCmd())
+	c.AddCommand(newSecretsInfoCmd())
+	c.AddCommand(newSecretsRenewCmd())
 	return c
 }
 
@@ -80,7 +83,10 @@ to an ephemeral RA-TLS cert) and creates the key directly on the vaults.
 
 Provide the material with --value or --from-file, or omit both to generate
 --random-bytes of randomness. An exportable secret can later be retrieved by
-you (the owner); the material is never printed.`,
+you (the owner); the material is never printed.
+
+A secret expires 90 days after it is created; the vaults extend no key's life.
+Renew one you still need before then with 'privasys secrets renew'.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
@@ -127,11 +133,16 @@ you (the owner); the material is never printed.`,
 				output.Success(cmd.ErrOrStderr(), "Created secret %s (%d/%d vaults, threshold %d)",
 					res.Handle, res.Created, res.Total, res.Threshold)
 			}
-			return output.Emit(env.Format, res, func() output.Table {
+			expires := time.Now().Add(secrets.UserKeyTTLSeconds * time.Second).UTC().Format(time.RFC3339)
+			return output.Emit(env.Format, map[string]any{
+				"handle": res.Handle, "created": res.Created, "total": res.Total, "threshold": res.Threshold,
+				"exportable": res.Exportable, "cnf_x5t_s256": res.Thumbprint, "expires_at": expires,
+			}, func() output.Table {
 				return output.Table{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
 					{"handle", res.Handle},
 					{"vaults", fmt.Sprintf("%d/%d (threshold %d)", res.Created, res.Total, res.Threshold)},
 					{"exportable", fmt.Sprintf("%t", res.Exportable)},
+					{"expires", expiryCell(expires, time.Now())},
 				}}
 			})
 		},
@@ -194,9 +205,16 @@ a fingerprint, never the key.`,
 			if err != nil {
 				return err
 			}
+			handle := "users/" + sub + "/" + args[0]
+			if len(endpoints) == 0 && mrenclave == "" && attServer == "" {
+				// The secret's home: after a vault roll it may be a constellation
+				// other than the active one.
+				if home, _, lerr := secrets.LocateSecret(ctx, client, handle, tok, attTok); lerr == nil {
+					endpoints, mrenclave, attServer = home.Endpoints, home.MRENCLAVE, home.AttestationServer
+				}
+			}
 			endpoints, mrenclave, attServer = resolveConstellation(ctx, client, endpoints, mrenclave, attServer)
 
-			handle := "users/" + sub + "/" + args[0]
 			material, res, err := secrets.Export(ctx, secrets.ExportParams{
 				Issuer: env.Cfg.Issuer, Bearer: tok, Sub: sub, Handle: handle,
 				Endpoints: endpoints, Threshold: threshold, MRENCLAVE: mrenclave,
