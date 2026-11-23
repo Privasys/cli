@@ -135,6 +135,9 @@ func loadEnv(cmd *cobra.Command) (*Env, error) {
 	if v, _ := cmd.Flags().GetString("account"); v != "" {
 		cfg.Account = v
 	}
+	// The test platform takes its own audience: tokens follow the endpoint
+	// unless the configuration names one.
+	auth.SetPlatformAudience(cfg.PlatformAudience())
 	format := cfg.Format
 	if v, _ := cmd.Flags().GetString("format"); v != "" {
 		format = v

@@ -203,7 +203,7 @@ func newAuthActivateSACmd() *cobra.Command {
 				return err
 			}
 			// Verify the key works before saving.
-			if _, err := auth.MintServiceAccountToken(cmd.Context(), env.Cfg.Issuer, key, auth.PlatformAudience); err != nil {
+			if _, err := auth.MintServiceAccountToken(cmd.Context(), env.Cfg.Issuer, key, auth.CurrentPlatformAudience()); err != nil {
 				return fmt.Errorf("service account verification failed: %w", err)
 			}
 			cred := &auth.Credential{

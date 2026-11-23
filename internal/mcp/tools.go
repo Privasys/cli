@@ -1570,7 +1570,7 @@ func vaultKeyAddr(ctx context.Context, d Deps, vaultID, name string, version int
 	if err != nil {
 		return secrets.VaultOpParams{}, fmt.Errorf("the constellation holding key %q: %w", name, err)
 	}
-	ownerTok, err := auth.AccessTokenForAudience(ctx, d.Issuer, "privasys-platform")
+	ownerTok, err := auth.AccessTokenForAudience(ctx, d.Issuer, auth.VaultAudience)
 	if err != nil {
 		return secrets.VaultOpParams{}, err
 	}

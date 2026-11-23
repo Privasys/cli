@@ -449,7 +449,7 @@ func vaultKeyAddressing(ctx context.Context, cmd *cobra.Command, env *Env, clien
 		return secrets.VaultOpParams{}, fmt.Errorf("the constellation holding key %q: %w", name, err)
 	}
 	// The vault audience the owner principal is checked against.
-	ownerTok, err := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "privasys-platform")
+	ownerTok, err := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, auth.VaultAudience)
 	if err != nil {
 		return secrets.VaultOpParams{}, err
 	}

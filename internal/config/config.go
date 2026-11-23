@@ -27,6 +27,12 @@ const (
 	// global --test flag. Auth still goes through the production issuer
 	// (privasys.id), so only the platform endpoint differs.
 	TestEndpoint = "https://api.developer.test.privasys.org"
+
+	// DefaultAudience is the platform's audience on the shared issuer. The
+	// test platform has its own, so its roles never mix with production's
+	// (privasys-platform-test:app:<hex>:owner, privasys-platform-test:admin).
+	DefaultAudience = "privasys-platform"
+	TestAudience    = "privasys-platform-test"
 )
 
 // Configuration is a single named profile.
@@ -35,6 +41,21 @@ type Configuration struct {
 	Issuer   string `yaml:"issuer"`
 	Account  string `yaml:"account,omitempty"`
 	Format   string `yaml:"format,omitempty"`
+	// Audience is the platform audience tokens are requested for. Empty means
+	// the one that goes with the endpoint: the test audience for the test
+	// endpoint, the production one otherwise.
+	Audience string `yaml:"audience,omitempty"`
+}
+
+// PlatformAudience is the audience the platform at Endpoint accepts.
+func (c *Configuration) PlatformAudience() string {
+	if c.Audience != "" {
+		return c.Audience
+	}
+	if strings.TrimRight(c.Endpoint, "/") == TestEndpoint {
+		return TestAudience
+	}
+	return DefaultAudience
 }
 
 // File is the whole config document.
@@ -110,7 +131,8 @@ func (f *File) Save() error {
 }
 
 // Active returns the current configuration, applying env-var overrides
-// (PRIVASYS_ENDPOINT, PRIVASYS_ISSUER, PRIVASYS_ACCOUNT, PRIVASYS_FORMAT).
+// (PRIVASYS_ENDPOINT, PRIVASYS_ISSUER, PRIVASYS_ACCOUNT, PRIVASYS_FORMAT,
+// PRIVASYS_AUDIENCE).
 // Env overrides do not mutate the saved file.
 func (f *File) Active() *Configuration {
 	base := f.Configurations[f.Current]
@@ -139,6 +161,9 @@ func (f *File) Active() *Configuration {
 	if v := os.Getenv("PRIVASYS_FORMAT"); v != "" {
 		c.Format = v
 	}
+	if v := os.Getenv("PRIVASYS_AUDIENCE"); v != "" {
+		c.Audience = v
+	}
 	return &c
 }
 
@@ -156,13 +181,15 @@ func (f *File) Set(key, value string) error {
 		c.Issuer = value
 	case "account":
 		c.Account = value
+	case "audience":
+		c.Audience = value
 	case "format":
 		if value != "table" && value != "json" && value != "yaml" {
 			return fmt.Errorf("format must be one of table|json|yaml")
 		}
 		c.Format = value
 	default:
-		return fmt.Errorf("unknown key %q (valid: endpoint, issuer, account, format)", key)
+		return fmt.Errorf("unknown key %q (valid: endpoint, issuer, account, audience, format)", key)
 	}
 	return f.Save()
 }
@@ -177,6 +204,8 @@ func (f *File) Get(key string) (string, error) {
 		return c.Issuer, nil
 	case "account":
 		return c.Account, nil
+	case "audience":
+		return c.PlatformAudience(), nil
 	case "format":
 		return c.Format, nil
 	case "current":

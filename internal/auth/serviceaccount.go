@@ -16,11 +16,31 @@ import (
 	"fmt"
 	"net/url"
 	"time"
+
+	"github.com/Privasys/cli/internal/config"
 )
 
-// PlatformAudience is the default resource-server audience for the
-// management-service API.
-const PlatformAudience = "privasys-platform"
+// PlatformAudience is the production platform's audience. The run's audience
+// is CurrentPlatformAudience: the test platform has its own.
+const PlatformAudience = config.DefaultAudience
+
+// VaultAudience is the audience the vaults check an owner token against. It
+// stays the production one on the test platform as well.
+const VaultAudience = config.DefaultAudience
+
+// platformAudience is the audience this run's platform tokens carry.
+var platformAudience = PlatformAudience
+
+// SetPlatformAudience selects the platform audience for this run.
+func SetPlatformAudience(aud string) {
+	if aud == "" {
+		aud = PlatformAudience
+	}
+	platformAudience = aud
+}
+
+// CurrentPlatformAudience is the audience this run's platform tokens carry.
+func CurrentPlatformAudience() string { return platformAudience }
 
 const jwtBearerGrantType = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 

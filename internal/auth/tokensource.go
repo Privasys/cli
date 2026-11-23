@@ -19,18 +19,20 @@ const expirySkew = 60 * time.Second
 
 // AccessToken returns a valid access token for the issuer, honoring (in order):
 // PRIVASYS_ACCESS_TOKEN, PRIVASYS_SERVICE_KEY, a stored service account, then a
-// stored user credential (refreshing silently when needed).
+// stored user credential (refreshing silently when needed). The token is for
+// the run's platform audience (CurrentPlatformAudience).
 func AccessToken(ctx context.Context, issuer string) (string, error) {
 	if t := os.Getenv("PRIVASYS_ACCESS_TOKEN"); t != "" {
 		return t, nil
 	}
+	aud := CurrentPlatformAudience()
 
 	if sk := os.Getenv("PRIVASYS_SERVICE_KEY"); sk != "" {
 		k, err := loadServiceKeyFromEnv(sk)
 		if err != nil {
 			return "", err
 		}
-		tr, err := MintServiceAccountToken(ctx, issuer, k, PlatformAudience)
+		tr, err := MintServiceAccountToken(ctx, issuer, k, aud)
 		if err != nil {
 			return "", err
 		}
@@ -40,6 +42,9 @@ func AccessToken(ctx context.Context, issuer string) (string, error) {
 	cred, err := Load(issuer)
 	if err != nil {
 		return "", err
+	}
+	if aud != PlatformAudience {
+		return audienceAccessToken(ctx, issuer, cred, aud)
 	}
 
 	// Service-account credential: mint on demand (no refresh token involved).
@@ -77,6 +82,48 @@ func AccessToken(ctx context.Context, issuer string) (string, error) {
 	cred.AccessExpiresAt = time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
 	if tr.RefreshToken != "" {
 		cred.RefreshToken = tr.RefreshToken
+	}
+	if err := Save(cred); err != nil {
+		return "", err
+	}
+	return tr.AccessToken, nil
+}
+
+// audienceAccessToken returns a token for a platform audience other than the
+// default one, cached apart from the default audience's token. A user session
+// gets it with the refresh grant and an audience scope; the subject is the
+// same, since the audience does not change the client.
+func audienceAccessToken(ctx context.Context, issuer string, cred *Credential, aud string) (string, error) {
+	if c, ok := cred.AudienceTokens[aud]; ok && c.AccessToken != "" && time.Until(c.ExpiresAt) > expirySkew {
+		return c.AccessToken, nil
+	}
+	var tr *TokenResponse
+	switch {
+	case cred.IsServiceKeyAcc && cred.ServiceKey != "":
+		k, err := ParseServiceKey([]byte(cred.ServiceKey))
+		if err != nil {
+			return "", err
+		}
+		if tr, err = MintServiceAccountToken(ctx, issuer, k, aud); err != nil {
+			return "", err
+		}
+	case cred.RefreshToken != "":
+		var err error
+		if tr, err = refreshWithScope(ctx, issuer, cred.RefreshToken, "openid audience:"+aud); err != nil {
+			return "", fmt.Errorf("session refresh failed (run `privasys auth login`): %w", err)
+		}
+		if tr.RefreshToken != "" {
+			cred.RefreshToken = tr.RefreshToken
+		}
+	default:
+		return "", ErrNotLoggedIn
+	}
+	if cred.AudienceTokens == nil {
+		cred.AudienceTokens = map[string]AudienceToken{}
+	}
+	cred.AudienceTokens[aud] = AudienceToken{
+		AccessToken: tr.AccessToken,
+		ExpiresAt:   time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second),
 	}
 	if err := Save(cred); err != nil {
 		return "", err

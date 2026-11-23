@@ -18,6 +18,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zalando/go-keyring"
 )
@@ -208,4 +209,47 @@ func readCredsFile(t *testing.T) (string, error) {
 	}
 	b, err := os.ReadFile(p)
 	return string(b), err
+}
+
+// The test platform's token comes from the refresh grant with its audience
+// scope, is cached apart from the production token, and leaves that one alone.
+func TestAccessTokenForTheTestAudience(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("PRIVASYS_CONFIG_DIR", t.TempDir())
+	t.Setenv("PRIVASYS_ACCESS_TOKEN", "")
+	t.Setenv("PRIVASYS_SERVICE_KEY", "")
+	var scopes []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		scopes = append(scopes, r.PostForm.Get("scope"))
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"access_token": "test-token", "refresh_token": "rt-2", "expires_in": 3600,
+		})
+	}))
+	defer srv.Close()
+	if err := Save(&Credential{Issuer: srv.URL, AccessToken: "prod-token",
+		AccessExpiresAt: time.Now().Add(time.Hour), RefreshToken: "rt-1"}); err != nil {
+		t.Fatal(err)
+	}
+	defer SetPlatformAudience("")
+
+	SetPlatformAudience("privasys-platform-test")
+	for i := 0; i < 2; i++ {
+		tok, err := AccessToken(context.Background(), srv.URL)
+		if err != nil || tok != "test-token" {
+			t.Fatalf("test audience: %q, %v", tok, err)
+		}
+	}
+	if len(scopes) != 1 || scopes[0] != "openid audience:privasys-platform-test" {
+		t.Errorf("token requests: %q, want one for the test audience, then the cache", scopes)
+	}
+	cred, _ := Load(srv.URL)
+	if cred.RefreshToken != "rt-2" {
+		t.Errorf("the rotated refresh token was not kept: %q", cred.RefreshToken)
+	}
+
+	SetPlatformAudience("")
+	if tok, err := AccessToken(context.Background(), srv.URL); err != nil || tok != "prod-token" {
+		t.Errorf("production audience: %q, %v", tok, err)
+	}
 }

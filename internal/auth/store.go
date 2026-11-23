@@ -40,6 +40,11 @@ type Credential struct {
 	IDToken         string    `json:"id_token,omitempty"`
 	AccessExpiresAt time.Time `json:"access_expires_at,omitempty"`
 
+	// AudienceTokens caches access tokens for a platform audience other than
+	// the default one (the test platform's), keyed by audience. AccessToken
+	// above stays the default audience's.
+	AudienceTokens map[string]AudienceToken `json:"audience_tokens,omitempty"`
+
 	// RefreshToken (user flows) — blanked from the file when kept in keychain.
 	RefreshToken      string `json:"refresh_token,omitempty"`
 	refreshInKeychain bool
@@ -49,6 +54,12 @@ type Credential struct {
 	ServiceKey      string `json:"service_key,omitempty"`
 	keyInKeychain   bool
 	IsServiceKeyAcc bool `json:"is_service_account,omitempty"`
+}
+
+// AudienceToken is a cached access token for one audience.
+type AudienceToken struct {
+	AccessToken string    `json:"access_token"`
+	ExpiresAt   time.Time `json:"expires_at"`
 }
 
 func credentialsPath() (string, error) {
