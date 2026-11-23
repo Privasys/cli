@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,7 +28,7 @@ func hintAgents(cmd *cobra.Command) {
 	if _, err := os.Stat(".mcp.json"); err == nil {
 		return // already wired in this project
 	}
-	fmt.Fprintf(w, "\n%s let an AI agent (Claude Code, Cursor, …) drive Privasys — run %s in your project.\n",
+	fmt.Fprintf(w, "\n%s let an AI agent (Claude Code, Codex, Cursor, …) drive Privasys — run %s in your project.\n",
 		output.Blue("tip:"), output.Bold("privasys agents init"))
 }
 
@@ -48,16 +49,19 @@ func newAgentsInitCmd() *cobra.Command {
 		dir        string
 		printOnly  bool
 		noAgentsMD bool
+		noSkill    bool
 	)
 	c := &cobra.Command{
 		Use:   "init",
-		Short: "Write MCP registration + AGENTS.md so an agent can mount the platform",
-		Long: "Drops a project-local MCP registration for the chosen harness(es) and an AGENTS.md briefing, so an AI agent picks up the privasys tools with no manual JSON editing.\n\n" +
+		Short: "Write MCP registration, the Privasys skill and AGENTS.md so an agent can drive the platform",
+		Long: "Drops a project-local MCP registration for the chosen harness(es), the Privasys skill (SKILL.md and its references) in the folder each harness loads skills from, and an AGENTS.md briefing, so an AI agent picks up the privasys tools and knows how to use them with no manual editing.\n\n" +
+			"Skill folders: .claude/skills (Claude Code), .agents/skills (Codex, Cursor, Gemini CLI), .github/skills (VS Code). Codex reads its MCP servers from .codex/config.toml, in trusted projects only.\n\n" +
 			"Defaults to Claude Code. Use --harness (repeatable) to pick others or --all for every known harness:\n  " +
 			strings.Join(agents.Names(), ", ") + "\n\n" +
 			"Re-running is idempotent: existing servers and unrelated keys are preserved, and the AGENTS.md block is replaced in place.",
 		Example: "  privasys agents init                 # Claude Code + AGENTS.md in the current repo\n" +
 			"  privasys agents init --all          # every supported harness\n" +
+			"  privasys agents init --harness codex  # Codex: .codex/config.toml + .agents/skills\n" +
 			"  privasys agents init --harness cursor --harness vscode\n" +
 			"  privasys agents init --print        # show what would be written, touch nothing",
 		Args: cobra.NoArgs,
@@ -98,6 +102,44 @@ func newAgentsInitCmd() *cobra.Command {
 				results = append(results, result{Harness: h.Name, Path: h.Path, Status: status})
 			}
 
+			if !noSkill {
+				files, err := agents.SkillFiles()
+				if err != nil {
+					return fmt.Errorf("reading the bundled skill: %w", err)
+				}
+				for _, sd := range agents.SkillDirs(selected) {
+					rel := sd + "/" + agents.SkillName
+					if printOnly {
+						for _, f := range files {
+							fmt.Fprintf(cmd.OutOrStdout(), "# skill -> %s/%s (%d bytes)\n", rel, f.Path, len(f.Content))
+						}
+						results = append(results, result{Path: rel, Status: "preview"})
+						continue
+					}
+					// The skill is managed: re-running brings every file back
+					// to the version this CLI ships.
+					counts := map[string]int{}
+					for _, f := range files {
+						path := filepath.Join(dir, filepath.FromSlash(rel+"/"+f.Path))
+						existing, err := os.ReadFile(path)
+						existed := err == nil
+						st, err := writeFile(path, f.Content, existed, !existed || !bytes.Equal(existing, f.Content))
+						if err != nil {
+							return err
+						}
+						counts[st]++
+					}
+					status := "unchanged"
+					switch {
+					case counts["updated"] > 0 || (counts["created"] > 0 && counts["unchanged"] > 0):
+						status = "updated"
+					case counts["created"] > 0:
+						status = "created"
+					}
+					results = append(results, result{Path: rel, Status: status})
+				}
+			}
+
 			if !noAgentsMD {
 				path := filepath.Join(dir, "AGENTS.md")
 				existing, _ := os.ReadFile(path)
@@ -127,9 +169,14 @@ func newAgentsInitCmd() *cobra.Command {
 				w := cmd.ErrOrStderr()
 				fmt.Fprintf(w, "\n%s Wired. Next steps:\n", output.Check())
 				fmt.Fprintf(w, "  1. %s your agent/editor so it picks up the new config (and your PATH, if you just installed privasys).\n", output.Bold("Restart"))
+				for _, h := range selected {
+					if h.Name == "codex" {
+						fmt.Fprintf(w, "     Codex loads .codex/config.toml only in a %s project; or run once:  %s\n", output.Bold("trusted"), output.Bold("codex mcp add privasys -- privasys mcp serve"))
+					}
+				}
 				fmt.Fprintf(w, "  2. Verify it can reach the CLI — ask the agent to run:  %s\n", output.Bold("privasys version"))
 				fmt.Fprintf(w, "  3. Try it:  \"deploy me a confidential app\"  or  \"check my Privasys account\".\n")
-				fmt.Fprintf(w, "\nUsing the Claude Code terminal CLI? For the full skill + /deploy /attest commands instead:\n")
+				fmt.Fprintf(w, "\nUsing the Claude Code terminal CLI? The plugin adds the /deploy and /attest commands too:\n")
 				fmt.Fprintf(w, "  %s\n", output.Bold("claude plugin marketplace add Privasys/cli && claude plugin install privasys@privasys"))
 			}
 			return nil
@@ -140,6 +187,7 @@ func newAgentsInitCmd() *cobra.Command {
 	c.Flags().StringVar(&dir, "dir", ".", "project directory to write into")
 	c.Flags().BoolVar(&printOnly, "print", false, "print what would be written without touching disk")
 	c.Flags().BoolVar(&noAgentsMD, "no-agents-md", false, "do not write/update AGENTS.md")
+	c.Flags().BoolVar(&noSkill, "no-skill", false, "do not install the Privasys skill")
 	return c
 }
 

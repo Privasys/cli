@@ -113,15 +113,20 @@ The CLI is built to be driven by AI agents.
 ```sh
 # Claude Code
 claude mcp add privasys -- privasys mcp serve
+# Codex
+codex mcp add privasys -- privasys mcp serve
 ```
 
-**One-command wiring.** `privasys agents init` drops the right MCP registration (and an `AGENTS.md` briefing) into your repo so an agent picks up the tools with no manual JSON editing:
+**One-command wiring.** `privasys agents init` drops the right MCP registration, the Privasys skill and an `AGENTS.md` briefing into your repo, so an agent picks up the tools and knows how to use them with no manual editing:
 
 ```sh
-privasys agents init                 # Claude Code + AGENTS.md
-privasys agents init --all           # every supported harness (claude, cursor, vscode, gemini)
+privasys agents init                 # Claude Code + skill + AGENTS.md
+privasys agents init --harness codex # Codex: .codex/config.toml + .agents/skills
+privasys agents init --all           # every supported harness (claude, codex, cursor, vscode, gemini)
 privasys agents init --print         # show what would be written, touch nothing
 ```
+
+The skill (`SKILL.md` and its references, in the open [Agent Skills](https://agentskills.io) format) teaches the deploy and attest loop, the `privasys.json` manifest, storage, upgrades and the vault. It goes where each harness loads skills from: `.claude/skills` (Claude Code), `.agents/skills` (Codex, Cursor, Gemini CLI) and `.github/skills` (VS Code). Codex reads `.codex/config.toml` only in a project you have marked as trusted. The skill is also published at [docs.privasys.org/skills/privasys/SKILL.md](https://docs.privasys.org/skills/privasys/SKILL.md).
 
 It is idempotent and never writes secrets — the generated config only points at the local `privasys` binary, which reads its token from the OS keychain.
 

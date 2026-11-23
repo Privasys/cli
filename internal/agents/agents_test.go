@@ -151,3 +151,81 @@ func TestNamesSorted(t *testing.T) {
 		}
 	}
 }
+
+func TestMergeCodexFresh(t *testing.T) {
+	h, ok := Lookup("codex")
+	if !ok {
+		t.Fatal("codex not in registry")
+	}
+	out, changed, err := h.Merge(nil)
+	if err != nil || !changed {
+		t.Fatalf("fresh merge: changed=%v err=%v", changed, err)
+	}
+	want := "[mcp_servers.privasys]\ncommand = \"privasys\"\nargs = [\"mcp\", \"serve\"]\n"
+	if string(out) != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", out, want)
+	}
+}
+
+func TestMergeCodexKeepsOtherTables(t *testing.T) {
+	h, _ := Lookup("codex")
+	in := "model = \"gpt-5\"\n\n[mcp_servers.other]\ncommand = \"other\"\n"
+	out, changed, err := h.Merge([]byte(in))
+	if err != nil || !changed {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	s := string(out)
+	if !strings.HasPrefix(s, in) {
+		t.Fatalf("existing content not kept verbatim:\n%s", s)
+	}
+	if strings.Count(s, "[mcp_servers.privasys]") != 1 {
+		t.Fatalf("privasys table missing or duplicated:\n%s", s)
+	}
+	again, changed, _ := h.Merge(out)
+	if changed || string(again) != s {
+		t.Fatalf("re-merge is not idempotent:\n%s", again)
+	}
+}
+
+func TestMergeCodexReplacesTableKeepsSubtables(t *testing.T) {
+	h, _ := Lookup("codex")
+	in := "[mcp_servers.privasys]\ncommand = \"/old/privasys\"\nargs = [\"mcp\", \"serve\", \"--test\"]\n\n" +
+		"[mcp_servers.privasys.env]\nFOO = \"bar\"\n\n[profiles.x]\nmodel = \"m\"\n"
+	out, _, err := h.Merge([]byte(in))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if strings.Contains(s, "/old/privasys") || strings.Contains(s, "--test") {
+		t.Fatalf("old keys kept:\n%s", s)
+	}
+	for _, keep := range []string{"[mcp_servers.privasys.env]\nFOO = \"bar\"", "[profiles.x]\nmodel = \"m\""} {
+		if !strings.Contains(s, keep) {
+			t.Fatalf("lost %q:\n%s", keep, s)
+		}
+	}
+}
+
+func TestSkillFilesBundled(t *testing.T) {
+	files, err := SkillFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, f := range files {
+		seen[f.Path] = true
+	}
+	for _, want := range []string{"SKILL.md", "references/manifest.md"} {
+		if !seen[want] {
+			t.Fatalf("bundled skill lacks %s (have %v)", want, seen)
+		}
+	}
+}
+
+func TestSkillDirsDeduplicates(t *testing.T) {
+	dirs := SkillDirs(All())
+	want := []string{".claude/skills", ".agents/skills", ".github/skills"}
+	if strings.Join(dirs, ",") != strings.Join(want, ",") {
+		t.Fatalf("SkillDirs = %v, want %v", dirs, want)
+	}
+}

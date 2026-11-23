@@ -16,6 +16,7 @@ When the user asks how something works (confidential computing, how Privasys wor
 - `references/ra-tls.md` — how a normal TLS handshake carries hardware proof.
 - `references/wallet-auth.md` — sign-in with the wallet or a passkey; the key never leaves the device.
 - `references/data-protection.md` — vault-keyed storage, the key is the user's, owner-approved upgrades.
+- `references/manifest.md`: the `privasys.json` manifest, with tools, who may call them, prices, the configure step, surfaces served in the clear.
 
 ## Onboarding a new user
 
@@ -99,9 +100,22 @@ app for them:
    (e.g. Postgres `PGDATA=/data/pgdata`). Anything elsewhere is ephemeral.
 3. **Serve `GET /health` → 200** on `$PORT` (the readiness probe).
 
-Then add a `privasys.json` describing the app's endpoints as tools (so the API
-becomes callable as MCP tools over RA-TLS). See the reference app
-`container-app-confidential-postgres` for a correct example.
+Then add a `privasys.json` manifest and embed it in the image as the
+`org.privasys.manifest` label. **Read `references/manifest.md` before writing
+one.** The manifest is measured, and it is where the app declares, rather than
+codes:
+
+- its API as tools (callable as MCP tools over RA-TLS);
+- **who may call each tool** (`x-privasys.auth`: `public`, `authenticated`,
+  `owner`, `role(a, b)`), checked by the runtime before the request reaches the
+  app, so never write platform token checks in the app;
+- a per-call price (`x-privasys.price`);
+- the owner's **configure** step (secrets and settings the app waits for);
+- the **surfaces** served in the clear (a static browser shell, public routes,
+  webhooks). Everything else is private.
+
+The template `container-app-web` shows surfaces;
+`container-app-confidential-postgres` shows storage.
 
 ### Protecting the user's IP (private images)
 
@@ -134,7 +148,8 @@ and run is attested.
 
 - **Configure** (`apps_configure`): some apps boot **frozen** — every endpoint
   503s with "awaiting initial configuration" until configured. Call
-  `apps_configure` with the values from the role:config tool's schema; a
+  `apps_configure` with the values from the manifest's `configure` section
+  (shown by `apps_api`); a
   successful call lifts the freeze gate and the app starts serving. Do **not**
   pass a secret the user told you not to handle (e.g. an API key) — surface those
   for the human to set.
@@ -186,6 +201,12 @@ REST facade** over a vault (CLI only) so non-CLI clients use the vHSM unchanged.
 
 ## Conventions
 
+- The CLI and MCP server talk to **production** by default. `--test` targets the
+  Privasys test environment, `--endpoint <url>` a custom one. Pass the same flag
+  on every command of a session.
+- `--account <id>` acts on another account the user belongs to.
+- A version id (`apps versions`) pins exactly what you stage, promote or deploy;
+  pass it rather than relying on a default.
 - Apps are addressable by **name or id** interchangeably.
 - Every CLI command supports `--format json`; output auto-switches to JSON when piped. `--no-input` never prompts.
 - Exit codes: `0` ok, `3` not authenticated, `4` not authorized, `5` not found.

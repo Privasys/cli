@@ -28,22 +28,27 @@ type serverSpec struct {
 }
 
 // Harness is one supported AI-agent ecosystem and where its project-local MCP
-// registration lives.
+// registration and skills live.
 type Harness struct {
-	Name  string // stable id used on the command line, e.g. "claude"
-	Title string // human label, e.g. "Claude Code"
-	Path  string // repo-relative file the registration is merged into
-	key   string // top-level JSON object the server entry sits under
-	stdio bool   // whether the server entry carries an explicit "type":"stdio"
+	Name      string // stable id used on the command line, e.g. "claude"
+	Title     string // human label, e.g. "Claude Code"
+	Path      string // repo-relative file the registration is merged into
+	SkillsDir string // repo-relative folder the harness loads Agent Skills from
+	key       string // top-level JSON object the server entry sits under
+	stdio     bool   // whether the server entry carries an explicit "type":"stdio"
+	toml      bool   // the registration is a TOML table rather than JSON
 }
 
 // Registry is the set of harnesses `agents init` knows how to wire, keyed by
-// Name. Each writes a project-local file so the wiring travels with the repo.
+// Name. Each writes project-local files so the wiring travels with the repo.
+// .agents/skills is the shared Agent Skills folder that Codex, Cursor and
+// Gemini CLI all read; Claude Code and VS Code (Copilot) read their own.
 var registry = []Harness{
-	{Name: "claude", Title: "Claude Code", Path: ".mcp.json", key: "mcpServers"},
-	{Name: "cursor", Title: "Cursor", Path: ".cursor/mcp.json", key: "mcpServers"},
-	{Name: "vscode", Title: "VS Code", Path: ".vscode/mcp.json", key: "servers", stdio: true},
-	{Name: "gemini", Title: "Gemini CLI", Path: ".gemini/settings.json", key: "mcpServers"},
+	{Name: "claude", Title: "Claude Code", Path: ".mcp.json", SkillsDir: ".claude/skills", key: "mcpServers"},
+	{Name: "codex", Title: "Codex", Path: ".codex/config.toml", SkillsDir: ".agents/skills", toml: true},
+	{Name: "cursor", Title: "Cursor", Path: ".cursor/mcp.json", SkillsDir: ".agents/skills", key: "mcpServers"},
+	{Name: "vscode", Title: "VS Code", Path: ".vscode/mcp.json", SkillsDir: ".github/skills", key: "servers", stdio: true},
+	{Name: "gemini", Title: "Gemini CLI", Path: ".gemini/settings.json", SkillsDir: ".agents/skills", key: "mcpServers"},
 }
 
 // All returns the known harnesses in a stable order.
@@ -87,6 +92,10 @@ func (h Harness) serverEntry() map[string]any {
 // be nil or empty for a fresh file. It reports whether the result differs from
 // what was already there.
 func (h Harness) Merge(existing []byte) (result []byte, changed bool, err error) {
+	if h.toml {
+		out := mergeTOML(existing)
+		return out, !bytes.Equal(bytes.TrimSpace(existing), bytes.TrimSpace(out)), nil
+	}
 	root := map[string]any{}
 	if len(bytes.TrimSpace(existing)) > 0 {
 		if err := json.Unmarshal(existing, &root); err != nil {
@@ -106,6 +115,61 @@ func (h Harness) Merge(existing []byte) (result []byte, changed bool, err error)
 		return nil, false, err
 	}
 	return out, !bytes.Equal(bytes.TrimSpace(existing), bytes.TrimSpace(out)), nil
+}
+
+// tomlHeader opens the Privasys server's table in a Codex config.toml.
+const tomlHeader = "[mcp_servers.privasys]"
+
+// tomlTable is the Privasys server's table, without the header.
+func tomlTable() string {
+	args := make([]string, len(command.Args))
+	for i, a := range command.Args {
+		args[i] = fmt.Sprintf("%q", a)
+	}
+	return fmt.Sprintf("command = %q\nargs = [%s]\n", command.Command, strings.Join(args, ", "))
+}
+
+// mergeTOML puts the Privasys server table into a Codex config.toml, leaving
+// every other line as it was. An existing [mcp_servers.privasys] table has its
+// keys replaced up to the next table header, so subtables the user added (such
+// as [mcp_servers.privasys.env]) survive. Without one, the table is appended.
+func mergeTOML(existing []byte) []byte {
+	s := strings.ReplaceAll(string(existing), "\r\n", "\n")
+	lines := strings.Split(s, "\n")
+	start := -1
+	for i, l := range lines {
+		if strings.TrimSpace(l) == tomlHeader {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		trimmed := strings.TrimRight(s, "\n")
+		if trimmed == "" {
+			return []byte(tomlHeader + "\n" + tomlTable())
+		}
+		return []byte(trimmed + "\n\n" + tomlHeader + "\n" + tomlTable())
+	}
+	end := len(lines)
+	for j := start + 1; j < len(lines); j++ {
+		if strings.HasPrefix(strings.TrimSpace(lines[j]), "[") {
+			end = j
+			break
+		}
+	}
+	rest := strings.Join(lines[end:], "\n")
+	out := strings.Join(lines[:start], "\n")
+	if out != "" {
+		out += "\n"
+	}
+	out += tomlHeader + "\n" + tomlTable()
+	if strings.TrimSpace(rest) != "" {
+		out += "\n" + rest
+	}
+	if !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	return []byte(out)
 }
 
 func marshalIndent(v any) ([]byte, error) {
@@ -136,6 +200,8 @@ platform with the ` + "`privasys`" + ` CLI, which is also an MCP server (` + "`p
 - **Auth**: ` + "`privasys auth login`" + ` (human, wallet/passkey) or set ` + "`PRIVASYS_SERVICE_KEY`" + ` for unattended use.
 - **Deploy loop**: ` + "`privasys apps create`" + ` -> ` + "`privasys apps deploy <app> --watch`" + ` -> ` + "`privasys apps call <app> <api>`" + `.
 - **Verify**: ` + "`privasys attest <app>`" + ` challenges the enclave directly over RA-TLS and verifies its hardware quote. Always attest before trusting an endpoint.
+- **Environment**: commands target production; ` + "`--test`" + ` targets the Privasys test environment.
+- **Manifest**: the app's ` + "`privasys.json`" + ` (embedded as the ` + "`org.privasys.manifest`" + ` image label) declares its tools, who may call each one (` + "`x-privasys.auth`" + `), its configure step and what it serves in the clear. The ` + "`privasys`" + ` skill installed next to this file explains it in full.
 - **Machine output**: every command takes ` + "`--format json`" + `; ` + "`--no-input`" + ` never prompts. Exit codes: 0 ok, 3 not authenticated, 4 not authorized, 5 not found.
 
 Prefer the MCP tools (` + "`apps_*`" + `, ` + "`attest`" + `, ` + "`billing_*`" + `, ` + "`team_*`" + `) when one fits; fall back to the CLI for anything not exposed as a tool.
