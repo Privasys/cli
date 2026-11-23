@@ -259,7 +259,16 @@ func SignInVault(ctx context.Context, p VaultOpParams, message []byte) (*SignRes
 		}
 		return &SignResult{Signature: sig, Alg: alg, Vault: ep}, nil
 	}
-	return nil, fmt.Errorf("no vault could sign %q: %v", p.Handle, lastErr)
+	return nil, noVaultCouldSign(p.Handle, lastErr)
+}
+
+// noVaultCouldSign reports a failed single-vault sign: the last vault error,
+// or, when every vault answered that it does not hold the key, that.
+func noVaultCouldSign(handle string, lastErr error) error {
+	if lastErr == nil {
+		return fmt.Errorf("key %q was not found on any vault of its constellation", handle)
+	}
+	return fmt.Errorf("no vault could sign %q: %v", handle, lastErr)
 }
 
 // SignPrehashInVault signs a 32-byte SHA-256 digest raw (ECDSA-P256, no re-hash)
@@ -288,7 +297,7 @@ func SignPrehashInVault(ctx context.Context, p VaultOpParams, digest []byte) (*S
 		}
 		return &SignResult{Signature: sig, Alg: alg, Vault: ep}, nil
 	}
-	return nil, fmt.Errorf("no vault could sign %q: %v", p.Handle, lastErr)
+	return nil, noVaultCouldSign(p.Handle, lastErr)
 }
 
 // GetPublicKeyInVault returns a key's public half + type, trying each endpoint
