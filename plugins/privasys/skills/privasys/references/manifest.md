@@ -186,6 +186,11 @@ human's, not yours: show them the routes and let them decide.
 
 ## Headers the app can trust on private routes
 
-`X-Privasys-Sub` (the signed-in user, asserted by the runtime), the inner
-bearer, `X-Privasys-App-*`, and `X-Privasys-Transport` (`sealed`, `attested`,
-`direct` or `public`). A private handler refuses `public`.
+`X-Privasys-Transport` (`sealed`, `attested`, `direct` or `public`; a private
+handler refuses `public`), `X-Privasys-Sub` (the signed-in user, on `sealed`
+and `direct`), and `X-Privasys-Peer-*` (a verified calling app). The runtime
+sets these and removes any value a client sent. `Authorization` on `attested`
+and `sealed` is forwarded unverified: guard routes with `x-privasys.auth`
+rather than trusting it. Every other header is the client's word. The full
+list, per path, is at
+https://docs.privasys.org/solutions/platform/developer-platform/connecting/.

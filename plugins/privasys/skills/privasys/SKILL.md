@@ -77,8 +77,10 @@ can complete — ask them to run `privasys apps upgrade <app>` themselves.
 
 An app can be restricted to attested callers and can declare what it calls:
 
-- `apps_allowed_callers` — only these attested apps may reach it over ingress
-  mutual RA-TLS (clearing the list lets anyone in).
+- `apps_allowed_callers` — the attested apps recognised as callers over ingress
+  mutual RA-TLS. It does not keep other clients out: a caller without a
+  certificate still arrives, anonymously. The app must require
+  `X-Privasys-Peer-Verified: true` on routes meant for attested apps only.
 - `apps_dependencies` — the app's attested cross-enclave dependency set, pinning
   the identity of what it is allowed to call.
 
