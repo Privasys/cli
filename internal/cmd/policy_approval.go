@@ -166,6 +166,8 @@ func policyChangeError(err error) error {
 		return fmt.Errorf("the key's vaults hold different policies; nothing was changed: %w", err)
 	case "policy_not_lossless":
 		return fmt.Errorf("the key's policy has fields the control plane does not know, so it refuses to rewrite it; nothing was changed: %w", err)
+	case "policy_field_fixed":
+		return fmt.Errorf("the key's policy does not let this field change; nothing was changed and no approval was asked: %w", err)
 	case "policy_refused":
 		return fmt.Errorf("the key's vaults refuse the new policy; nothing was changed: %w", err)
 	}
