@@ -24,6 +24,7 @@ func fakeIdentity(t *testing.T, seed byte) vault.VaultIdentity {
 		t.Fatal(err)
 	}
 	quote := make([]byte, 48+384)
+	quote[0] = 3
 	rd := vault.IdentityReportData(mid, "bill")
 	copy(quote[48+320:], rd[:])
 	return vault.VaultIdentity{MemberID: mid, MemberPublicKey: hex.EncodeToString(pub), BillingID: "bill",

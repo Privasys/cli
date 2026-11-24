@@ -47,18 +47,21 @@ type approvalV2Answer struct {
 	PublicKey struct {
 		Challenge string `json:"challenge"`
 	} `json:"publicKey"`
-	VaultOp string `json:"vault_op"`
-	Binding struct {
-		Members       []string `json:"members"`
-		Op            string   `json:"op"`
-		Handle        string   `json:"handle"`
-		Target        string   `json:"target"`
-		PolicyVersion uint64   `json:"policy_version"`
-		Approver      string   `json:"approver"`
-		HolderHead    string   `json:"holder_head"`
-		Nonce         string   `json:"nonce"`
-		Exp           int64    `json:"exp"`
-	} `json:"binding"`
+	VaultOp string        `json:"vault_op"`
+	Binding bindingAnswer `json:"binding"`
+}
+
+// bindingAnswer is a binding as privasys.id returns it.
+type bindingAnswer struct {
+	Members       []string `json:"members"`
+	Op            string   `json:"op"`
+	Handle        string   `json:"handle"`
+	Target        string   `json:"target"`
+	PolicyVersion uint64   `json:"policy_version"`
+	Approver      string   `json:"approver"`
+	HolderHead    string   `json:"holder_head"`
+	Nonce         string   `json:"nonce"`
+	Exp           int64    `json:"exp"`
 }
 
 func (a ApprovalV2) check() error {
@@ -80,7 +83,7 @@ func (a ApprovalV2) check() error {
 		return errors.New("an approval must name the vaults it is for")
 	}
 	for _, id := range a.Identities {
-		if err := id.Check(); err != nil {
+		if err := id.CheckConsistent(); err != nil {
 			return err
 		}
 	}
@@ -141,14 +144,26 @@ func RequestApprovalV2(ctx context.Context, issuer, bearer string, a ApprovalV2,
 	return tok, nil
 }
 
-// verifyApprovalV2 rebuilds the binding from what was asked plus the approver,
-// nonce and expiry privasys.id chose, and checks the answer binds exactly that.
+// verifyApprovalV2 checks a single begin's answer: the binding, its vault_op,
+// and the challenge being that vault_op.
 func verifyApprovalV2(a ApprovalV2, answer []byte, now time.Time) (vault.BindingV2, string, error) {
 	var ans approvalV2Answer
 	if err := json.Unmarshal(answer, &ans); err != nil {
 		return vault.BindingV2{}, "", errors.New("unreadable answer")
 	}
-	got := ans.Binding
+	b, vaultOp, err := verifyBindingV2(a, ans.Binding, ans.VaultOp, now)
+	if err != nil {
+		return vault.BindingV2{}, "", err
+	}
+	if strings.TrimRight(ans.PublicKey.Challenge, "=") != vaultOp {
+		return vault.BindingV2{}, "", errors.New("the challenge is not the operation's vault_op")
+	}
+	return b, vaultOp, nil
+}
+
+// verifyBindingV2 rebuilds the binding from what was asked plus the approver,
+// nonce and expiry privasys.id chose, and checks the answer binds exactly that.
+func verifyBindingV2(a ApprovalV2, got bindingAnswer, gotVaultOp string, now time.Time) (vault.BindingV2, string, error) {
 	if !sameSet(got.Members, a.members()) {
 		return vault.BindingV2{}, "", errors.New("the binding names other vaults than the ones asked for")
 	}
@@ -176,11 +191,8 @@ func verifyApprovalV2(a ApprovalV2, answer []byte, now time.Time) (vault.Binding
 	if err != nil {
 		return vault.BindingV2{}, "", err
 	}
-	if ans.VaultOp != vaultOp {
+	if gotVaultOp != vaultOp {
 		return vault.BindingV2{}, "", errors.New("the vault_op does not match the operation")
-	}
-	if strings.TrimRight(ans.PublicKey.Challenge, "=") != vaultOp {
-		return vault.BindingV2{}, "", errors.New("the challenge is not the operation's vault_op")
 	}
 	return b, vaultOp, nil
 }
