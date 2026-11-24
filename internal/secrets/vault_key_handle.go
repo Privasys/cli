@@ -12,7 +12,8 @@ import (
 // CheckVaultKeyHandle checks that a handle the control plane gives for key
 // name in vault vaultID (from the catalogue or a grant) is that name's key:
 // "vaults/<vaultID>/<name>", optionally followed by a re-created name
-// ("new-<k>", k >= 2, directly after the name; formats §9.3.1), a rotation
+// ("new-<k>", k >= 2, directly after the name, under which only a renewal may
+// follow; formats §9.3.1), a rotation
 // ("v<N>") and a renewal ("gen-<n>"), each at most once. The vaults accept any
 // key the caller owns, so this is what stops a name from being pointed at
 // another of the caller's keys.
@@ -39,6 +40,10 @@ func CheckVaultKeyHandle(vaultID, name, handle string) error {
 			return fmt.Errorf("the control plane gives handle %q for key %q, with a misplaced %q", handle, name, seg)
 		case kind != "new-" && n < 1:
 			return fmt.Errorf("the control plane gives handle %q for key %q, with %q", handle, name, seg)
+		case kind == "v" && seen["new-"]:
+			// Beneath a re-created name the vaults take only renewals
+			// (formats §9.3.1).
+			return fmt.Errorf("the control plane gives handle %q for key %q, with a rotation under a re-created name", handle, name)
 		}
 		seen[kind] = true
 	}
