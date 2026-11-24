@@ -48,6 +48,17 @@ func RenewV2(ctx context.Context, p RenewV2Params) (*Result, error) {
 	}
 	next := GenerationHandle(p.Base, p.OldGen+1)
 
+	// The successor is what the old generation is: a vault takes a carried
+	// key's exportability and type from the grant, so the grant must not
+	// differ from the key it renews.
+	oldInfo, err := keyInfoAt(ctx, p.Source, p.SourceToken, p.AttToken, p.Old)
+	if err != nil {
+		return nil, err
+	}
+	if oldInfo.KeyType != vault.RawShare || !oldInfo.Exportable {
+		return nil, fmt.Errorf("%s is a %s key (exportable: %t), not a secret this command renews", p.Old, oldInfo.KeyType, oldInfo.Exportable)
+	}
+
 	renewal := vault.Renewal{Predecessor: p.Old}
 	if p.Source.ID != p.Target.ID {
 		policy, version, err := carriedPolicy(ctx, p.Source, p.SourceToken, p.AttToken, p.Old)
@@ -70,7 +81,7 @@ func RenewV2(ctx context.Context, p RenewV2Params) (*Result, error) {
 		return nil, fmt.Errorf("client cert: %w", err)
 	}
 	grant, err := requestGrant(ctx, CreateParams{Issuer: p.Issuer, Bearer: p.Bearer, Sub: p.Sub, Handle: next,
-		Exportable: true, bindingV2: true}, cnf)
+		Exportable: oldInfo.Exportable, bindingV2: true}, cnf)
 	if err != nil {
 		return nil, err
 	}
@@ -144,4 +155,27 @@ func carriedPolicy(ctx context.Context, src *api.VaultDirectory, ownerTok, attTo
 		}
 	}
 	return policy, version, nil
+}
+
+// keyInfoAt reads a key's public metadata from the first vault of d that holds it.
+func keyInfoAt(ctx context.Context, d *api.VaultDirectory, ownerTok, attTok, handle string) (*vault.KeyInfo, error) {
+	verify, err := verifyPolicy(d.MRENCLAVE, d.AttestationServer, attTok)
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for _, ep := range d.Endpoints {
+		c, derr := vault.Dial(ctx, vaultReg(ep), vault.DialOptions{VaultPolicy: verify, AuthToken: staticToken(ownerTok)})
+		if derr != nil {
+			lastErr = derr
+			continue
+		}
+		info, ierr := c.GetKeyInfo(ctx, handle)
+		c.Close()
+		if ierr == nil {
+			return &info, nil
+		}
+		lastErr = ierr
+	}
+	return nil, fmt.Errorf("read %s: %v", handle, lastErr)
 }
