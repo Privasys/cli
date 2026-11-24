@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Privasys/cli/internal/api"
@@ -37,6 +38,7 @@ func LocateSecret(ctx context.Context, dir Directory, handle string, tokenFor To
 		cons = []api.LiveConstellation{{}}
 	}
 	var cands []genCandidate
+	var ignored []string // generations on vaults that do not enforce them
 	tokens := map[*api.VaultDirectory]string{}
 	var lastErr error
 	unreachable := []string{}
@@ -55,7 +57,8 @@ func LocateSecret(ctx context.Context, dir Directory, handle string, tokenFor To
 			continue
 		}
 		tokens[d] = ownerTok
-		found, listed := listGenerations(ctx, d, ownerTok, attTok, handle, now)
+		found, skipped, listed := listGenerations(ctx, d, ownerTok, attTok, handle, now)
+		ignored = append(ignored, skipped...)
 		if listed {
 			cands = append(cands, found...)
 			continue
@@ -86,8 +89,11 @@ func LocateSecret(ctx context.Context, dir Directory, handle string, tokenFor To
 		if ierr != nil {
 			return nil, nil, fmt.Errorf("read %s on %s: %w", chosen.Handle, chosen.Dir.Name, ierr)
 		}
-		info.Handle, info.Warning = chosen.Handle, warning
+		info.Handle, info.Warning = chosen.Handle, joinWarnings(warning, ignoredWarning(ignored))
 		return chosen.Dir, info, nil
+	}
+	if len(ignored) > 0 {
+		return nil, nil, fmt.Errorf("no generation of secret %s can be used: %s", handle, ignoredWarning(ignored))
 	}
 	if len(unreachable) == len(cons) && lastErr != nil {
 		return nil, nil, fmt.Errorf("could not reach any vault constellation to find secret %s: %v", handle, lastErr)
@@ -97,4 +103,23 @@ func LocateSecret(ctx context.Context, dir Directory, handle string, tokenFor To
 			handle, len(unreachable), unreachable)
 	}
 	return nil, nil, fmt.Errorf("secret %s not found on any constellation: it may have expired, or never existed", handle)
+}
+
+// ignoredWarning names generations found on vaults that do not enforce
+// generations, which a lookup never uses.
+func ignoredWarning(ignored []string) string {
+	if len(ignored) == 0 {
+		return ""
+	}
+	return "not used, since their vaults do not guard generation names: " + strings.Join(ignored, ", ")
+}
+
+func joinWarnings(ws ...string) string {
+	var out []string
+	for _, w := range ws {
+		if w != "" {
+			out = append(out, w)
+		}
+	}
+	return strings.Join(out, "; ")
 }

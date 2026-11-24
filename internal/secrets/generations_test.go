@@ -6,6 +6,8 @@ package secrets
 import (
 	"strings"
 	"testing"
+
+	"github.com/Privasys/cli/internal/api"
 )
 
 const genBase = "users/sub-1/db"
@@ -87,5 +89,56 @@ func TestSelectGeneration(t *testing.T) {
 		if err != nil && !strings.Contains(err.Error(), "cannot be traced") {
 			t.Errorf("%s: the refusal does not say why: %v", name, err)
 		}
+	}
+}
+
+// on places a candidate on a named constellation.
+func on(c genCandidate, constellation string) genCandidate {
+	c.Dir = &api.VaultDirectory{Name: constellation}
+	return c
+}
+
+func TestDuplicateGenerations(t *testing.T) {
+	g := func(n int) string { return GenerationHandle(genBase, n) }
+
+	// A planted unlinked copy listed BEFORE the real linked one is not chosen.
+	chosen, warning, err := selectGeneration(genBase, []genCandidate{
+		on(gen(2, ""), "planted"), on(gen(2, g(1)), "real"), on(gen(1, ""), "real"),
+	})
+	if err != nil || chosen == nil || chosen.Dir.Name != "real" || !strings.Contains(warning, "planted") {
+		t.Fatalf("planted first: chose %+v, warning %q, err %v", chosen, warning, err)
+	}
+
+	// Two copies, neither linked: refused, naming both and where they are.
+	_, _, err = selectGeneration(genBase, []genCandidate{on(gen(2, ""), "a"), on(gen(2, ""), "b")})
+	if err == nil || !strings.Contains(err.Error(), "on a") || !strings.Contains(err.Error(), "on b") {
+		t.Fatalf("two unlinked copies: %v", err)
+	}
+
+	// Two copies both linked: they cannot be told apart, so refused.
+	if _, _, err = selectGeneration(genBase, []genCandidate{on(gen(2, g(1)), "a"), on(gen(2, g(1)), "b")}); err == nil {
+		t.Fatal("two linked copies of one generation were accepted")
+	}
+
+	// The one linked copy sits on a bad present parent: refused, not guessed.
+	if _, _, err = selectGeneration(genBase, []genCandidate{
+		on(gen(1, ""), "a"), on(gen(2, ""), "a"), on(gen(3, ""), "x"), on(gen(3, g(2)), "y"),
+	}); err == nil {
+		t.Fatal("a duplicated generation over an untraceable parent was accepted")
+	}
+
+	// The bare name on two constellations keeps the first found, as before.
+	chosen, _, err = selectGeneration(genBase, []genCandidate{on(gen(1, ""), "active"), on(gen(1, ""), "old")})
+	if err != nil || chosen.Dir.Name != "active" {
+		t.Fatalf("bare name twice: %+v, %v", chosen, err)
+	}
+}
+
+func TestIgnoredGenerationsWarn(t *testing.T) {
+	if w := joinWarnings("", ignoredWarning([]string{"users/s/x/gen-2 on dev-v0.42.0"})); !strings.Contains(w, "gen-2 on dev-v0.42.0") {
+		t.Fatalf("warning: %q", w)
+	}
+	if ignoredWarning(nil) != "" || joinWarnings("", "") != "" {
+		t.Fatal("an empty warning")
 	}
 }

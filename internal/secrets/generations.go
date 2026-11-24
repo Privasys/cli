@@ -93,12 +93,14 @@ type genCandidate struct {
 
 // listGenerations reads, over one pinned connection to a vault of d, whether
 // the vault advertises generations, the owner's unexpired generations of base,
-// and for each n > 1 the handle it was renewed in place from. listed is false
-// when no vault answered.
-func listGenerations(ctx context.Context, d *api.VaultDirectory, ownerTok, attTok, base string, now time.Time) (cands []genCandidate, listed bool) {
+// and for each n > 1 the handle it was renewed in place from. A vault without
+// CapabilityGenerations does not refuse a first creation of a gen-<n> handle,
+// so its generations n > 1 are left out and returned as ignored. listed is
+// false when no vault answered.
+func listGenerations(ctx context.Context, d *api.VaultDirectory, ownerTok, attTok, base string, now time.Time) (cands []genCandidate, ignored []string, listed bool) {
 	verify, err := verifyPolicy(d.MRENCLAVE, d.AttestationServer, attTok)
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
 	for _, ep := range d.Endpoints {
 		c, derr := vault.Dial(ctx, vaultReg(ep), vault.DialOptions{VaultPolicy: verify, AuthToken: staticToken(ownerTok)})
@@ -119,8 +121,12 @@ func listGenerations(ctx context.Context, d *api.VaultDirectory, ownerTok, attTo
 			if n == 0 || (k.ExpiresAt > 0 && int64(k.ExpiresAt) <= now.Unix()) {
 				continue
 			}
+			if n > 1 && !trusted {
+				ignored = append(ignored, k.Handle+" on "+d.Name)
+				continue
+			}
 			cand := genCandidate{Handle: k.Handle, Gen: n, Dir: d, Expires: k.ExpiresAt}
-			if n > 1 && trusted {
+			if n > 1 {
 				if info, ierr := c.GetKeyInfo(ctx, k.Handle); ierr == nil {
 					cand.Linked = info.RenewedInPlaceFrom
 				}
@@ -128,20 +134,64 @@ func listGenerations(ctx context.Context, d *api.VaultDirectory, ownerTok, attTo
 			cands = append(cands, cand)
 		}
 		c.Close()
-		return cands, true
+		return cands, ignored, true
 	}
-	return nil, false
+	return nil, nil, false
+}
+
+// where names a candidate and the constellation holding it.
+func (c *genCandidate) where() string {
+	if c.Dir == nil {
+		return c.Handle
+	}
+	return c.Handle + " on " + c.Dir.Name
 }
 
 // selectGeneration picks the generation a lookup by name uses, from every
-// candidate found. warning names a generation that was passed over.
+// candidate found. warning names what was passed over.
 func selectGeneration(base string, cands []genCandidate) (chosen *genCandidate, warning string, err error) {
-	byGen := map[int]*genCandidate{}
+	groups := map[int][]*genCandidate{}
 	for i := range cands {
-		if _, dup := byGen[cands[i].Gen]; !dup {
-			byGen[cands[i].Gen] = &cands[i]
-		}
+		groups[cands[i].Gen] = append(groups[cands[i].Gen], &cands[i])
 	}
+	gens := make([]int, 0, len(groups))
+	for n := range groups {
+		gens = append(gens, n)
+	}
+	sort.Ints(gens)
+
+	// One copy per generation. Copies of the bare name on two constellations
+	// (a v1 renewal whose old copy stayed) keep the order they were found in,
+	// the active constellation first, as before generations. Any other number
+	// found twice is a conflict unless exactly one copy is linked to n-1.
+	byGen := map[int]*genCandidate{}
+	duplicated := map[int][]*genCandidate{}
+	conflict := func(g []*genCandidate) error {
+		names := make([]string, len(g))
+		for i, c := range g {
+			names[i] = c.where()
+		}
+		return fmt.Errorf("generation %d of %s exists more than once (%s) and cannot be told apart: none is used; delete the ones you did not make",
+			g[0].Gen, base, strings.Join(names, ", "))
+	}
+	for _, n := range gens {
+		g := groups[n]
+		if len(g) == 1 || n == 1 {
+			byGen[n] = g[0]
+			continue
+		}
+		var linked []*genCandidate
+		for _, c := range g {
+			if c.Linked == GenerationHandle(base, n-1) {
+				linked = append(linked, c)
+			}
+		}
+		if len(linked) != 1 {
+			return nil, "", conflict(g)
+		}
+		byGen[n], duplicated[n] = linked[0], g
+	}
+
 	memo := map[int]bool{}
 	var valid func(n int) bool
 	valid = func(n int) bool {
@@ -157,12 +207,22 @@ func selectGeneration(base string, cands []genCandidate) (chosen *genCandidate, 
 		memo[n] = ok
 		return ok
 	}
-	var trusted, unlinked []*genCandidate
-	gens := make([]int, 0, len(byGen))
-	for n := range byGen {
-		gens = append(gens, n)
+	var warnings []string
+	for _, n := range gens {
+		g, dup := duplicated[n]
+		if !dup {
+			continue
+		}
+		if !valid(n) {
+			return nil, "", conflict(g)
+		}
+		for _, c := range g {
+			if c != byGen[n] {
+				warnings = append(warnings, fmt.Sprintf("%s cannot be traced to a renewal and is not used", c.where()))
+			}
+		}
 	}
-	sort.Ints(gens)
+	var trusted, unlinked []*genCandidate
 	for _, n := range gens {
 		if valid(n) {
 			trusted = append(trusted, byGen[n])
@@ -178,14 +238,14 @@ func selectGeneration(base string, cands []genCandidate) (chosen *genCandidate, 
 		}
 		return nil, "", fmt.Errorf("several generations of %s cannot be traced to a renewal (%s): none is used; delete the ones you did not make", base, strings.Join(names, ", "))
 	case len(unlinked) == 1 && len(trusted) == 0:
-		return unlinked[0], "", nil
+		return unlinked[0], strings.Join(warnings, "; "), nil
 	case len(trusted) == 0:
-		return nil, "", nil
+		return nil, strings.Join(warnings, "; "), nil
 	}
 	chosen = trusted[len(trusted)-1]
 	if len(unlinked) == 1 {
-		warning = fmt.Sprintf("%s cannot be traced to a renewal, so %s is used; delete %s if you did not make it",
-			unlinked[0].Handle, chosen.Handle, unlinked[0].Handle)
+		warnings = append(warnings, fmt.Sprintf("%s cannot be traced to a renewal, so %s is used; delete %s if you did not make it",
+			unlinked[0].where(), chosen.Handle, unlinked[0].Handle))
 	}
-	return chosen, warning, nil
+	return chosen, strings.Join(warnings, "; "), nil
 }
