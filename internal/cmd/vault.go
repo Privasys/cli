@@ -928,9 +928,6 @@ func newVaultKeyRenewCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "renew <vault-id> <name>",
 		Short: "Renew a threshold Ed25519 key: same public key, fresh shares, a fresh 90 days",
-		// Hidden until the vaults (vault-v0.39.0) and the control plane
-		// (/renew, /renewed) are rolled out and it has run end to end.
-		Hidden: true,
 		Long: `Renews a threshold Ed25519 key (--type ed25519) before it expires, keeping its
 handle and its public key. As 'secrets renew' does for a secret, the key goes to
 the active vault constellation: renewed in place when it is already there,
