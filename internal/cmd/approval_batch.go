@@ -12,14 +12,36 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Privasys/cli/internal/auth"
 	"github.com/Privasys/cli/internal/secrets"
 )
+
+// vaultApprovalAudience is the audience to ask the identity provider for, for
+// an approval the control plane forwards to vaults that accept reported (""
+// from an older control plane: the platform's own audience). A platform other
+// than production never asks for the production audience: that token would be
+// valid on production, and it would go to that platform's control plane.
+func vaultApprovalAudience(reported string) (string, error) {
+	platform := auth.CurrentPlatformAudience()
+	if reported == "" {
+		return platform, nil
+	}
+	if platform != auth.PlatformAudience && reported == auth.PlatformAudience {
+		return "", fmt.Errorf("this key is on vaults that accept only production (%s) tokens, which never go to the %s platform: "+
+			"its key must move to that platform's vaults first", auth.PlatformAudience, platform)
+	}
+	return reported, nil
+}
 
 // approvalOp is one operation the owner approves: what it binds, and how to
 // carry it out with the token issued for it.
 type approvalOp struct {
 	secrets.BatchEntry
-	Name string // what the owner recognises: the app or the enclave
+	// Audience is the aud of the token the operation needs: the audience of
+	// the vaults (a promote) or of the app's platform (a policy). One batch
+	// approval yields tokens of one audience.
+	Audience string
+	Name     string // what the owner recognises: the app or the enclave
 	Kind string // what kind of key or document this is
 	// Admitted says the key already admits what was staged (the vaults
 	// accepted it without a promote): nothing to approve or carry out.
@@ -237,6 +259,59 @@ func (r *approvalRun) approveAndApply(ctx context.Context, ops []*approvalOp) ([
 	if r.OneByOne {
 		return r.applyOneByOne(ctx, ops)
 	}
+	// One approval per audience: the identity provider issues a batch's tokens
+	// for one audience, and the operations may go to vaults of different ones.
+	groups := groupByAudience(ops)
+	var done []approvalResult
+	for g, group := range groups {
+		if len(groups) > 1 {
+			fmt.Fprintf(r.Out, "\nApproval %d of %d (%d operations, audience %s)\n", g+1, len(groups), len(group), group[0].Audience)
+		}
+		results, err := r.approveBatch(ctx, group)
+		if errors.Is(err, secrets.ErrBatchUnavailable) {
+			fmt.Fprintf(r.Out, "%v: approving one by one.\n", err)
+			r.OneByOne = true
+			var rest []*approvalOp
+			for _, gr := range groups[g:] {
+				rest = append(rest, gr...)
+			}
+			more, err := r.applyOneByOne(ctx, rest)
+			return append(done, more...), err
+		}
+		if errors.Is(err, secrets.ErrDeclined) {
+			if len(done) == 0 {
+				return nil, fmt.Errorf("%w: nothing was promoted or changed", err)
+			}
+			return done, fmt.Errorf("%w at approval %d of %d: the %d operations approved before it were carried out, the rest were not",
+				err, g+1, len(groups), len(done))
+		}
+		if err != nil {
+			return done, err
+		}
+		done = append(done, results...)
+	}
+	return done, nil
+}
+
+// groupByAudience splits ops by audience, keeping their order.
+func groupByAudience(ops []*approvalOp) [][]*approvalOp {
+	var groups [][]*approvalOp
+	at := map[string]int{}
+	for _, op := range ops {
+		i, ok := at[op.Audience]
+		if !ok {
+			i = len(groups)
+			at[op.Audience] = i
+			groups = append(groups, nil)
+		}
+		groups[i] = append(groups[i], op)
+	}
+	return groups
+}
+
+// approveBatch asks for one batch approval of ops (all of one audience) and
+// carries them out.
+func (r *approvalRun) approveBatch(ctx context.Context, ops []*approvalOp) ([]approvalResult, error) {
 	bearer, err := r.Bearer(ctx)
 	if err != nil {
 		return nil, err
@@ -245,20 +320,12 @@ func (r *approvalRun) approveAndApply(ctx context.Context, ops []*approvalOp) ([
 	for i, op := range ops {
 		entries[i] = op.BatchEntry
 	}
-	batch, err := secrets.BeginBatch(ctx, r.Issuer, bearer, r.Label, entries)
-	if errors.Is(err, secrets.ErrBatchUnavailable) {
-		fmt.Fprintf(r.Out, "%v: approving one by one.\n", err)
-		r.OneByOne = true
-		return r.applyOneByOne(ctx, ops)
-	}
+	batch, err := secrets.BeginBatch(ctx, r.Issuer, bearer, r.Label, ops[0].Audience, entries)
 	if err != nil {
 		return nil, err
 	}
 	secrets.ShowBatch(r.Out, batch)
 	tokens, err := secrets.CollectBatchTokens(ctx, r.Issuer, bearer, batch)
-	if errors.Is(err, secrets.ErrDeclined) {
-		return nil, fmt.Errorf("%w: nothing was promoted or changed", err)
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +355,7 @@ func (r *approvalRun) applyOneByOne(ctx context.Context, ops []*approvalOp) ([]a
 			return nil, err
 		}
 		fmt.Fprintf(r.Out, "\n[%d/%d] %s: %s\n", i+1, len(ops), op.Kind, op.Name)
-		token, err := secrets.RequestStepUpViaBrowser(ctx, r.Issuer, bearer, op.Operation, op.Handle,
+		token, err := secrets.RequestStepUpViaBrowserFor(ctx, r.Issuer, bearer, op.Audience, op.Operation, op.Handle,
 			op.MeasurementDigest, uint32(op.PolicyVersion), op.Context, r.Open, r.Out)
 		if errors.Is(err, secrets.ErrDeclined) {
 			msg := "nothing was promoted or changed"

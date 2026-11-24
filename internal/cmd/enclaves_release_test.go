@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/Privasys/cli/internal/api"
+	"github.com/Privasys/cli/internal/auth"
 	"github.com/Privasys/cli/internal/secrets"
 )
 
@@ -44,9 +45,13 @@ type fakeRoll struct {
 	// The owner declines on the phone: the whole batch, or one single approval.
 	declineBatch  bool
 	declineSingle string
-	entries       []secrets.BatchEntry
-	exp           int64
-	srv           *httptest.Server
+	// audiences is what each app's vault-export-target reports; batchAuds
+	// the audience each batch asked for.
+	audiences map[string]string
+	batchAuds []string
+	entries   []secrets.BatchEntry
+	exp       int64
+	srv       *httptest.Server
 }
 
 const (
@@ -186,6 +191,12 @@ func (f *fakeRoll) serve(w http.ResponseWriter, r *http.Request) {
 		v := map[string]interface{}{"Success": true}
 		f.promote(w, mgrHandle, r.Header.Get("X-Privasys-Step-Up"), map[string]interface{}{"vaults": []interface{}{v, v}})
 
+	case strings.HasSuffix(p, "/vault-export-target"):
+		app := strings.TrimSuffix(strings.TrimPrefix(p, "/api/v1/apps/"), "/vault-export-target")
+		f.mu.Lock()
+		aud := f.audiences[app]
+		f.mu.Unlock()
+		f.reply(w, map[string]interface{}{"oidc_audience": aud})
 	case p == "/api/v1/apps/app-a":
 		f.reply(w, map[string]string{"id": "app-a", "name": "a", "vault_key_handle": aHandle})
 	case p == "/api/v1/apps/app-b":
@@ -244,8 +255,9 @@ func (f *fakeRoll) batchBegin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Label   string               `json:"label"`
-		Entries []secrets.BatchEntry `json:"entries"`
+		Label    string               `json:"label"`
+		Audience string               `json:"audience"`
+		Entries  []secrets.BatchEntry `json:"entries"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	exp := time.Now().Unix() + 300
@@ -267,6 +279,7 @@ func (f *fakeRoll) batchBegin(w http.ResponseWriter, r *http.Request) {
 	id := base64.RawURLEncoding.EncodeToString(sum[:])
 	f.mu.Lock()
 	f.begins = append(f.begins, handles)
+	f.batchAuds = append(f.batchAuds, req.Audience)
 	for _, e := range entries {
 		f.issued[e.Handle] = e.VaultOp
 	}
@@ -378,6 +391,62 @@ func TestPromoteReleaseUnderOneApproval(t *testing.T) {
 	}
 	if f.singles != 0 {
 		t.Errorf("%d single approvals", f.singles)
+	}
+}
+
+// Keys on vaults of different audiences get one approval each, and each batch
+// asks for its own audience; the manager key takes the platform's.
+func TestOneApprovalPerAudience(t *testing.T) {
+	auth.SetPlatformAudience("privasys-platform-test")
+	defer auth.SetPlatformAudience(auth.PlatformAudience)
+	f := newFakeRoll(t)
+	f.audiences = map[string]string{"app-a": "privasys-platform-test", "app-b": "privasys-platform-other"}
+	out, err := f.run(t, declined, nil)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if len(f.begins) != 2 {
+		t.Fatalf("approvals: %v (audiences %v)", f.begins, f.batchAuds)
+	}
+	got := map[string]string{}
+	for i, hs := range f.begins {
+		for _, h := range hs {
+			got[h] = f.batchAuds[i]
+		}
+	}
+	want := map[string]string{mgrHandle: "privasys-platform-test", aHandle: "privasys-platform-test",
+		bHandle: "privasys-platform-other", bCred: "privasys-platform-other"}
+	for h, aud := range want {
+		if got[h] != aud {
+			t.Errorf("%s approved for %q, want %q", h, got[h], aud)
+		}
+		if f.promoted[h] != 1 {
+			t.Errorf("%s promoted %d times", h, f.promoted[h])
+		}
+	}
+}
+
+// The test platform never asks for a production approval: a key still on
+// production-audience vaults is refused before anything is staged.
+func TestTheTestPlatformNeverAsksForAProductionApproval(t *testing.T) {
+	auth.SetPlatformAudience("privasys-platform-test")
+	defer auth.SetPlatformAudience(auth.PlatformAudience)
+	f := newFakeRoll(t)
+	f.audiences = map[string]string{"app-a": "privasys-platform-test", "app-b": auth.PlatformAudience}
+	_, err := f.run(t, declined, nil)
+	if err == nil || !strings.Contains(err.Error(), "accept only production") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.begins) != 0 || f.singles != 0 {
+		t.Errorf("asked for approvals: %v, %d singles", f.begins, f.singles)
+	}
+	for _, s := range f.stages {
+		if strings.Contains(s, "app-b") {
+			t.Errorf("staged %s", s)
+		}
+	}
+	if a, err := vaultApprovalAudience(""); a != "privasys-platform-test" || err != nil {
+		t.Errorf("unreported audience: %q, %v", a, err)
 	}
 }
 

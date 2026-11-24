@@ -191,7 +191,9 @@ domains, clear_domains and fresh.
 				return err
 			}
 			actx := policy.approvalContext(ctx, client, args[0])
-			token, err := secrets.RequestStepUpViaBrowser(ctx, env.Cfg.Issuer, bearer,
+			// The app's enclave checks the approval: it is issued for the
+			// audience of the app's platform.
+			token, err := secrets.RequestStepUpViaBrowserFor(ctx, env.Cfg.Issuer, bearer, auth.CurrentPlatformAudience(),
 				"app-policy", policy.handle(), digest, uint32(policy.seq), actx, secrets.OpenBrowser, cmd.ErrOrStderr())
 			if err != nil {
 				return fmt.Errorf("approval: %w", err)
@@ -456,6 +458,8 @@ func preparePolicy(ctx context.Context, client *api.Client, appID string, change
 			Operation: "app-policy", Handle: policy.handle(), MeasurementDigest: policy.digest,
 			PolicyVersion: policy.seq, Context: display,
 		},
+		// The app's enclave checks the approval: its platform's audience.
+		Audience: auth.CurrentPlatformAudience(),
 		Name: display["app_name"],
 		Kind: "app policy",
 		Apply: func(ctx context.Context, token string) (string, error) {

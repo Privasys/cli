@@ -1381,7 +1381,11 @@ func promoteWithStepUp(cmd *cobra.Command, env *Env, client *api.Client, appID, 
 	actx := promoteApprovalContext(ctx, client, appID, vid)
 	// Issued for the audience the key's vaults accept, which the control
 	// plane forwards it to.
-	stepTok, err := secrets.RequestStepUpViaBrowserFor(ctx, env.Cfg.Issuer, bearer, tgt.OIDCAudience, "promote",
+	audience, err := vaultApprovalAudience(tgt.OIDCAudience)
+	if err != nil {
+		return nil, err
+	}
+	stepTok, err := secrets.RequestStepUpViaBrowserFor(ctx, env.Cfg.Issuer, bearer, audience, "promote",
 		tgt.Handle, digest, policyVersion, actx, secrets.OpenBrowser, cmd.ErrOrStderr())
 	if errors.Is(err, secrets.ErrDeclined) {
 		return nil, fmt.Errorf("%w: nothing was promoted", err)

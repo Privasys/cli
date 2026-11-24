@@ -274,7 +274,10 @@ func prepareManagerKey(ctx context.Context, client *api.Client, enclaveID, encla
 			Operation: "promote", Handle: handle, MeasurementDigest: digest, PolicyVersion: policyVersion,
 			Context: map[string]string{"app_name": "Enclave manager: " + enclaveName, "version": path.Base(release), "key_type": "manager data key"},
 		},
-		Name: enclaveName,
+		// The control plane does not report the manager key's vaults'
+		// audience yet: the platform's own.
+		Audience: auth.CurrentPlatformAudience(),
+		Name:     enclaveName,
 		Kind: "manager /data key",
 		Apply: func(ctx context.Context, token string) (string, error) {
 			res, err := client.PromoteDataKey(ctx, enclaveID, pendingID, token)
@@ -298,6 +301,16 @@ func prepareAppKeys(ctx context.Context, client *api.Client, appID, deploymentID
 		return nil, nil // no vault-backed key: nothing to promote
 	}
 	versionID, err := deployedVersion(ctx, client, appID, deploymentID)
+	if err != nil {
+		return nil, err
+	}
+	// The app key and its registry credential live on the same vaults: their
+	// promotes need a token of the audience those vaults accept.
+	tgt, err := client.GetVaultExportTarget(ctx, appID)
+	if err != nil {
+		return nil, fmt.Errorf("the key's vaults: %w", err)
+	}
+	audience, err := vaultApprovalAudience(tgt.OIDCAudience)
 	if err != nil {
 		return nil, err
 	}
@@ -331,7 +344,8 @@ func prepareAppKeys(ctx context.Context, client *api.Client, appID, deploymentID
 				Operation: "promote", Handle: handle, MeasurementDigest: digest, PolicyVersion: uint64(policyVersion),
 				Context: withKeyType(display, "app key"),
 			},
-			Name: name,
+			Audience: audience,
+			Name:     name,
 			Kind: "app key",
 			Apply: func(ctx context.Context, token string) (string, error) {
 				sc := *client
@@ -375,7 +389,8 @@ func prepareAppKeys(ctx context.Context, client *api.Client, appID, deploymentID
 			Operation: "promote", Handle: credHandle, MeasurementDigest: credDigest, PolicyVersion: credVersion,
 			Context: withKeyType(display, "registry credential"),
 		},
-		Name: name,
+		Audience: audience,
+		Name:     name,
 		Kind: "registry credential",
 		Apply: func(ctx context.Context, token string) (string, error) {
 			sc := *client

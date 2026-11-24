@@ -190,7 +190,7 @@ func TestBeginBatchSurfacesTheServersRefusal(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": reason})
 	}))
 	defer srv.Close()
-	_, err := BeginBatch(context.Background(), srv.URL, "tok", "label", nil)
+	_, err := BeginBatch(context.Background(), srv.URL, "tok", "label", "", nil)
 	if err == nil || !strings.HasSuffix(err.Error(), reason) {
 		t.Errorf("err = %v", err)
 	}
@@ -226,7 +226,7 @@ func TestBeginBatchSaysWhenTheServerHasNoBatches(t *testing.T) {
 			w.WriteHeader(c.status)
 			_, _ = w.Write([]byte(c.body))
 		}))
-		_, err := BeginBatch(context.Background(), srv.URL, "tok", "label", nil)
+		_, err := BeginBatch(context.Background(), srv.URL, "tok", "label", "", nil)
 		srv.Close()
 		if err == nil || errors.Is(err, ErrBatchUnavailable) != c.unavailable {
 			t.Errorf("%d %q: %v", c.status, c.body, err)

@@ -161,9 +161,15 @@ func verifyBatch(label string, requested []BatchEntry, batchID, challenge string
 
 // BeginBatch asks the identity provider to open a batch and verifies its
 // answer. It returns ErrBatchUnavailable when the endpoints do not exist yet.
-func BeginBatch(ctx context.Context, issuer, bearer, label string, entries []BatchEntry) (*Batch, error) {
+// audience is the aud of every token the batch yields ("" = the identity
+// provider's default).
+func BeginBatch(ctx context.Context, issuer, bearer, label, audience string, entries []BatchEntry) (*Batch, error) {
 	issuer = strings.TrimRight(issuer, "/")
-	body, err := json.Marshal(map[string]interface{}{"label": label, "ttl_seconds": batchTTLSeconds, "entries": entries})
+	begin := map[string]interface{}{"label": label, "ttl_seconds": batchTTLSeconds, "entries": entries}
+	if audience != "" {
+		begin["audience"] = audience
+	}
+	body, err := json.Marshal(begin)
 	if err != nil {
 		return nil, err
 	}
