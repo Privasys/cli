@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Privasys/cli/internal/api"
 	"github.com/Privasys/cli/internal/apppolicy"
 	"github.com/Privasys/cli/internal/auth"
 	"github.com/Privasys/cli/internal/ratls"
@@ -965,7 +966,9 @@ func (s *Server) registerTools() {
 					if len(vs) == 0 {
 						return nil, errNoVersions
 					}
-					versionID, _ = vs[len(vs)-1]["id"].(string)
+					if versionID = api.NewestVersionID(vs); versionID == "" {
+						return nil, errNoVersions
+					}
 				}
 				// Placement: --instance (an owned dedicated instance) wins,
 				// then an explicit enclave (admin), then the location — use the
@@ -1223,7 +1226,7 @@ func (s *Server) registerTools() {
 			Description: "Rotate a vault-backed app's data encryption key (key hygiene, NOT an upgrade). The app keeps running and data is never re-encrypted: the platform provisions a new key generation, re-keys the running volume online, advances the key handle, and retires the old generation. Owner-only. Surface the resulting old→new key handles to a human; the app must be running on the target enclave.",
 			Schema: obj(map[string]interface{}{
 				"app_id":  strProp("the app id"),
-				"version": strProp("the running version id (default: latest)"),
+				"version": strProp("the running version id (default: the version the app's active deployment runs)"),
 				"enclave": strProp("enclave the app runs on (default: only compatible)"),
 			}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
@@ -1231,9 +1234,12 @@ func (s *Server) registerTools() {
 				if err != nil {
 					return nil, err
 				}
-				vid, err := resolveLatestVersion(ctx, d, id, argStr(args, "version"))
-				if err != nil {
-					return nil, err
+				// Without a version, the one that runs: the key is bound to that image.
+				vid := argStr(args, "version")
+				if vid == "" {
+					if vid, err = d.Client.RunningVersionID(ctx, id); err != nil {
+						return nil, err
+					}
 				}
 				enc := argStr(args, "enclave")
 				if enc == "" {
@@ -1454,7 +1460,10 @@ func resolveLatestVersion(ctx context.Context, d Deps, appID, ref string) (strin
 	if len(vs) == 0 {
 		return "", errNoVersions
 	}
-	id, _ := vs[len(vs)-1]["id"].(string)
+	id := api.NewestVersionID(vs)
+	if id == "" {
+		return "", errNoVersions
+	}
 	return id, nil
 }
 

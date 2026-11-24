@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -1236,14 +1235,9 @@ func resolveVersionRef(ctx context.Context, client *api.Client, appID, ref strin
 		return "", fmt.Errorf("app has no versions")
 	}
 	if ref == "" {
-		// The newest version: the highest version_number, whatever order the
-		// control plane lists them in (it lists newest first).
-		newest, best := "", -1
-		for _, v := range vs {
-			if n, err := strconv.Atoi(output.Str(v, "version_number")); err == nil && n > best {
-				newest, best = output.Str(v, "id"), n
-			}
-		}
+		// The newest version, whatever order the control plane lists them in
+		// (newest first).
+		newest := api.NewestVersionID(vs)
 		if newest == "" {
 			return "", fmt.Errorf("the app's versions carry no version number: name the version")
 		}
@@ -1261,29 +1255,7 @@ func resolveVersionRef(ctx context.Context, client *api.Client, appID, ref strin
 // rotated for the image that runs, so no running deployment, or several
 // running different versions, is an error to resolve by naming the version.
 func runningVersion(ctx context.Context, client *api.Client, appID string) (string, error) {
-	deps, err := client.ListDeployments(ctx, appID)
-	if err != nil {
-		return "", err
-	}
-	seen := map[string]bool{}
-	var running []string
-	for _, d := range deps {
-		switch output.Str(d, "status") {
-		case "active", "deployed", "running":
-			if v := output.Str(d, "version_id"); v != "" && !seen[v] {
-				seen[v] = true
-				running = append(running, v)
-			}
-		}
-	}
-	switch len(running) {
-	case 1:
-		return running[0], nil
-	case 0:
-		return "", fmt.Errorf("the app has no running deployment: name the version")
-	default:
-		return "", fmt.Errorf("the app's deployments run %d different versions (%s): name the version", len(running), strings.Join(running, ", "))
-	}
+	return client.RunningVersionID(ctx, appID)
 }
 
 // resolveEnclaveRef picks the target enclave: the flag if set, else the single
@@ -1725,7 +1697,9 @@ func newAppsDeployCmd() *cobra.Command {
 				if len(vs) == 0 {
 					return fmt.Errorf("no versions; create one with `apps versions create` or `apps upload`")
 				}
-				versionID = output.Str(vs[len(vs)-1], "id")
+				if versionID = api.NewestVersionID(vs); versionID == "" {
+					return fmt.Errorf("the app's versions carry no version number: name the version")
+				}
 			}
 
 			if tenancy != "" && tenancy != "mutualised" && tenancy != "dedicated" {

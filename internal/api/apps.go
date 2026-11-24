@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -644,4 +645,54 @@ func (c *Client) GetFederation(ctx context.Context, clientID string) (map[string
 		return nil, err
 	}
 	return out, nil
+}
+
+// NewestVersionID is the id of the newest of an app's versions: the highest
+// version_number, whatever order they are listed in (the control plane lists
+// newest first). "" when none carries a number.
+func NewestVersionID(vs []map[string]interface{}) string {
+	newest, best := "", -1.0
+	for _, v := range vs {
+		n, ok := v["version_number"].(float64)
+		if !ok {
+			if s, isStr := v["version_number"].(string); isStr {
+				if f, err := strconv.ParseFloat(s, 64); err == nil {
+					n, ok = f, true
+				}
+			}
+		}
+		if id, _ := v["id"].(string); ok && id != "" && n > best {
+			newest, best = id, n
+		}
+	}
+	return newest
+}
+
+// RunningVersionID is the version the app's active deployment runs. A key is
+// bound to the image that runs, so no running deployment, or several running
+// different versions, is an error to resolve by naming the version.
+func (c *Client) RunningVersionID(ctx context.Context, appID string) (string, error) {
+	deps, err := c.ListDeployments(ctx, appID)
+	if err != nil {
+		return "", err
+	}
+	seen := map[string]bool{}
+	var running []string
+	for _, d := range deps {
+		switch s, _ := d["status"].(string); s {
+		case "active", "deployed", "running":
+			if v, _ := d["version_id"].(string); v != "" && !seen[v] {
+				seen[v] = true
+				running = append(running, v)
+			}
+		}
+	}
+	switch len(running) {
+	case 1:
+		return running[0], nil
+	case 0:
+		return "", fmt.Errorf("the app has no running deployment: name the version")
+	default:
+		return "", fmt.Errorf("the app's deployments run %d different versions (%s): name the version", len(running), strings.Join(running, ", "))
+	}
 }

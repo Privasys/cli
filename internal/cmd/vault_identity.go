@@ -40,13 +40,14 @@ func newVaultIdentityCmd() *cobra.Command {
 				return err
 			}
 			type member struct {
-				Endpoint  string `json:"endpoint"`
-				MemberID  string `json:"member_id"`
-				BillingID string `json:"billing_id"`
+				Endpoint     string   `json:"endpoint"`
+				MemberID     string   `json:"member_id"`
+				BillingID    string   `json:"billing_id"`
+				Capabilities []string `json:"capabilities"`
 			}
 			members := make([]member, len(ids))
 			for i, id := range ids {
-				members[i] = member{Endpoint: dir.Endpoints[i], MemberID: id.MemberID(), BillingID: id.BillingID()}
+				members[i] = member{Endpoint: dir.Endpoints[i], MemberID: id.MemberID(), BillingID: id.BillingID(), Capabilities: id.Capabilities()}
 			}
 			out := map[string]any{"constellation": dir.ID, "name": dir.Name, "mrenclave": dir.MRENCLAVE, "members": members}
 			return output.Emit(env.Format, out, func() output.Table {
