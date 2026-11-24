@@ -55,12 +55,51 @@ type VaultKeyGrantResponse struct {
 	Key           map[string]interface{} `json:"key"`
 	Grant         string                 `json:"grant"`
 	Constellation struct {
+		ID                string   `json:"id"`
 		Endpoints         []string `json:"endpoints"`
 		MRENCLAVE         string   `json:"mrenclave"`
 		AttestationServer string   `json:"attestation_server"`
 		OIDCIssuer        string   `json:"oidc_issuer"`
 		Threshold         int      `json:"threshold"`
 	} `json:"constellation"`
+}
+
+// VaultKeyRenewResponse is a threshold key's renewal: a grant for the same
+// handle on the active constellation (Constellation) and where the key lives
+// now (Home).
+type VaultKeyRenewResponse struct {
+	VaultKeyGrantResponse
+	Home struct {
+		ID                string   `json:"id"`
+		Endpoints         []string `json:"endpoints"`
+		MRENCLAVE         string   `json:"mrenclave"`
+		AttestationServer string   `json:"attestation_server"`
+	} `json:"home"`
+}
+
+// RenewVaultKeyGrant asks the platform for a grant to renew a threshold key
+// under its handle on the active constellation, bound to cnf. Nothing in the
+// catalogue changes until CompleteVaultKeyRenewal.
+func (c *Client) RenewVaultKeyGrant(ctx context.Context, vaultID, name, cnf string) (*VaultKeyRenewResponse, error) {
+	var out VaultKeyRenewResponse
+	path := "/api/v1/keyvaults/" + url.PathEscape(vaultID) + "/keys/" + url.PathEscape(name) + "/renew"
+	if err := c.do(ctx, http.MethodPost, path, map[string]interface{}{"cnf_x5t_s256": cnf}, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CompleteVaultKeyRenewal records that a renewed key now lives on
+// constellationID (and its fresh expiry). Returns the new expiry.
+func (c *Client) CompleteVaultKeyRenewal(ctx context.Context, vaultID, name, constellationID string) (string, error) {
+	var out struct {
+		ExpiresAt string `json:"expires_at"`
+	}
+	path := "/api/v1/keyvaults/" + url.PathEscape(vaultID) + "/keys/" + url.PathEscape(name) + "/renewed"
+	if err := c.do(ctx, http.MethodPost, path, map[string]interface{}{"constellation_id": constellationID}, &out); err != nil {
+		return "", err
+	}
+	return out.ExpiresAt, nil
 }
 
 // MintVaultKeyGrant asks the platform to author the policy, catalogue the key

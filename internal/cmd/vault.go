@@ -131,7 +131,7 @@ func newVaultKeyCmd() *cobra.Command {
 	}
 	c.AddCommand(newVaultKeyCreateCmd(), newVaultKeyListCmd(), newVaultKeyRmCmd(),
 		newVaultKeySignCmd(), newVaultKeyPublicCmd(),
-		newVaultKeyWrapCmd(), newVaultKeyUnwrapCmd(), newVaultKeyRotateCmd(),
+		newVaultKeyWrapCmd(), newVaultKeyUnwrapCmd(), newVaultKeyRotateCmd(), newVaultKeyRenewCmd(),
 		newVaultKeyAuditCmd())
 	return c
 }
@@ -920,5 +920,105 @@ automatically; for a secret, provide --value/--from-file/--random-bytes.`,
 	f.StringVar(&value, "value", "", "new secret value (secret keys only)")
 	f.StringVar(&fromFile, "from-file", "", "read new secret bytes from a file (secret keys only)")
 	f.IntVar(&randomBytes, "random-bytes", 32, "random bytes for a rotated secret when no value/file given")
+	return cmd
+}
+
+func newVaultKeyRenewCmd() *cobra.Command {
+	var threshold int
+	cmd := &cobra.Command{
+		Use:   "renew <vault-id> <name>",
+		Short: "Renew a threshold Ed25519 key: same public key, fresh shares, a fresh 90 days",
+		Long: `Renews a threshold Ed25519 key (--type ed25519) before it expires, keeping its
+handle and its public key. As 'secrets renew' does for a secret, the key goes to
+the active vault constellation: renewed in place when it is already there,
+moved there after a vault roll.
+
+Its old vaults deal fresh shares of the same key to the new ones; no vault,
+and not this CLI, holds the key at any point. You approve the renewal in your
+wallet: the approval names the exact vaults and build the key goes to.
+
+--threshold changes how many vaults must sign (default: the constellation's).`,
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			env, err := loadEnv(cmd)
+			if err != nil {
+				return err
+			}
+			ctx := cmd.Context()
+			tok, err := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "privasys-platform")
+			if err != nil {
+				return err
+			}
+			claims, err := auth.Claims(tok)
+			if err != nil {
+				return err
+			}
+			sub, _ := claims["sub"].(string)
+			if sub == "" {
+				return fmt.Errorf("could not determine your subject from the session")
+			}
+			attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
+			client, err := apiClient(cmd, env)
+			if err != nil {
+				return err
+			}
+			vaultID, name := args[0], args[1]
+			keyType, err := getPrimaryVaultKeyType(ctx, client, vaultID, name)
+			if err != nil {
+				return err
+			}
+			if keyType != secrets.ThresholdKeyType {
+				return fmt.Errorf("renew keeps a threshold (ed25519) key's public key; use 'vault key rotate' for a %s key", keyType)
+			}
+			res, err := secrets.RenewThresholdKeyInVault(ctx, secrets.ThresholdRenewParams{
+				Issuer: env.Cfg.Issuer, Sub: sub, OwnerToken: tok, AttToken: attTok, Threshold: threshold,
+				Out: cmd.ErrOrStderr(), Open: secrets.OpenBrowser,
+				Mint: func(ctx context.Context, cnf string) (string, string, secrets.RenewConstellation, secrets.RenewConstellation, error) {
+					r, err := client.RenewVaultKeyGrant(ctx, vaultID, name, cnf)
+					if err != nil {
+						return "", "", secrets.RenewConstellation{}, secrets.RenewConstellation{}, err
+					}
+					handle, _ := r.Key["handle"].(string)
+					target := secrets.RenewConstellation{
+						ID: r.Constellation.ID, Endpoints: r.Constellation.Endpoints, MRENCLAVE: r.Constellation.MRENCLAVE,
+						AttestationServer: r.Constellation.AttestationServer, Threshold: r.Constellation.Threshold,
+					}
+					home := secrets.RenewConstellation{
+						ID: r.Home.ID, Endpoints: r.Home.Endpoints, MRENCLAVE: r.Home.MRENCLAVE,
+						AttestationServer: r.Home.AttestationServer,
+					}
+					return r.Grant, handle, target, home, nil
+				},
+			})
+			if err != nil {
+				return err
+			}
+			expires, err := client.CompleteVaultKeyRenewal(ctx, vaultID, name, res.Constellation)
+			if err != nil {
+				return fmt.Errorf("renewed on the vaults, but the catalogue was not updated (run renew again): %w", err)
+			}
+			pub := base64.RawURLEncoding.EncodeToString(res.PublicKey)
+			if !env.Quiet {
+				how := "moved to the active constellation"
+				if res.InPlace {
+					how = "in place"
+				}
+				output.Success(cmd.ErrOrStderr(), "Renewed %s %s: %d vaults (any %d sign), same public key", res.Handle, how, res.Vaults, res.Threshold)
+			}
+			return output.Emit(env.Format, map[string]any{
+				"handle": res.Handle, "public_key_b64url": pub, "vaults": res.Vaults,
+				"threshold": res.Threshold, "in_place": res.InPlace,
+				"constellation_id": res.Constellation, "expires_at": expires,
+			}, func() output.Table {
+				return output.Table{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
+					{"handle", res.Handle},
+					{"public key", pub},
+					{"vaults", fmt.Sprintf("%d (any %d sign)", res.Vaults, res.Threshold)},
+					{"expires", expiryCell(expires, time.Now())},
+				}}
+			})
+		},
+	}
+	cmd.Flags().IntVar(&threshold, "threshold", 0, "how many vaults must sign after the renewal (0 = the constellation's threshold)")
 	return cmd
 }
