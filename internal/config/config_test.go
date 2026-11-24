@@ -13,6 +13,7 @@ func TestPlatformAudienceFollowsTheEndpoint(t *testing.T) {
 		{Configuration{Endpoint: DefaultEndpoint}, DefaultAudience},
 		{Configuration{Endpoint: TestEndpoint}, TestAudience},
 		{Configuration{Endpoint: TestEndpoint + "/"}, TestAudience},
+		{Configuration{Endpoint: "https://api-test.developer.privasys.org"}, TestAudience},
 		{Configuration{Endpoint: "https://api.example.org"}, DefaultAudience},
 		{Configuration{Endpoint: TestEndpoint, Audience: "custom"}, "custom"},
 	}

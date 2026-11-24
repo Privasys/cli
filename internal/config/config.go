@@ -27,6 +27,9 @@ const (
 	// global --test flag. Auth still goes through the production issuer
 	// (privasys.id), so only the platform endpoint differs.
 	TestEndpoint = "https://api.developer.test.privasys.org"
+	// legacyTestEndpoint is the test platform's earlier name, which still
+	// answers and which older configurations name.
+	legacyTestEndpoint = "https://api-test.developer.privasys.org"
 
 	// DefaultAudience is the platform's audience on the shared issuer. The
 	// test platform has its own, so its roles never mix with production's
@@ -52,7 +55,8 @@ func (c *Configuration) PlatformAudience() string {
 	if c.Audience != "" {
 		return c.Audience
 	}
-	if strings.TrimRight(c.Endpoint, "/") == TestEndpoint {
+	switch strings.ToLower(strings.TrimRight(c.Endpoint, "/")) {
+	case TestEndpoint, legacyTestEndpoint:
 		return TestAudience
 	}
 	return DefaultAudience
