@@ -6,6 +6,8 @@ package secrets
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 
 	"github.com/Privasys/enclave-vaults-client/go/vault"
 )
@@ -34,3 +36,42 @@ func (p PinnedIdentity) MemberID() string { return p.id.MemberID }
 // MarshalJSON relays the vault's answer untouched, for privasys.id and the
 // wallet, which verifies the quote.
 func (p PinnedIdentity) MarshalJSON() ([]byte, error) { return json.Marshal(p.id) }
+
+// ConstellationIdentities reads every member's identity, each over its own
+// connection pinned to mrenclave, and checks the members agree: one build, one
+// billing configuration, distinct member ids. The pin is the constellation's
+// MRENCLAVE as the control plane reports it.
+func ConstellationIdentities(ctx context.Context, endpoints []string, mrenclave, attServer, attToken string) ([]PinnedIdentity, error) {
+	if len(endpoints) == 0 {
+		return nil, errors.New("the constellation has no vaults")
+	}
+	verify, err := verifyPolicy(mrenclave, attServer, attToken)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]PinnedIdentity, 0, len(endpoints))
+	seen := map[string]string{}
+	for _, ep := range endpoints {
+		c, err := vault.Dial(ctx, vaultReg(ep), vault.DialOptions{VaultPolicy: verify})
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", ep, err)
+		}
+		id, err := ReadPinnedIdentity(ctx, c)
+		c.Close()
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", ep, err)
+		}
+		if prev, dup := seen[id.MemberID()]; dup {
+			return nil, fmt.Errorf("%s and %s report the same member id", prev, ep)
+		}
+		seen[id.MemberID()] = ep
+		if len(ids) > 0 && id.id.BillingID != ids[0].id.BillingID {
+			return nil, fmt.Errorf("%s is under another billing configuration than %s", ep, endpoints[0])
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+// BillingID is the vault's billing configuration id.
+func (p PinnedIdentity) BillingID() string { return p.id.BillingID }

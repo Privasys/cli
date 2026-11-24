@@ -27,7 +27,7 @@ constellation so no single vault holds a key and the platform never sees the
 material. Each vault is billed to your account; the number of vaults you may
 create is set by your plan.`,
 	}
-	c.AddCommand(newVaultCreateCmd(), newVaultListCmd(), newVaultRmCmd(), newVaultKeyCmd(), newVaultServeCmd())
+	c.AddCommand(newVaultCreateCmd(), newVaultListCmd(), newVaultRmCmd(), newVaultKeyCmd(), newVaultServeCmd(), newVaultIdentityCmd())
 	return c
 }
 

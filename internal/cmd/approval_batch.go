@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Privasys/enclave-vaults-client/go/vault"
+
 	"github.com/Privasys/cli/internal/auth"
 	"github.com/Privasys/cli/internal/secrets"
 )
@@ -42,10 +44,12 @@ type approvalOp struct {
 	// approval yields tokens of one audience.
 	Audience string
 	Name     string // what the owner recognises: the app or the enclave
-	Kind string // what kind of key or document this is
+	Kind     string // what kind of key or document this is
 	// Admitted says the key already admits what was staged (the vaults
 	// accepted it without a promote): nothing to approve or carry out.
 	Admitted bool
+	// V2 is set when the key's vaults take binding v2: the approval to ask for.
+	V2 *secrets.ApprovalV2
 	// Apply carries the operation out. It returns a note for the report.
 	Apply func(ctx context.Context, token string) (string, error)
 }
@@ -293,15 +297,20 @@ func (r *approvalRun) approveAndApply(ctx context.Context, ops []*approvalOp) ([
 	return done, nil
 }
 
-// groupByAudience splits ops by audience, keeping their order.
+// groupByAudience splits ops by audience, and by binding version (one batch is
+// v1 or v2), keeping their order.
 func groupByAudience(ops []*approvalOp) [][]*approvalOp {
 	var groups [][]*approvalOp
 	at := map[string]int{}
 	for _, op := range ops {
-		i, ok := at[op.Audience]
+		key := op.Audience
+		if op.V2 != nil {
+			key += "\x00v2"
+		}
+		i, ok := at[key]
 		if !ok {
 			i = len(groups)
-			at[op.Audience] = i
+			at[key] = i
 			groups = append(groups, nil)
 		}
 		groups[i] = append(groups[i], op)
@@ -316,11 +325,20 @@ func (r *approvalRun) approveBatch(ctx context.Context, ops []*approvalOp) ([]ap
 	if err != nil {
 		return nil, err
 	}
-	entries := make([]secrets.BatchEntry, len(ops))
-	for i, op := range ops {
-		entries[i] = op.BatchEntry
+	var batch *secrets.Batch
+	if v2Group(ops) {
+		entries := make([]secrets.ApprovalV2, len(ops))
+		for i, op := range ops {
+			entries[i] = *op.V2
+		}
+		batch, err = secrets.BeginBatchV2(ctx, r.Issuer, bearer, r.Label, ops[0].Audience, entries)
+	} else {
+		entries := make([]secrets.BatchEntry, len(ops))
+		for i, op := range ops {
+			entries[i] = op.BatchEntry
+		}
+		batch, err = secrets.BeginBatch(ctx, r.Issuer, bearer, r.Label, ops[0].Audience, entries)
 	}
-	batch, err := secrets.BeginBatch(ctx, r.Issuer, bearer, r.Label, ops[0].Audience, entries)
 	if err != nil {
 		return nil, err
 	}
@@ -355,8 +373,13 @@ func (r *approvalRun) applyOneByOne(ctx context.Context, ops []*approvalOp) ([]a
 			return nil, err
 		}
 		fmt.Fprintf(r.Out, "\n[%d/%d] %s: %s\n", i+1, len(ops), op.Kind, op.Name)
-		token, err := secrets.RequestStepUpViaBrowserFor(ctx, r.Issuer, bearer, op.Audience, op.Operation, op.Handle,
-			op.MeasurementDigest, uint32(op.PolicyVersion), op.Context, r.Open, r.Out)
+		var token string
+		if op.V2 != nil {
+			token, err = secrets.RequestApprovalV2(ctx, r.Issuer, bearer, *op.V2, r.Open, r.Out)
+		} else {
+			token, err = secrets.RequestStepUpViaBrowserFor(ctx, r.Issuer, bearer, op.Audience, op.Operation, op.Handle,
+				op.MeasurementDigest, uint32(op.PolicyVersion), op.Context, r.Open, r.Out)
+		}
 		if errors.Is(err, secrets.ErrDeclined) {
 			msg := "nothing was promoted or changed"
 			if i > 0 {
@@ -436,3 +459,26 @@ func (r *approvalRun) report(results []approvalResult) map[string]bool {
 	}
 	return failed
 }
+
+// readKeyApproval says whether a key's vaults take binding v2 for op, and with
+// which members. Tests replace it.
+var readKeyApproval = func(ctx context.Context, issuer, audience string, t secrets.KeyTarget, op vault.Operation) (int, []secrets.PinnedIdentity, error) {
+	t.Bearer, _ = auth.VaultTokenFor(ctx, issuer, audience)
+	t.AttToken, _ = auth.AccessTokenForAudience(ctx, issuer, "attestation-server")
+	binding, ids, _, err := secrets.KeyApproval(ctx, t, op)
+	return binding, ids, err
+}
+
+// promoteV2 is the v2 approval of a promote when the key's vaults take v2, or
+// nil to approve on v1 as before.
+func promoteV2(ctx context.Context, issuer, audience string, t secrets.KeyTarget, digest string, policyVersion uint64, display map[string]string) (*secrets.ApprovalV2, error) {
+	binding, ids, err := readKeyApproval(ctx, issuer, audience, t, vault.OpPromoteProfile)
+	if err != nil || binding != 2 {
+		return nil, err
+	}
+	return &secrets.ApprovalV2{Operation: vault.BindPromote, Handle: t.Handle, Target: digest,
+		PolicyVersion: policyVersion, Identities: ids, Audience: audience, Context: display}, nil
+}
+
+// v2Group says whether ops (one group) are approved on binding v2.
+func v2Group(ops []*approvalOp) bool { return len(ops) > 0 && ops[0].V2 != nil }

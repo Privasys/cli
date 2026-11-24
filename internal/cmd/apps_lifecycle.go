@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Privasys/enclave-vaults-client/go/vault"
 	"github.com/spf13/cobra"
 
 	"github.com/Privasys/cli/internal/api"
@@ -1385,8 +1386,25 @@ func promoteWithStepUp(cmd *cobra.Command, env *Env, client *api.Client, appID, 
 	if err != nil {
 		return nil, err
 	}
-	stepTok, err := secrets.RequestStepUpViaBrowserFor(ctx, env.Cfg.Issuer, bearer, audience, "promote",
-		tgt.Handle, digest, policyVersion, actx, secrets.OpenBrowser, cmd.ErrOrStderr())
+	// The key's own policy says whether its vaults take binding v2, which
+	// names the constellation's members, read from the vaults themselves.
+	vaultTok, _ := auth.VaultTokenFor(ctx, env.Cfg.Issuer, audience)
+	attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
+	binding, ids, _, err := secrets.KeyApproval(ctx, secrets.KeyTarget{Handle: tgt.Handle, Endpoints: tgt.Endpoints,
+		MRENCLAVE: tgt.MRENCLAVE, AttServer: tgt.AttestationServer, AttToken: attTok, Bearer: vaultTok}, vault.OpPromoteProfile)
+	if err != nil {
+		return nil, err
+	}
+	var stepTok string
+	if binding == 2 {
+		stepTok, err = secrets.RequestApprovalV2(ctx, env.Cfg.Issuer, bearer, secrets.ApprovalV2{
+			Operation: vault.BindPromote, Handle: tgt.Handle, Target: digest, PolicyVersion: uint64(policyVersion),
+			Identities: ids, Audience: audience, Context: actx,
+		}, secrets.OpenBrowser, cmd.ErrOrStderr())
+	} else {
+		stepTok, err = secrets.RequestStepUpViaBrowserFor(ctx, env.Cfg.Issuer, bearer, audience, "promote",
+			tgt.Handle, digest, policyVersion, actx, secrets.OpenBrowser, cmd.ErrOrStderr())
+	}
 	if errors.Is(err, secrets.ErrDeclined) {
 		return nil, fmt.Errorf("%w: nothing was promoted", err)
 	}

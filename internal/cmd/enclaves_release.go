@@ -77,7 +77,7 @@ The default environment is production; pass --test for the test environment.`,
 				return fmt.Errorf("%s is a %s enclave: runtime releases apply to TDX hosts", name, tee)
 			}
 			fmt.Fprintf(out, "Platform: %s\nEnclave:  %s (%s)\nRelease:  %s\n", env.Cfg.Endpoint, name, enclaveID, release)
-			targets, err := releaseTargets(ctx, client, enclaveID, name, release, exclude, out)
+			targets, err := releaseTargets(ctx, client, env.Cfg.Issuer, enclaveID, name, release, exclude, out)
 			if err != nil {
 				return err
 			}
@@ -147,7 +147,7 @@ func releaseLabel(release, enclave string) string {
 
 // releaseTargets lists what a roll of this enclave must promote: its manager
 // key first, then each app with a vault-backed key.
-func releaseTargets(ctx context.Context, client *api.Client, enclaveID, enclaveName, release string, exclude []string, out io.Writer) ([]approvalTarget, error) {
+func releaseTargets(ctx context.Context, client *api.Client, issuer, enclaveID, enclaveName, release string, exclude []string, out io.Writer) ([]approvalTarget, error) {
 	placed, err := client.ListEnclaveApps(ctx, enclaveID)
 	if err != nil {
 		return nil, err
@@ -155,7 +155,7 @@ func releaseTargets(ctx context.Context, client *api.Client, enclaveID, enclaveN
 	targets := []approvalTarget{{
 		Name: "manager /data key",
 		Prepare: func(ctx context.Context) ([]*approvalOp, error) {
-			return prepareManagerKey(ctx, client, enclaveID, enclaveName, release)
+			return prepareManagerKey(ctx, client, issuer, enclaveID, enclaveName, release)
 		},
 		Preview: func(ctx context.Context) ([]approvalPreview, error) {
 			return previewManagerKey(ctx, client, enclaveID, enclaveName)
@@ -191,7 +191,7 @@ func releaseTargets(ctx context.Context, client *api.Client, enclaveID, enclaveN
 		targets = append(targets, approvalTarget{
 			Name: name,
 			Prepare: func(ctx context.Context) ([]*approvalOp, error) {
-				return prepareAppKeys(ctx, client, appID, deploymentID, enclaveID, release)
+				return prepareAppKeys(ctx, client, issuer, appID, deploymentID, enclaveID, release)
 			},
 			Preview: func(ctx context.Context) ([]approvalPreview, error) {
 				return previewAppKeys(ctx, client, appID, deploymentID, enclaveName)
@@ -244,7 +244,7 @@ func previewAppKeys(ctx context.Context, client *api.Client, appID, deploymentID
 	return ops, nil
 }
 
-func prepareManagerKey(ctx context.Context, client *api.Client, enclaveID, enclaveName, release string) ([]*approvalOp, error) {
+func prepareManagerKey(ctx context.Context, client *api.Client, issuer, enclaveID, enclaveName, release string) ([]*approvalOp, error) {
 	staged, err := client.StageDataKey(ctx, enclaveID, release)
 	if err != nil {
 		return nil, fmt.Errorf("stage: %w", err)
@@ -275,10 +275,25 @@ func prepareManagerKey(ctx context.Context, client *api.Client, enclaveID, encla
 	if err != nil {
 		return nil, err
 	}
+	display := map[string]string{"app_name": "Enclave manager: " + enclaveName, "version": path.Base(release), "key_type": "manager data key"}
+	// The manager key's vaults, from the constellation the stage names (a
+	// control plane too old to name it: v1, as before).
+	var v2 *secrets.ApprovalV2
+	if cid := output.Str(staged, "constellation_id"); cid != "" {
+		dir, derr := client.VaultDirectoryAt(ctx, cid)
+		if derr != nil {
+			return nil, fmt.Errorf("the manager key's vaults: %w", derr)
+		}
+		t := secrets.KeyTarget{Handle: handle, Endpoints: dir.Endpoints, MRENCLAVE: dir.MRENCLAVE, AttServer: dir.AttestationServer}
+		if v2, err = promoteV2(ctx, issuer, audience, t, digest, policyVersion, display); err != nil {
+			return nil, err
+		}
+	}
 	return []*approvalOp{{
+		V2: v2,
 		BatchEntry: secrets.BatchEntry{
 			Operation: "promote", Handle: handle, MeasurementDigest: digest, PolicyVersion: policyVersion,
-			Context: map[string]string{"app_name": "Enclave manager: " + enclaveName, "version": path.Base(release), "key_type": "manager data key"},
+			Context: display,
 		},
 		Audience: audience,
 		Name:     enclaveName,
@@ -295,7 +310,7 @@ func prepareManagerKey(ctx context.Context, client *api.Client, enclaveID, encla
 
 // prepareAppKeys stages an app for the release and returns the promote of its
 // key and, for a private image, of its registry credential.
-func prepareAppKeys(ctx context.Context, client *api.Client, appID, deploymentID, enclaveID, release string) ([]*approvalOp, error) {
+func prepareAppKeys(ctx context.Context, client *api.Client, issuer, appID, deploymentID, enclaveID, release string) ([]*approvalOp, error) {
 	app, err := client.GetApp(ctx, appID)
 	if err != nil {
 		return nil, err
@@ -343,7 +358,12 @@ func prepareAppKeys(ctx context.Context, client *api.Client, appID, deploymentID
 		if err != nil {
 			return nil, err
 		}
+		v2, err := promoteV2(ctx, issuer, audience, keyTargetOf(tgt, handle), digest, uint64(policyVersion), withKeyType(display, "app key"))
+		if err != nil {
+			return nil, err
+		}
 		ops = append(ops, &approvalOp{
+			V2: v2,
 			BatchEntry: secrets.BatchEntry{
 				Operation: "promote", Handle: handle, MeasurementDigest: digest, PolicyVersion: uint64(policyVersion),
 				Context: withKeyType(display, "app key"),
@@ -388,7 +408,12 @@ func prepareAppKeys(ctx context.Context, client *api.Client, appID, deploymentID
 	if err != nil {
 		return nil, fmt.Errorf("registry credential: %w", err)
 	}
+	credV2, err := promoteV2(ctx, issuer, audience, keyTargetOf(tgt, credHandle), credDigest, credVersion, withKeyType(display, "registry credential"))
+	if err != nil {
+		return nil, fmt.Errorf("registry credential: %w", err)
+	}
 	return append(ops, &approvalOp{
+		V2: credV2,
 		BatchEntry: secrets.BatchEntry{
 			Operation: "promote", Handle: credHandle, MeasurementDigest: credDigest, PolicyVersion: credVersion,
 			Context: withKeyType(display, "registry credential"),
@@ -555,4 +580,10 @@ func quorumNote(promoted int) (string, error) {
 		return "", fmt.Errorf("promoted on %d vaults, %d needed", promoted, vaultQuorum)
 	}
 	return fmt.Sprintf("promoted on %d vaults", promoted), nil
+}
+
+// keyTargetOf is where an app's key (or its registry credential, on the same
+// vaults) lives.
+func keyTargetOf(t *api.VaultExportTarget, handle string) secrets.KeyTarget {
+	return secrets.KeyTarget{Handle: handle, Endpoints: t.Endpoints, MRENCLAVE: t.MRENCLAVE, AttServer: t.AttestationServer}
 }

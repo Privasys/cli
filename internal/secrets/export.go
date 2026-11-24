@@ -55,14 +55,41 @@ func Export(ctx context.Context, p ExportParams) ([]byte, *ExportResult, error) 
 			return nil, nil, fmt.Errorf("dial vault for key info: %w", err)
 		}
 		info, err := c.GetKeyInfo(ctx, p.Handle)
+		if err != nil {
+			c.Close()
+			return nil, nil, fmt.Errorf("get key info: %w", err)
+		}
+		policy, _, err := c.GetPolicy(ctx, p.Handle)
 		c.Close()
 		if err != nil {
-			return nil, nil, fmt.Errorf("get key info: %w", err)
+			return nil, nil, fmt.Errorf("get key policy: %w", err)
+		}
+		binding, err := BindingVersion(policy, vault.OpExportKey)
+		if err != nil {
+			return nil, nil, err
 		}
 		actx := approvalContext{"key_type": string(info.KeyType)}
 		actx.name(p.DisplayName)
 		var stepTok string
-		if p.Assert != nil {
+		if binding == 2 {
+			// Binding v2 names the constellation's members, read from the
+			// vaults themselves over pinned connections.
+			if p.Assert != nil {
+				return nil, nil, fmt.Errorf("an approval on binding v2 is made in the Privasys Wallet; the in-process authenticator cannot make one")
+			}
+			ids, ierr := ConstellationIdentities(ctx, p.Endpoints, p.MRENCLAVE, p.AttServer, p.AttToken)
+			if ierr != nil {
+				return nil, nil, fmt.Errorf("read the vaults' identities: %w", ierr)
+			}
+			out := p.Out
+			if out == nil {
+				out = os.Stderr
+			}
+			stepTok, err = RequestApprovalV2(ctx, p.Issuer, p.Bearer, ApprovalV2{
+				Operation: vault.BindExport, Handle: p.Handle, PolicyVersion: uint64(info.PolicyVersion),
+				Identities: ids, Audience: p.Audience, Context: actx,
+			}, p.Open, out)
+		} else if p.Assert != nil {
 			// In-process authenticator (E2E).
 			stepTok, err = requestExportStepUp(ctx, p.Issuer, p.Bearer, p.Audience, p.Handle, info.PolicyVersion, actx, p.Assert)
 		} else {

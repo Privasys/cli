@@ -315,7 +315,7 @@ func (f *fakeRoll) run(t *testing.T, ask func(string) (bool, error), mutate func
 	t.Helper()
 	var out bytes.Buffer
 	client := api.New(f.srv.URL, "admin")
-	targets, err := releaseTargets(context.Background(), client, "enc-1", "m1", "tdx-v9", nil, io.Discard)
+	targets, err := releaseTargets(context.Background(), client, "", "enc-1", "m1", "tdx-v9", nil, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -619,11 +619,11 @@ func TestExclude(t *testing.T) {
 	f := newFakeRoll(t)
 	client := api.New(f.srv.URL, "admin")
 	var out bytes.Buffer
-	targets, err := releaseTargets(context.Background(), client, "enc-1", "m1", "tdx-v9", []string{"b"}, &out)
+	targets, err := releaseTargets(context.Background(), client, "", "enc-1", "m1", "tdx-v9", []string{"b"}, &out)
 	if err != nil || len(targets) != 2 || !strings.Contains(out.String(), "Left out: b") {
 		t.Fatalf("%d targets, %v, %s", len(targets), err, out.String())
 	}
-	if _, err := releaseTargets(context.Background(), client, "enc-1", "m1", "tdx-v9", []string{"typo"}, io.Discard); err == nil {
+	if _, err := releaseTargets(context.Background(), client, "", "enc-1", "m1", "tdx-v9", []string{"typo"}, io.Discard); err == nil {
 		t.Error("an unknown --exclude was accepted")
 	}
 }
