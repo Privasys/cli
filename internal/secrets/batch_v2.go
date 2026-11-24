@@ -195,14 +195,25 @@ func verifyBatchV2(label string, requested []ApprovalV2, answer []byte, now time
 	}
 	out := &Batch{ID: ans.BatchID, Label: label, Exp: ans.Exp,
 		PushRegistered: ans.PushRegistered, Deeplink: ans.ApprovalDeeplink}
-	// The entries come back in the order they were asked, which is the order
-	// the batch id covers.
-	for i, e := range ans.Entries {
-		a := requested[i]
-		k := e.Operation + " " + e.Handle
-		if e.Operation != string(a.Operation) || e.Handle != a.Handle {
-			return nil, fmt.Errorf("entry %d is %s, %s %s was asked", i, k, a.Operation, a.Handle)
+	// privasys.id returns the entries in its canonical order (by handle, then
+	// operation), and the batch id covers that order. Each entry is matched to
+	// what was asked by operation and handle: every asked entry exactly once,
+	// nothing else.
+	asked := make(map[string]ApprovalV2, len(requested))
+	for _, a := range requested {
+		k := string(a.Operation) + " " + a.Handle
+		if _, dup := asked[k]; dup {
+			return nil, fmt.Errorf("%s was asked twice", k)
 		}
+		asked[k] = a
+	}
+	for i, e := range ans.Entries {
+		k := e.Operation + " " + e.Handle
+		a, ok := asked[k]
+		if !ok {
+			return nil, fmt.Errorf("entry %d is %s, which was not asked or is listed twice", i, k)
+		}
+		delete(asked, k)
 		// Every entry expires with the batch, except a delete_after, which is
 		// held until the migration ends and may last up to 24 hours.
 		if a.Operation == vault.BindDeleteAfter {

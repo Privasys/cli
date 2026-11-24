@@ -202,3 +202,34 @@ func TestDeleteAfterGuards(t *testing.T) {
 		t.Error("a 24 h delete_after was accepted where an hour was asked")
 	}
 }
+
+// privasys.id answers in its canonical order (by handle, then operation), and
+// the batch id covers that order, not the order asked.
+func TestVerifyBatchV2ServerOrder(t *testing.T) {
+	now := time.Unix(1764000000, 0)
+	ids := []PinnedIdentity{fakeIdentity(t, 1), fakeIdentity(t, 2)}
+	a := ApprovalV2{Operation: vault.BindPromote, Handle: "apps.privasys.org/a/k", Target: strings.Repeat("1", 64), PolicyVersion: 2, Identities: ids}
+	b := ApprovalV2{Operation: vault.BindPromote, Handle: "apps.privasys.org/b/k", Target: strings.Repeat("2", 64), PolicyVersion: 7, Identities: ids}
+	enc := func(m map[string]interface{}) []byte { x, _ := json.Marshal(m); return x }
+
+	got, err := verifyBatchV2("roll", []ApprovalV2{b, a}, enc(honestBatch(t, "roll", []ApprovalV2{a, b}, now)), now)
+	if err != nil {
+		t.Fatalf("a batch in the server's order was refused: %v", err)
+	}
+	if got.Entries[0].PolicyVersion != 2 || got.Entries[1].PolicyVersion != 7 {
+		t.Fatalf("entries are not in the server's order: %+v", got.Entries)
+	}
+
+	// The same entry twice, the other missing: refused.
+	m := honestBatch(t, "roll", []ApprovalV2{a, b}, now)
+	list := m["entries"].([]map[string]interface{})
+	list[1] = list[0]
+	if _, err := verifyBatchV2("roll", []ApprovalV2{a, b}, enc(m), now); err == nil {
+		t.Fatal("a batch listing one entry twice was accepted")
+	}
+
+	// The same entry asked twice: refused before anything else.
+	if _, err := verifyBatchV2("roll", []ApprovalV2{a, a}, enc(honestBatch(t, "roll", []ApprovalV2{a, a}, now)), now); err == nil {
+		t.Fatal("a request asking one entry twice was accepted")
+	}
+}
