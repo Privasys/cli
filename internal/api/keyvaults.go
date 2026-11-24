@@ -60,6 +60,7 @@ type VaultKeyGrantResponse struct {
 		MRENCLAVE         string   `json:"mrenclave"`
 		AttestationServer string   `json:"attestation_server"`
 		OIDCIssuer        string   `json:"oidc_issuer"`
+		OIDCAudience      string   `json:"oidc_audience"`
 		Threshold         int      `json:"threshold"`
 	} `json:"constellation"`
 }
@@ -74,6 +75,7 @@ type VaultKeyRenewResponse struct {
 		Endpoints         []string `json:"endpoints"`
 		MRENCLAVE         string   `json:"mrenclave"`
 		AttestationServer string   `json:"attestation_server"`
+		OIDCAudience      string   `json:"oidc_audience"`
 	} `json:"home"`
 }
 

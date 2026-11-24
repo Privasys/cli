@@ -169,6 +169,16 @@ func refreshWithScope(ctx context.Context, issuer, refreshToken, scope string) (
 	return &tr, nil
 }
 
+// VaultTokenFor is a bearer for vaults that accept audience ("" = the
+// default vault audience): each constellation's vaults accept one, which the
+// control plane reports with its addressing.
+func VaultTokenFor(ctx context.Context, issuer, audience string) (string, error) {
+	if audience == "" {
+		audience = VaultAudience
+	}
+	return AccessTokenForAudience(ctx, issuer, audience)
+}
+
 // AccessTokenForAudience mints an access token bound to a specific audience
 // (e.g. "attestation-server") so the CLI can call that resource server
 // directly. For user sessions it uses the refresh grant with an `audience:`

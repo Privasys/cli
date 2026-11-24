@@ -84,15 +84,18 @@ type RenewConstellation struct {
 	MRENCLAVE         string
 	AttestationServer string
 	Threshold         int
+	Audience          string // the audience its vaults accept ("" = the default)
 }
 
 // ThresholdRenewParams describes renewing a threshold key.
 type ThresholdRenewParams struct {
-	Issuer     string
-	Sub        string
-	OwnerToken string // the owner's bearer (aud privasys-platform)
-	AttToken   string // aud=attestation-server, to verify the vaults' quotes
-	Threshold  int    // 0 = the target constellation's threshold
+	Issuer string
+	Sub    string
+	// Token gives the owner's bearer for vaults of an audience: the old and
+	// the new vaults may accept different ones.
+	Token     TokenFor
+	AttToken  string // aud=attestation-server, to verify the vaults' quotes
+	Threshold int    // 0 = the target constellation's threshold
 	// Mint asks the platform for a grant (bound to cnf) for the key's handle
 	// on the active constellation: returns the grant, the handle, the target
 	// and the key's current home.
@@ -133,6 +136,14 @@ func RenewThresholdKeyInVault(ctx context.Context, p ThresholdRenewParams) (*Thr
 	if err != nil {
 		return nil, err
 	}
+	homeTok, err := p.Token(ctx, home.Audience)
+	if err != nil {
+		return nil, err
+	}
+	targetTok, err := p.Token(ctx, target.Audience)
+	if err != nil {
+		return nil, err
+	}
 	n := len(target.Endpoints)
 	t := p.Threshold
 	if t == 0 {
@@ -147,10 +158,10 @@ func RenewThresholdKeyInVault(ctx context.Context, p ThresholdRenewParams) (*Thr
 	inPlace := home.ID == target.ID
 	key, err := vault.ReshareThresholdKey(ctx, vault.ReshareParams{
 		Handle: handle, Grant: grant, Threshold: t,
-		Home: home.Endpoints, HomeDial: vault.DialOptions{VaultPolicy: homeVerify}, HomeToken: p.OwnerToken,
+		Home: home.Endpoints, HomeDial: vault.DialOptions{VaultPolicy: homeVerify}, HomeToken: homeTok,
 		Target: target.Endpoints,
 		TargetDial: vault.DialOptions{
-			ClientCert: cert, VaultPolicy: targetVerify, AuthToken: vault.StaticToken(p.OwnerToken),
+			ClientCert: cert, VaultPolicy: targetVerify, AuthToken: vault.StaticToken(targetTok),
 		},
 		TargetMrenclave: target.MRENCLAVE,
 		InPlace:         inPlace,
@@ -182,7 +193,9 @@ func RenewThresholdKeyInVault(ctx context.Context, p ThresholdRenewParams) (*Thr
 			if out == nil {
 				out = os.Stderr
 			}
-			return RequestStepUpViaBrowser(ctx, p.Issuer, p.OwnerToken, "reshare", handle, a.ContextHex,
+			// The old vaults check the approval: it is issued for their
+			// audience.
+			return RequestStepUpViaBrowserFor(ctx, p.Issuer, homeTok, home.Audience, "reshare", handle, a.ContextHex,
 				a.PolicyVersion, actx, p.Open, out)
 		},
 	})

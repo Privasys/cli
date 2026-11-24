@@ -206,17 +206,23 @@ a fingerprint, never the key.`,
 				return err
 			}
 			handle := "users/" + sub + "/" + args[0]
+			audience := ""
 			if len(endpoints) == 0 && mrenclave == "" && attServer == "" {
 				// The secret's home: after a vault roll it may be a constellation
 				// other than the active one.
-				if home, _, lerr := secrets.LocateSecret(ctx, client, handle, tok, attTok); lerr == nil {
+				if home, _, lerr := secrets.LocateSecret(ctx, client, handle, vaultTokens(env), attTok); lerr == nil {
 					endpoints, mrenclave, attServer = home.Endpoints, home.MRENCLAVE, home.AttestationServer
+					audience = home.OIDCAudience
 				}
 			}
 			endpoints, mrenclave, attServer = resolveConstellation(ctx, client, endpoints, mrenclave, attServer)
+			vaultTok, err := auth.VaultTokenFor(ctx, env.Cfg.Issuer, audience)
+			if err != nil {
+				return err
+			}
 
 			material, res, err := secrets.Export(ctx, secrets.ExportParams{
-				Issuer: env.Cfg.Issuer, Bearer: tok, Sub: sub, Handle: handle,
+				Issuer: env.Cfg.Issuer, Bearer: vaultTok, Audience: audience, Sub: sub, Handle: handle,
 				Endpoints: endpoints, Threshold: threshold, MRENCLAVE: mrenclave,
 				AttServer: attServer, AttToken: attTok,
 				// Assert nil = the human ceremony: /begin pushes the owner's

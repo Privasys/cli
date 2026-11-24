@@ -54,6 +54,15 @@ func newSecretSession(cmd *cobra.Command) (*secretSession, error) {
 
 func (s *secretSession) handle(name string) string { return "users/" + s.sub + "/" + name }
 
+// vaultTokens gives the owner's bearer for vaults of an audience: each
+// constellation's vaults accept their own (the session's audience is the
+// platform's, which may differ).
+func vaultTokens(env *Env) secrets.TokenFor {
+	return func(ctx context.Context, aud string) (string, error) {
+		return auth.VaultTokenFor(ctx, env.Cfg.Issuer, aud)
+	}
+}
+
 // refresh re-reads the session tokens (refreshing them when close to expiry).
 func (s *secretSession) refresh(ctx context.Context) error {
 	tok, err := auth.AccessToken(ctx, s.env.Cfg.Issuer)
@@ -92,7 +101,7 @@ still need before it expires (privasys secrets renew).`,
 				return err
 			}
 			active, _ := s.client.VaultDirectory(cmd.Context())
-			dir, info, err := secrets.LocateSecret(cmd.Context(), s.client, s.handle(args[0]), s.tok, s.attTok)
+			dir, info, err := secrets.LocateSecret(cmd.Context(), s.client, s.handle(args[0]), vaultTokens(s.env), s.attTok)
 			if err != nil {
 				return err
 			}
@@ -141,7 +150,7 @@ An expired secret cannot be renewed: its value can no longer be exported.`,
 				return err
 			}
 			handle := s.handle(args[0])
-			home, info, err := secrets.LocateSecret(ctx, s.client, handle, s.tok, s.attTok)
+			home, info, err := secrets.LocateSecret(ctx, s.client, handle, vaultTokens(s.env), s.attTok)
 			if err != nil {
 				return err
 			}
@@ -153,8 +162,12 @@ An expired secret cannot be renewed: its value can no longer be exported.`,
 				return fmt.Errorf("the active constellation: %w", err)
 			}
 
+			homeTok, err := auth.VaultTokenFor(ctx, s.env.Cfg.Issuer, home.OIDCAudience)
+			if err != nil {
+				return err
+			}
 			material, _, err := secrets.Export(ctx, secrets.ExportParams{
-				Issuer: s.env.Cfg.Issuer, Bearer: s.tok, Sub: s.sub, Handle: handle,
+				Issuer: s.env.Cfg.Issuer, Bearer: homeTok, Audience: home.OIDCAudience, Sub: s.sub, Handle: handle,
 				Endpoints: home.Endpoints, Threshold: threshold, MRENCLAVE: home.MRENCLAVE,
 				AttServer: home.AttestationServer, AttToken: s.attTok,
 				RequireStepUp: true, Out: cmd.ErrOrStderr(), Open: secrets.OpenBrowser,
@@ -174,9 +187,12 @@ An expired secret cannot be renewed: its value can no longer be exported.`,
 			if err := s.refresh(ctx); err != nil {
 				return err
 			}
+			if homeTok, err = auth.VaultTokenFor(ctx, s.env.Cfg.Issuer, home.OIDCAudience); err != nil {
+				return err
+			}
 			oldOp := secrets.VaultOpParams{
 				Handle: handle, Endpoints: home.Endpoints, MRENCLAVE: home.MRENCLAVE,
-				AttServer: home.AttestationServer, AttToken: s.attTok, OwnerToken: s.tok,
+				AttServer: home.AttestationServer, AttToken: s.attTok, OwnerToken: homeTok,
 			}
 			create := func() (*secrets.Result, error) {
 				if err := s.refresh(ctx); err != nil {

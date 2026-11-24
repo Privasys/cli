@@ -448,8 +448,8 @@ func vaultKeyAddressing(ctx context.Context, cmd *cobra.Command, env *Env, clien
 	if err != nil {
 		return secrets.VaultOpParams{}, fmt.Errorf("the constellation holding key %q: %w", name, err)
 	}
-	// The vault audience the owner principal is checked against.
-	ownerTok, err := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, auth.VaultAudience)
+	// The audience the constellation's vaults accept.
+	ownerTok, err := auth.VaultTokenFor(ctx, env.Cfg.Issuer, dir.OIDCAudience)
 	if err != nil {
 		return secrets.VaultOpParams{}, err
 	}
@@ -945,7 +945,7 @@ wallet: the approval names the exact vaults and build the key goes to.
 				return err
 			}
 			ctx := cmd.Context()
-			tok, err := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "privasys-platform")
+			tok, err := auth.AccessToken(ctx, env.Cfg.Issuer)
 			if err != nil {
 				return err
 			}
@@ -971,7 +971,10 @@ wallet: the approval names the exact vaults and build the key goes to.
 				return fmt.Errorf("renew keeps a threshold (ed25519) key's public key; use 'vault key rotate' for a %s key", keyType)
 			}
 			res, err := secrets.RenewThresholdKeyInVault(ctx, secrets.ThresholdRenewParams{
-				Issuer: env.Cfg.Issuer, Sub: sub, OwnerToken: tok, AttToken: attTok, Threshold: threshold,
+				Issuer: env.Cfg.Issuer, Sub: sub, AttToken: attTok, Threshold: threshold,
+				Token: func(ctx context.Context, aud string) (string, error) {
+					return auth.VaultTokenFor(ctx, env.Cfg.Issuer, aud)
+				},
 				Out: cmd.ErrOrStderr(), Open: secrets.OpenBrowser,
 				Mint: func(ctx context.Context, cnf string) (string, string, secrets.RenewConstellation, secrets.RenewConstellation, error) {
 					r, err := client.RenewVaultKeyGrant(ctx, vaultID, name, cnf)
@@ -982,10 +985,11 @@ wallet: the approval names the exact vaults and build the key goes to.
 					target := secrets.RenewConstellation{
 						ID: r.Constellation.ID, Endpoints: r.Constellation.Endpoints, MRENCLAVE: r.Constellation.MRENCLAVE,
 						AttestationServer: r.Constellation.AttestationServer, Threshold: r.Constellation.Threshold,
+						Audience: r.Constellation.OIDCAudience,
 					}
 					home := secrets.RenewConstellation{
 						ID: r.Home.ID, Endpoints: r.Home.Endpoints, MRENCLAVE: r.Home.MRENCLAVE,
-						AttestationServer: r.Home.AttestationServer,
+						AttestationServer: r.Home.AttestationServer, Audience: r.Home.OIDCAudience,
 					}
 					return r.Grant, handle, target, home, nil
 				},

@@ -63,7 +63,7 @@ func Export(ctx context.Context, p ExportParams) ([]byte, *ExportResult, error) 
 		var stepTok string
 		if p.Assert != nil {
 			// In-process authenticator (E2E).
-			stepTok, err = requestExportStepUp(ctx, p.Issuer, p.Bearer, p.Handle, info.PolicyVersion, actx, p.Assert)
+			stepTok, err = requestExportStepUp(ctx, p.Issuer, p.Bearer, p.Audience, p.Handle, info.PolicyVersion, actx, p.Assert)
 		} else {
 			// Human owner: /begin pushes their wallet, which is where a
 			// Privasys Wallet credential can actually be approved.
@@ -71,7 +71,7 @@ func Export(ctx context.Context, p ExportParams) ([]byte, *ExportResult, error) 
 			if out == nil {
 				out = os.Stderr
 			}
-			stepTok, err = RequestStepUpViaBrowser(ctx, p.Issuer, p.Bearer, "export",
+			stepTok, err = RequestStepUpViaBrowserFor(ctx, p.Issuer, p.Bearer, p.Audience, "export",
 				p.Handle, "", info.PolicyVersion, actx, p.Open, out)
 		}
 		if err != nil {

@@ -95,6 +95,9 @@ type VaultExportTarget struct {
 	AttestationServer string   `json:"attestation_server"`
 	Threshold         int      `json:"threshold"`
 	RequireStepUp     bool     `json:"require_step_up"`
+	// OIDCAudience is the audience the key's vaults accept ("" from an
+	// older control plane: the default audience).
+	OIDCAudience string `json:"oidc_audience"`
 }
 
 // GetVaultExportTarget resolves the vault target for exporting an app's data

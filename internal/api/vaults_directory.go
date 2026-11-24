@@ -19,6 +19,9 @@ type VaultDirectory struct {
 	MRENCLAVE         string
 	AttestationServer string
 	Endpoints         []string
+	// OIDCAudience is the audience the constellation's vaults accept a
+	// bearer for ("" from an older control plane: the default audience).
+	OIDCAudience string
 }
 
 // VaultDirectory fetches the active constellation's addressing.
@@ -44,6 +47,7 @@ func (c *Client) VaultDirectoryAt(ctx context.Context, constellationID string) (
 			Name              string `json:"name"`
 			Mrenclave         string `json:"mrenclave"`
 			AttestationServer string `json:"attestation_server"`
+			OIDCAudience      string `json:"oidc_audience"`
 		} `json:"constellation"`
 		Vaults []struct {
 			Host string `json:"host"`
@@ -61,6 +65,7 @@ func (c *Client) VaultDirectoryAt(ctx context.Context, constellationID string) (
 		Name:              resp.Constellation.Name,
 		MRENCLAVE:         resp.Constellation.Mrenclave,
 		AttestationServer: resp.Constellation.AttestationServer,
+		OIDCAudience:      resp.Constellation.OIDCAudience,
 	}
 	for _, v := range resp.Vaults {
 		d.Endpoints = append(d.Endpoints, fmt.Sprintf("%s:%d", v.Host, v.Port))

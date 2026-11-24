@@ -51,11 +51,17 @@ type BrowserOpener func(rawURL string) error
 type approvalContext map[string]string
 
 func RequestStepUpViaBrowser(ctx context.Context, issuer, bearer, operation, handle, measurementDigestHex string, policyVersion uint32, actx approvalContext, open BrowserOpener, out io.Writer) (string, error) {
+	return RequestStepUpViaBrowserFor(ctx, issuer, bearer, "", operation, handle, measurementDigestHex, policyVersion, actx, open, out)
+}
+
+// RequestStepUpViaBrowserFor is RequestStepUpViaBrowser for vaults that accept
+// audience: the token is issued for it ("" = the IdP's default audience).
+func RequestStepUpViaBrowserFor(ctx context.Context, issuer, bearer, audience, operation, handle, measurementDigestHex string, policyVersion uint32, actx approvalContext, open BrowserOpener, out io.Writer) (string, error) {
 	issuer = strings.TrimRight(issuer, "/")
 
 	// 1. Begin: authenticate with the owner bearer; the IdP fixes the nonce+exp,
 	//    computes the vault_op binding, and returns it as the WebAuthn challenge.
-	beginBody, _ := json.Marshal(map[string]interface{}{
+	begin := map[string]interface{}{
 		"operation":          operation,
 		"handle":             handle,
 		"measurement_digest": measurementDigestHex,
@@ -64,7 +70,11 @@ func RequestStepUpViaBrowser(ctx context.Context, issuer, bearer, operation, han
 		// (vault_approval.go), shortening the window instead of extending it.
 		"ttl_seconds": 300,
 		"context":     actx,
-	})
+	}
+	if audience != "" {
+		begin["audience"] = audience
+	}
+	beginBody, _ := json.Marshal(begin)
 	optionsJSON, err := postBearer(ctx, issuer+"/fido2/vault-approval/begin", bearer, beginBody)
 	if err != nil {
 		return "", fmt.Errorf("step-up begin: %w", err)

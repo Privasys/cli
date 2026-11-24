@@ -204,11 +204,17 @@ func (s *Server) registerTools() {
 				endpoints, mrenclave, attServer := mcpConstellation(ctx, d)
 				// The secret's home: after a vault roll it may be a
 				// constellation other than the active one.
-				if home, _, lerr := secrets.LocateSecret(ctx, d.Client, "users/"+sub+"/"+name, d.Token, attTok); lerr == nil {
+				audience := ""
+				if home, _, lerr := secrets.LocateSecret(ctx, d.Client, "users/"+sub+"/"+name, mcpVaultTokens(d), attTok); lerr == nil {
 					endpoints, mrenclave, attServer = home.Endpoints, home.MRENCLAVE, home.AttestationServer
+					audience = home.OIDCAudience
+				}
+				vaultTok, err := auth.VaultTokenFor(ctx, d.Issuer, audience)
+				if err != nil {
+					return nil, err
 				}
 				material, res, err := secrets.Export(ctx, secrets.ExportParams{
-					Issuer: d.Issuer, Bearer: d.Token, Sub: sub,
+					Issuer: d.Issuer, Bearer: vaultTok, Audience: audience, Sub: sub,
 					Handle:    "users/" + sub + "/" + name,
 					Endpoints: endpoints, Threshold: 2,
 					MRENCLAVE: mrenclave, AttServer: attServer, AttToken: attTok,
@@ -347,8 +353,12 @@ func (s *Server) registerTools() {
 					return nil, err
 				}
 				attTok, _ := auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")
+				vaultTok, err := auth.VaultTokenFor(ctx, d.Issuer, target.OIDCAudience)
+				if err != nil {
+					return nil, err
+				}
 				material, res, err := secrets.Export(ctx, secrets.ExportParams{
-					Issuer: d.Issuer, Bearer: d.Token, Sub: sub, Handle: target.Handle,
+					Issuer: d.Issuer, Bearer: vaultTok, Audience: target.OIDCAudience, Sub: sub, Handle: target.Handle,
 					Endpoints: target.Endpoints, Threshold: target.Threshold,
 					MRENCLAVE: target.MRENCLAVE, AttServer: target.AttestationServer, AttToken: attTok,
 					RequireStepUp:  target.RequireStepUp,
@@ -1570,7 +1580,7 @@ func vaultKeyAddr(ctx context.Context, d Deps, vaultID, name string, version int
 	if err != nil {
 		return secrets.VaultOpParams{}, fmt.Errorf("the constellation holding key %q: %w", name, err)
 	}
-	ownerTok, err := auth.AccessTokenForAudience(ctx, d.Issuer, auth.VaultAudience)
+	ownerTok, err := auth.VaultTokenFor(ctx, d.Issuer, dir.OIDCAudience)
 	if err != nil {
 		return secrets.VaultOpParams{}, err
 	}
@@ -1596,4 +1606,11 @@ func containerPath(app map[string]interface{}, function string) string {
 		}
 	}
 	return "/" + function
+}
+
+// mcpVaultTokens gives the owner's bearer for vaults of an audience.
+func mcpVaultTokens(d Deps) secrets.TokenFor {
+	return func(ctx context.Context, aud string) (string, error) {
+		return auth.VaultTokenFor(ctx, d.Issuer, aud)
+	}
 }

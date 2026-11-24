@@ -904,9 +904,13 @@ a fingerprint, never the key.`,
 			}
 			sub, _ := claims["sub"].(string)
 			attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
+			vaultTok, err := auth.VaultTokenFor(ctx, env.Cfg.Issuer, target.OIDCAudience)
+			if err != nil {
+				return err
+			}
 
 			material, res, err := secrets.Export(ctx, secrets.ExportParams{
-				Issuer: env.Cfg.Issuer, Bearer: tok, Sub: sub, Handle: target.Handle,
+				Issuer: env.Cfg.Issuer, Bearer: vaultTok, Audience: target.OIDCAudience, Sub: sub, Handle: target.Handle,
 				Endpoints: target.Endpoints, Threshold: target.Threshold,
 				MRENCLAVE: target.MRENCLAVE, AttServer: target.AttestationServer, AttToken: attTok,
 				// Assert nil = the human ceremony (wallet push, browser
@@ -1374,7 +1378,9 @@ func promoteWithStepUp(cmd *cobra.Command, env *Env, client *api.Client, appID, 
 	// the app's friendly name and the target version/source — instead of only a
 	// hex digest. Best-effort: a lookup failure just omits that hint.
 	actx := promoteApprovalContext(ctx, client, appID, vid)
-	stepTok, err := secrets.RequestStepUpViaBrowser(ctx, env.Cfg.Issuer, bearer, "promote",
+	// Issued for the audience the key's vaults accept, which the control
+	// plane forwards it to.
+	stepTok, err := secrets.RequestStepUpViaBrowserFor(ctx, env.Cfg.Issuer, bearer, tgt.OIDCAudience, "promote",
 		tgt.Handle, digest, policyVersion, actx, secrets.OpenBrowser, cmd.ErrOrStderr())
 	if errors.Is(err, secrets.ErrDeclined) {
 		return nil, fmt.Errorf("%w: nothing was promoted", err)

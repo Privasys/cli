@@ -11,6 +11,10 @@ import (
 	"github.com/Privasys/cli/internal/api"
 )
 
+// TokenFor returns the owner's bearer for vaults that accept audience ("" =
+// the default vault audience).
+type TokenFor func(ctx context.Context, audience string) (string, error)
+
 // Directory is the part of the control-plane client a secret lookup needs.
 type Directory interface {
 	LiveVaultConstellations(ctx context.Context) ([]api.LiveConstellation, error)
@@ -21,8 +25,9 @@ type Directory interface {
 // (users/<sub>/<name>) is created straight on the vaults, so no catalogue
 // records which constellation holds it; after a vault roll it is no longer on
 // the active one. It is looked for on each constellation that still serves
-// keys, the active one first. ownerTok is the owner's bearer.
-func LocateSecret(ctx context.Context, dir Directory, handle, ownerTok, attTok string) (*api.VaultDirectory, *PublicKeyResult, error) {
+// keys, the active one first. tokenFor gives the owner's bearer for the
+// audience a constellation's vaults accept.
+func LocateSecret(ctx context.Context, dir Directory, handle string, tokenFor TokenFor, attTok string) (*api.VaultDirectory, *PublicKeyResult, error) {
 	cons, err := dir.LiveVaultConstellations(ctx)
 	if err != nil || len(cons) == 0 {
 		// A control plane without the listing: the active constellation only.
@@ -35,6 +40,12 @@ func LocateSecret(ctx context.Context, dir Directory, handle, ownerTok, attTok s
 		if derr != nil {
 			lastErr = derr
 			unreachable = append(unreachable, c.Name)
+			continue
+		}
+		ownerTok, terr := tokenFor(ctx, d.OIDCAudience)
+		if terr != nil {
+			lastErr = terr
+			unreachable = append(unreachable, d.Name)
 			continue
 		}
 		info, ierr := GetPublicKeyInVault(ctx, VaultOpParams{

@@ -269,16 +269,17 @@ const AppDEKGenerationSize = 16
 // Assert); the key material is reconstructed from the vault shares in memory and
 // returned only to the caller (never logged or printed).
 type ExportParams struct {
-	Issuer        string           // IdP origin
-	Bearer        string           // the user's access token (owner)
-	Sub           string           // the user's subject (owner of the key)
-	Handle        string           // vault key handle (users/<sub>/...)
-	Endpoints     []string         // constellation vault endpoints (host:port)
-	Threshold     int              // Shamir k (vaults needed to reconstruct)
-	MRENCLAVE     string           // expected vault MRENCLAVE (hex)
-	AttServer     string           // attestation server verify endpoint
-	AttToken      string           // aud=attestation-server bearer for quote verification
-	RequireStepUp bool             // when set, drive an operation-bound WebAuthn step-up
+	Issuer        string   // IdP origin
+	Bearer        string   // the owner's access token, valid at the vaults (of Audience)
+	Audience      string   // the audience the vaults accept; the step-up is issued for it ("" = the default)
+	Sub           string   // the user's subject (owner of the key)
+	Handle        string   // vault key handle (users/<sub>/...)
+	Endpoints     []string // constellation vault endpoints (host:port)
+	Threshold     int      // Shamir k (vaults needed to reconstruct)
+	MRENCLAVE     string   // expected vault MRENCLAVE (hex)
+	AttServer     string   // attestation server verify endpoint
+	AttToken      string   // aud=attestation-server bearer for quote verification
+	RequireStepUp bool     // when set, drive an operation-bound WebAuthn step-up
 	// Assert produces the WebAuthn step-up assertion in-process (the E2E
 	// software-authenticator path). Leave nil for a human owner: the step-up
 	// then runs the same wallet-push ceremony `apps versions promote` uses,

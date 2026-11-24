@@ -31,18 +31,22 @@ type StepUpAssertFunc func(ctx context.Context, optionsJSON []byte) (assertionJS
 //
 // The vault recomputes the binding from (handle, "", policy_version, nonce, exp)
 // and checks it, so the token authorises this exact export and nothing else.
-func requestExportStepUp(ctx context.Context, issuer, bearer, handle string,
+func requestExportStepUp(ctx context.Context, issuer, bearer, audience, handle string,
 	policyVersion uint32, actx approvalContext, assert StepUpAssertFunc) (string, error) {
 	if assert == nil {
 		return "", fmt.Errorf("export requires a WebAuthn step-up but no wallet approver is wired")
 	}
-	beginBody, _ := json.Marshal(map[string]interface{}{
+	begin := map[string]interface{}{
 		"operation":      "export",
 		"handle":         handle,
 		"policy_version": policyVersion,
 		"ttl_seconds":    120,
 		"context":        actx,
-	})
+	}
+	if audience != "" {
+		begin["audience"] = audience
+	}
+	beginBody, _ := json.Marshal(begin)
 	optionsJSON, err := postBearer(ctx, issuer+"/fido2/vault-approval/begin", bearer, beginBody)
 	if err != nil {
 		return "", fmt.Errorf("step-up begin: %w", err)

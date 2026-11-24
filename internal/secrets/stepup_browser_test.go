@@ -141,3 +141,35 @@ func TestStepUpPageWithoutDeeplink(t *testing.T) {
 		t.Error("fragment lost the WebAuthn options")
 	}
 }
+
+// A step-up for vaults of another audience asks the IdP for it; with none
+// given, begin carries no audience (the IdP's default).
+func TestStepUpAsksForTheVaultsAudience(t *testing.T) {
+	for _, aud := range []string{"", "privasys-platform-test"} {
+		var got map[string]json.RawMessage
+		mux := http.NewServeMux()
+		mux.HandleFunc("POST /fido2/vault-approval/begin", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"publicKey": map[string]interface{}{"challenge": "dGVzdC12YXVsdC1vcA"},
+			})
+		})
+		mux.HandleFunc("GET /fido2/vault-approval/token", func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "tok"})
+		})
+		srv := httptest.NewServer(mux)
+		_, err := RequestStepUpViaBrowserFor(context.Background(), srv.URL, "bearer", aud, "reshare",
+			"vaults/x/k", strings.Repeat("ab", 32), 1, nil, func(string) error { return nil }, io.Discard)
+		srv.Close()
+		if err != nil {
+			t.Fatalf("aud %q: %v", aud, err)
+		}
+		raw, present := got["audience"]
+		if aud == "" && present {
+			t.Fatalf("no audience asked for, but begin sent %s", raw)
+		}
+		if aud != "" && string(raw) != `"`+aud+`"` {
+			t.Fatalf("begin audience = %s, want %q", raw, aud)
+		}
+	}
+}
