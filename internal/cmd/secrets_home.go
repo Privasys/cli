@@ -217,20 +217,34 @@ An expired secret cannot be renewed: its value can no longer be exported.`,
 			}
 			// On the same constellation the old path deletes the name and
 			// creates it again. Vaults that keep a deleted key's name until
-			// its expiry (formats §9.3) refuse that re-creation, so where
-			// every member guards generations the secret moves to its next
-			// generation instead; only older builds keep the old path.
-			if home.ID == active.ID {
-				ids, ierr := secrets.ConstellationIdentities(ctx, home.Endpoints, home.MRENCLAVE, home.AttestationServer, s.attTok)
-				if ierr != nil {
-					return ierr
-				}
-				if allHave(ids, vault.CapabilityGenerations) {
-					return renewSecretV2(cmd, s, args[0], handle, info.Handle, info.ExpiresAt, material, threshold, home, active)
-				}
+			// its expiry (formats §9.3) refuse that re-creation, so where the
+			// vaults guard generations the secret moves to its next
+			// generation instead: on the same constellation, or across two
+			// that both guard them. Only older builds keep the old path.
+			homeIDs, ierr := secrets.ConstellationIdentities(ctx, home.Endpoints, home.MRENCLAVE, home.AttestationServer, s.attTok)
+			if ierr != nil {
+				return ierr
 			}
+			generations := allHave(homeIDs, vault.CapabilityGenerations)
+			if generations && home.ID != active.ID {
+				activeIDs, aerr := secrets.ConstellationIdentities(ctx, active.Endpoints, active.MRENCLAVE, active.AttestationServer, s.attTok)
+				if aerr != nil {
+					return aerr
+				}
+				generations = allHave(activeIDs, vault.CapabilityGenerations)
+			}
+			if generations {
+				return renewSecretV2(cmd, s, args[0], handle, info.Handle, info.ExpiresAt, material, threshold, home, active)
+			}
+			// The old path creates the base name, which older generations
+			// left on the home constellation would outrank in a lookup.
+			if secrets.GenerationOf(handle, info.Handle) > 1 {
+				return fmt.Errorf("secret %s is at %s, and the active constellation does not keep generations: it cannot be renewed there safely", args[0], info.Handle)
+			}
+			// The copy deleted is the one found (info.Handle), never the
+			// base name by assumption.
 			oldOp := secrets.VaultOpParams{
-				Handle: handle, Endpoints: home.Endpoints, MRENCLAVE: home.MRENCLAVE,
+				Handle: info.Handle, Endpoints: home.Endpoints, MRENCLAVE: home.MRENCLAVE,
 				AttServer: home.AttestationServer, AttToken: s.attTok, OwnerToken: homeTok,
 			}
 			create := func() (*secrets.Result, error) {
