@@ -21,10 +21,10 @@ func newSecretsRmCmd() *cobra.Command {
 	var yes bool
 	cmd := &cobra.Command{
 		Use:   "rm <name>",
-		Short: "Delete a secret you own from the vaults (cannot be undone)",
-		Long: `Finds every copy of a secret you own, on every vault constellation and in
-every generation a renewal left, and destroys each one, newest first. This
-cannot be undone: export the secret first if you may need its value again.
+		Short: "Delete your copies of a secret from the vaults (cannot be undone)",
+		Long: `Finds your copies of this secret (those you own), on every vault constellation
+and in every generation a renewal left, and destroys each one, newest first.
+This cannot be undone: export the secret first if you may need its value again.
 
 A copy whose policy asks for it is deleted only with your approval in the
 Privasys Wallet, one approval per copy. Declining one stops there; the copies
