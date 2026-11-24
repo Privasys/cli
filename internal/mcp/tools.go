@@ -212,6 +212,11 @@ func (s *Server) registerTools() {
 					endpoints, mrenclave, attServer = home.Endpoints, home.MRENCLAVE, home.AttestationServer
 					audience = home.OIDCAudience
 				}
+				if audience == "" {
+					if audience, err = secrets.AudienceFor(ctx, d.Client, endpoints, mrenclave); err != nil {
+						return nil, err
+					}
+				}
 				vaultTok, err := auth.VaultTokenFor(ctx, d.Issuer, audience)
 				if err != nil {
 					return nil, err

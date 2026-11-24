@@ -221,6 +221,13 @@ a fingerprint, never the key.`,
 				}
 			}
 			endpoints, mrenclave, attServer = resolveConstellation(ctx, client, endpoints, mrenclave, attServer)
+			if audience == "" {
+				// No home found (explicit vaults, or the lookup failed): the audience
+				// of the constellation those vaults belong to.
+				if audience, err = secrets.AudienceFor(ctx, client, endpoints, mrenclave); err != nil {
+					return err
+				}
+			}
 			vaultTok, err := auth.VaultTokenFor(ctx, env.Cfg.Issuer, audience)
 			if err != nil {
 				return err
