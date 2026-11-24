@@ -49,11 +49,12 @@ func policyKeyFor(ctx context.Context, client *api.Client, appID string, pa *api
 
 // checkPolicyApproval checks the control plane's request against what the
 // CLI read from the key's vaults itself, before anything is shown to the
-// owner: binding v2, the same members, the current policy version, and a
-// target that is the digest of the exact new policy.
+// owner: binding v2, the same members and the current policy version. Its
+// operation and target are checked against the approval the CLI builds
+// itself (matchPolicyApproval).
 func checkPolicyApproval(pa *api.PolicyApproval, binding int, members []string, policyVersion uint64) error {
-	if pa.Operation != string(vault.BindUpdatePolicy) {
-		return fmt.Errorf("the control plane asks for a %q approval; only %s is supported", pa.Operation, vault.BindUpdatePolicy)
+	if pa.Operation != string(vault.BindUpdatePolicy) && pa.Operation != string(vault.BindUpdatePolicyFrom) {
+		return fmt.Errorf("the control plane asks for a %q approval, not a policy update", pa.Operation)
 	}
 	if pa.BindingVersion != 2 || binding != 2 {
 		return fmt.Errorf("the control plane asks for binding %d, the key's vaults take binding %d", pa.BindingVersion, binding)
@@ -68,12 +69,18 @@ func checkPolicyApproval(pa *api.PolicyApproval, binding int, members []string, 
 	if strings.Join(read, ",") != strings.Join(sent, ",") {
 		return errors.New("the control plane names other vaults than the key's constellation has")
 	}
-	pd, err := vault.PolicyDigestJSON(pa.NewPolicy)
-	if err != nil {
-		return fmt.Errorf("the new policy: %w", err)
+	return nil
+}
+
+// matchPolicyApproval checks that the control plane asks for the approval the
+// CLI built from the vaults: the same operation (update_policy_from where
+// every member takes it) and the same target.
+func matchPolicyApproval(pa *api.PolicyApproval, built secrets.ApprovalV2) error {
+	if pa.Operation != string(built.Operation) {
+		return fmt.Errorf("the control plane asks for %s, the key's vaults take %s", pa.Operation, built.Operation)
 	}
-	if !strings.EqualFold(pd, pa.Target) {
-		return errors.New("the approval's target is not the digest of the new policy")
+	if !strings.EqualFold(pa.Target, built.Target) {
+		return errors.New("the control plane's target is not computed from the policies the CLI read and was given")
 	}
 	return nil
 }
@@ -136,8 +143,11 @@ func approvePolicyChange(cmd *cobra.Command, env *Env, client *api.Client, appID
 	if name := appFriendlyName(ctx, client, appID); name != "" {
 		actx["app_name"] = name
 	}
-	approval, err := secrets.UpdatePolicyApproval(pa.Handle, pa.PolicyVersion, ids, pa.NewPolicy, audience, actx)
+	approval, err := secrets.UpdatePolicyApproval(pa.Handle, pa.PolicyVersion, ids, pa.NewPolicy, current, audience, actx)
 	if err != nil {
+		return "", fmt.Errorf("refusing the policy change: %w", err)
+	}
+	if err := matchPolicyApproval(pa, approval); err != nil {
 		return "", fmt.Errorf("refusing the policy change: %w", err)
 	}
 	tok, err := secrets.RequestApprovalV2(ctx, env.Cfg.Issuer, bearer, approval, secrets.OpenBrowser, cmd.ErrOrStderr())

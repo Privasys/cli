@@ -46,7 +46,10 @@ type ApprovalV2 struct {
 	PolicyVersion uint64
 	Identities    []PinnedIdentity // each member vault, read with ReadPinnedIdentity
 	IssuerIndex   uint32           // the key's issuer entry that approves
-	NewPolicy     json.RawMessage  // update_policy only: the full new policy
+	NewPolicy     json.RawMessage  // update_policy(_from): the full new policy
+	// CurrentPolicy is the policy being replaced, exactly as GetPolicyRaw
+	// returned it from the members: update_policy_from only (formats §5.3).
+	CurrentPolicy json.RawMessage
 	// TTLSeconds is how long a delete_after stays valid: what the migration or
 	// upgrade can realistically take, at most 24 hours. Zero is privasys.id's
 	// default of an hour. A shorter one fails safe: the old key then expires
@@ -95,19 +98,8 @@ type bindingAnswer struct {
 }
 
 func (a ApprovalV2) check() error {
-	if a.Operation == vault.BindUpdatePolicy {
-		if len(a.NewPolicy) == 0 {
-			return errors.New("a policy update names no new policy")
-		}
-		pd, err := vault.PolicyDigestJSON(a.NewPolicy)
-		if err != nil {
-			return err
-		}
-		if a.Target != pd {
-			return errors.New("the target of a policy update is not the digest of its new policy")
-		}
-	} else if len(a.NewPolicy) != 0 {
-		return fmt.Errorf("a %s carries no new policy", a.Operation)
+	if err := a.checkPolicies(); err != nil {
+		return err
 	}
 	if a.TTLSeconds != 0 {
 		if a.Operation != vault.BindDeleteAfter {
@@ -154,6 +146,9 @@ func RequestApprovalV2(ctx context.Context, issuer, bearer string, a ApprovalV2,
 	}
 	if len(a.NewPolicy) != 0 {
 		begin["new_policy"] = a.NewPolicy
+	}
+	if len(a.CurrentPolicy) != 0 {
+		begin["current_policy"] = a.CurrentPolicy
 	}
 	if a.Audience != "" {
 		begin["audience"] = a.Audience
@@ -269,30 +264,82 @@ func (a ApprovalV2) members() []string {
 	return m
 }
 
-// UpdatePolicyApproval builds the update_policy approval of newPolicy (as
-// given) on handle, with the target computed here from the policy itself.
-// Where every member advertises update_policy_from (formats §5.3), a plain
-// update_policy is refused: those vaults' owners get the form that also binds
-// the policy replaced, which this CLI does not ask privasys.id for yet.
-func UpdatePolicyApproval(handle string, policyVersion uint64, ids []PinnedIdentity, newPolicy json.RawMessage,
+// UpdatePolicyApproval builds the approval of newPolicy (as given) replacing
+// currentPolicy (as GetPolicyRaw returned it from the members) on handle, with
+// the target computed here from the policies. Where every member advertises
+// update_policy_from (formats §5.3), it is that form, which also binds the
+// policy replaced; otherwise update_policy.
+func UpdatePolicyApproval(handle string, policyVersion uint64, ids []PinnedIdentity, newPolicy, currentPolicy json.RawMessage,
 	audience string, context map[string]string) (ApprovalV2, error) {
-	if len(ids) > 0 {
-		all := true
-		for _, id := range ids {
-			if !id.Has(vault.CapabilityUpdatePolicyFrom) {
-				all = false
-				break
-			}
-		}
-		if all {
-			return ApprovalV2{}, errors.New("the key's vaults take policy changes approved as update_policy_from, which this CLI cannot ask for yet; update the CLI")
-		}
-	}
-	pd, err := vault.PolicyDigestJSON(newPolicy)
+	a := ApprovalV2{Operation: vault.BindUpdatePolicy, Handle: handle, PolicyVersion: policyVersion,
+		Identities: ids, NewPolicy: newPolicy, Audience: audience, Context: context}
+	newPD, err := vault.PolicyDigestJSON(newPolicy)
 	if err != nil {
 		return ApprovalV2{}, fmt.Errorf("the new policy: %w", err)
 	}
-	a := ApprovalV2{Operation: vault.BindUpdatePolicy, Handle: handle, Target: pd, PolicyVersion: policyVersion,
-		Identities: ids, NewPolicy: newPolicy, Audience: audience, Context: context}
+	a.Target = newPD
+	if UpdatePolicyFromOn(ids) {
+		curPD, err := vault.PolicyDigestJSON(currentPolicy)
+		if err != nil {
+			return ApprovalV2{}, fmt.Errorf("the current policy: %w", err)
+		}
+		if a.Target, err = vault.UpdatePolicyFromTarget(curPD, newPD); err != nil {
+			return ApprovalV2{}, err
+		}
+		a.Operation, a.CurrentPolicy = vault.BindUpdatePolicyFrom, currentPolicy
+	}
 	return a, a.check()
+}
+
+// UpdatePolicyFromOn says every member advertises update_policy_from.
+func UpdatePolicyFromOn(ids []PinnedIdentity) bool {
+	if len(ids) == 0 {
+		return false
+	}
+	for _, id := range ids {
+		if !id.Has(vault.CapabilityUpdatePolicyFrom) {
+			return false
+		}
+	}
+	return true
+}
+
+// checkPolicies checks the policies an approval carries and that its target
+// is computed from them: PD(new) for update_policy, and
+// H("privasys-update-policy-from-v1\n" PD(current) "\n" PD(new)) for
+// update_policy_from. Any other operation carries none.
+func (a ApprovalV2) checkPolicies() error {
+	switch a.Operation {
+	case vault.BindUpdatePolicy, vault.BindUpdatePolicyFrom:
+		if len(a.NewPolicy) == 0 {
+			return errors.New("a policy update names no new policy")
+		}
+		pd, err := vault.PolicyDigestJSON(a.NewPolicy)
+		if err != nil {
+			return err
+		}
+		want := pd
+		if a.Operation == vault.BindUpdatePolicyFrom {
+			if len(a.CurrentPolicy) == 0 {
+				return errors.New("an update_policy_from names no current policy")
+			}
+			cur, err := vault.PolicyDigestJSON(a.CurrentPolicy)
+			if err != nil {
+				return fmt.Errorf("the current policy: %w", err)
+			}
+			if want, err = vault.UpdatePolicyFromTarget(cur, pd); err != nil {
+				return err
+			}
+		} else if len(a.CurrentPolicy) != 0 {
+			return errors.New("an update_policy carries no current policy")
+		}
+		if a.Target != want {
+			return errors.New("the target of a policy update is not computed from its policies")
+		}
+		return nil
+	}
+	if len(a.NewPolicy) != 0 || len(a.CurrentPolicy) != 0 {
+		return fmt.Errorf("a %s carries no policy", a.Operation)
+	}
+	return nil
 }

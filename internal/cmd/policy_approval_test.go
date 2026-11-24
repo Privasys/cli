@@ -12,6 +12,7 @@ import (
 	"github.com/Privasys/enclave-vaults-client/go/vault"
 
 	"github.com/Privasys/cli/internal/api"
+	"github.com/Privasys/cli/internal/secrets"
 )
 
 func TestPolicyApprovalFrom(t *testing.T) {
@@ -53,18 +54,6 @@ func TestCheckPolicyApproval(t *testing.T) {
 		"stale version":  func(*api.PolicyApproval) (int, []string, uint64) { return 2, members, 5 },
 		"other members":  func(*api.PolicyApproval) (int, []string, uint64) { return 2, []string{"m1", "m3"}, 4 },
 		"missing member": func(p *api.PolicyApproval) (int, []string, uint64) { p.Members = []string{"m1"}; return 2, members, 4 },
-		"wrong target": func(p *api.PolicyApproval) (int, []string, uint64) {
-			p.Target = strings.Repeat("0", 64)
-			return 2, members, 4
-		},
-		"other policy": func(p *api.PolicyApproval) (int, []string, uint64) {
-			p.NewPolicy = json.RawMessage(`{"rules":[1]}`)
-			return 2, members, 4
-		},
-		"unreadable json": func(p *api.PolicyApproval) (int, []string, uint64) {
-			p.NewPolicy = json.RawMessage(`{"a":1,"a":2}`)
-			return 2, members, 4
-		},
 	}
 	for name, mutate := range cases {
 		p := ok()
@@ -72,5 +61,30 @@ func TestCheckPolicyApproval(t *testing.T) {
 		if err := checkPolicyApproval(p, b, m, v); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// The control plane must ask for the approval the CLI built from the vaults.
+func TestMatchPolicyApproval(t *testing.T) {
+	pd := strings.Repeat("a", 64)
+	from := strings.Repeat("b", 64)
+	built := secrets.ApprovalV2{Operation: vault.BindUpdatePolicy, Target: pd}
+	if err := matchPolicyApproval(&api.PolicyApproval{Operation: "update_policy", Target: strings.ToUpper(pd)}, built); err != nil {
+		t.Fatalf("a matching request was refused: %v", err)
+	}
+	if err := matchPolicyApproval(&api.PolicyApproval{Operation: "update_policy", Target: strings.Repeat("0", 64)}, built); err == nil {
+		t.Fatal("another target was accepted")
+	}
+	// Vaults that take update_policy_from: a plain update_policy is refused,
+	// and so is the reverse.
+	builtFrom := secrets.ApprovalV2{Operation: vault.BindUpdatePolicyFrom, Target: from}
+	if err := matchPolicyApproval(&api.PolicyApproval{Operation: "update_policy", Target: pd}, builtFrom); err == nil {
+		t.Fatal("update_policy accepted where the vaults take update_policy_from")
+	}
+	if err := matchPolicyApproval(&api.PolicyApproval{Operation: "update_policy_from", Target: from}, built); err == nil {
+		t.Fatal("update_policy_from accepted where the vaults take update_policy")
+	}
+	if err := matchPolicyApproval(&api.PolicyApproval{Operation: "update_policy_from", Target: from}, builtFrom); err != nil {
+		t.Fatalf("a matching update_policy_from was refused: %v", err)
 	}
 }
