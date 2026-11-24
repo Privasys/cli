@@ -153,6 +153,8 @@ type PublicKeyResult struct {
 	PolicyVersion uint32 `json:"policy_version"`
 	// Handle is the generation a lookup by name resolved (LocateSecret).
 	Handle string `json:"handle,omitempty"`
+	// Warning names a generation the lookup passed over.
+	Warning string `json:"warning,omitempty"`
 }
 
 // ErrKeyNotFound: every vault reached answered that it holds no such key.

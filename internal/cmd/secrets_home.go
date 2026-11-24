@@ -106,6 +106,9 @@ still need before it expires (privasys secrets renew).`,
 			if err != nil {
 				return err
 			}
+			if info.Warning != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+info.Warning)
+			}
 			onActive := active != nil && active.ID == dir.ID
 			out := map[string]any{
 				"handle": info.Handle, "constellation": dir.Name, "constellation_id": dir.ID,
@@ -160,6 +163,9 @@ An expired secret cannot be renewed: its value can no longer be exported.`,
 			home, info, err := secrets.LocateSecret(ctx, s.client, handle, vaultTokens(s.env), s.attTok)
 			if err != nil {
 				return err
+			}
+			if info.Warning != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+info.Warning)
 			}
 			if exp, perr := time.Parse(time.RFC3339, info.ExpiresAt); perr == nil && !exp.After(time.Now()) {
 				return fmt.Errorf("secret %s expired on %s and can no longer be exported; create a new one", args[0], exp.Format("2006-01-02"))

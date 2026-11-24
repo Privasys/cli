@@ -211,7 +211,10 @@ a fingerprint, never the key.`,
 				// The secret's home: after a vault roll it may be a constellation
 				// other than the active one.
 				if home, info, lerr := secrets.LocateSecret(ctx, client, handle, vaultTokens(env), attTok); lerr == nil {
-					handle = info.Handle // the newest generation
+					handle = info.Handle // the newest trusted generation
+					if info.Warning != "" {
+						fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+info.Warning)
+					}
 					endpoints, mrenclave, attServer = home.Endpoints, home.MRENCLAVE, home.AttestationServer
 					audience = home.OIDCAudience
 				}

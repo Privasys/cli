@@ -73,7 +73,9 @@ func RenewV2(ctx context.Context, p RenewV2Params) (*Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		renewal = vault.Renewal{Policy: policy, PolicyVersion: version, SourceBillingID: ids[0].BillingID(), KeyCheck: &check}
+		exportable := oldInfo.Exportable
+		renewal = vault.Renewal{Policy: policy, PolicyVersion: version, SourceBillingID: ids[0].BillingID(), KeyCheck: &check,
+			CarriedExportable: &exportable, CarriedKeyType: oldInfo.KeyType}
 	}
 
 	cert, cnf, err := generateClientCert(p.Sub)
@@ -157,12 +159,15 @@ func carriedPolicy(ctx context.Context, src *api.VaultDirectory, ownerTok, attTo
 	return policy, version, nil
 }
 
-// keyInfoAt reads a key's public metadata from the first vault of d that holds it.
+// keyInfoAt reads a key's public metadata from every vault of d that holds it,
+// and refuses when they disagree on its type or exportability: a renewal
+// carries those, so they must be the key's on every member.
 func keyInfoAt(ctx context.Context, d *api.VaultDirectory, ownerTok, attTok, handle string) (*vault.KeyInfo, error) {
 	verify, err := verifyPolicy(d.MRENCLAVE, d.AttestationServer, attTok)
 	if err != nil {
 		return nil, err
 	}
+	var first *vault.KeyInfo
 	var lastErr error
 	for _, ep := range d.Endpoints {
 		c, derr := vault.Dial(ctx, vaultReg(ep), vault.DialOptions{VaultPolicy: verify, AuthToken: staticToken(ownerTok)})
@@ -172,10 +177,18 @@ func keyInfoAt(ctx context.Context, d *api.VaultDirectory, ownerTok, attTok, han
 		}
 		info, ierr := c.GetKeyInfo(ctx, handle)
 		c.Close()
-		if ierr == nil {
-			return &info, nil
+		if ierr != nil {
+			lastErr = ierr
+			continue
 		}
-		lastErr = ierr
+		if first == nil {
+			first = &info
+		} else if info.KeyType != first.KeyType || info.Exportable != first.Exportable {
+			return nil, fmt.Errorf("the vaults disagree on %s's type or exportability: resolve that first", handle)
+		}
 	}
-	return nil, fmt.Errorf("read %s: %v", handle, lastErr)
+	if first == nil {
+		return nil, fmt.Errorf("read %s: %v", handle, lastErr)
+	}
+	return first, nil
 }

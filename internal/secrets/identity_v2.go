@@ -84,3 +84,7 @@ func memberIDs(ids []PinnedIdentity) []string {
 	}
 	return m
 }
+
+// Has says whether the vault advertises capability, as read over its pinned
+// connection.
+func (p PinnedIdentity) Has(capability string) bool { return p.id.Has(capability) }
