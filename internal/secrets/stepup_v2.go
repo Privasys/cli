@@ -29,16 +29,25 @@ import (
 // bindingClockSkew tolerates a difference between this machine's clock and privasys.id's.
 const bindingClockSkew = 120
 
+// minApprovalLeftSeconds: an approval with less time left would expire before
+// the owner could tap it, so it is not shown.
+const minApprovalLeftSeconds = 30
+
 // ApprovalV2 is one operation to approve on binding v2.
+//
+// Identities must come from ReadPinnedIdentity: read from each member vault
+// over its own RA-TLS connection with a pinned MRENCLAVE, never from the
+// control plane, a file or a cache. They decide which vaults the approval is
+// valid on, and checking them for consistency authenticates nothing.
 type ApprovalV2 struct {
 	Operation     vault.BindingOp
 	Handle        string
 	Target        string // as it stands in the binding; "" for none
 	PolicyVersion uint64
-	Identities    []vault.VaultIdentity // each member vault, from its GetVaultIdentity
-	IssuerIndex   uint32                // the key's issuer entry that approves
-	NewPolicy     json.RawMessage       // update_policy only: the full new policy
-	Audience      string                // "" = privasys.id's default
+	Identities    []PinnedIdentity // each member vault, read with ReadPinnedIdentity
+	IssuerIndex   uint32           // the key's issuer entry that approves
+	NewPolicy     json.RawMessage  // update_policy only: the full new policy
+	Audience      string           // "" = privasys.id's default
 	Context       approvalContext
 }
 
@@ -83,7 +92,7 @@ func (a ApprovalV2) check() error {
 		return errors.New("an approval must name the vaults it is for")
 	}
 	for _, id := range a.Identities {
-		if err := id.CheckConsistent(); err != nil {
+		if err := id.id.CheckConsistent(); err != nil {
 			return err
 		}
 	}
@@ -180,7 +189,7 @@ func verifyBindingV2(a ApprovalV2, got bindingAnswer, gotVaultOp string, now tim
 	if n, err := base64.RawURLEncoding.DecodeString(got.Nonce); err != nil || len(n) != 16 {
 		return vault.BindingV2{}, "", errors.New("the binding's nonce is not 16 bytes")
 	}
-	if left := got.Exp - now.Unix(); left <= 0 || left > vault.BindingMaxTTLSeconds+bindingClockSkew {
+	if left := got.Exp - now.Unix(); left < minApprovalLeftSeconds || left > vault.BindingMaxTTLSeconds+bindingClockSkew {
 		return vault.BindingV2{}, "", fmt.Errorf("the approval expires in %d s, outside the %d s an approval may last", left, vault.BindingMaxTTLSeconds)
 	}
 	b := vault.BindingV2{
@@ -223,7 +232,7 @@ func orDash(s string) string {
 func (a ApprovalV2) members() []string {
 	m := make([]string, len(a.Identities))
 	for i, id := range a.Identities {
-		m[i] = id.MemberID
+		m[i] = id.MemberID()
 	}
 	return m
 }
