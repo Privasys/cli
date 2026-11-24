@@ -87,6 +87,14 @@ func RequestStepUpViaBrowserFor(ctx context.Context, issuer, bearer, audience, o
 	if err != nil {
 		return "", fmt.Errorf("step-up begin: %w", err)
 	}
+	summary := map[string]string{"operation": operation, "handle": handle, "measurement": measurementDigestHex}
+	return awaitApproval(ctx, issuer, bearer, operation, optionsJSON, summary, actx, open, out)
+}
+
+// awaitApproval shows an approval privasys.id opened (the QR, the push, the
+// browser page) and polls until the owner approves it. optionsJSON is the
+// begin answer; its challenge keys the token poll.
+func awaitApproval(ctx context.Context, issuer, bearer, operation string, optionsJSON []byte, summary map[string]string, actx approvalContext, open BrowserOpener, out io.Writer) (string, error) {
 	var opts struct {
 		PublicKey struct {
 			Challenge string `json:"challenge"`
@@ -118,7 +126,6 @@ func RequestStepUpViaBrowserFor(ctx context.Context, issuer, bearer, audience, o
 
 	// 2. Hand the WebAuthn options to the browser page via the URL fragment (never
 	//    sent to a server). A short summary drives the confirm screen.
-	summary := map[string]string{"operation": operation, "handle": handle, "measurement": measurementDigestHex}
 	for k, v := range actx {
 		if v != "" {
 			summary[k] = v
