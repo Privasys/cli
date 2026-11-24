@@ -38,3 +38,37 @@ func TestAccountHeader(t *testing.T) {
 		t.Fatalf("an account was sent without one chosen: %q", got)
 	}
 }
+
+// The chosen account is announced once, before the first write, never for a
+// read, and copies of the client (approval-token clients) share it.
+func TestAccountAnnouncedOnceBeforeAWrite(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	ctx := context.Background()
+	n := 0
+	c := New(srv.URL, "tok")
+	c.SetAccount("acc-1", func(context.Context, *Client) { n++ })
+	var out map[string]any
+	_ = c.getJSON(ctx, "/api/v1/apps", &out)
+	if n != 0 {
+		t.Fatal("a read announced the account")
+	}
+	_, _ = c.CreateApp(ctx, map[string]interface{}{"name": "x"})
+	cp := *c
+	cp.Token = "approval"
+	_, _ = cp.CreateApp(ctx, map[string]interface{}{"name": "y"})
+	if n != 1 {
+		t.Fatalf("announced %d times, want once", n)
+	}
+	// No account chosen: nothing to announce.
+	m := 0
+	d := New(srv.URL, "tok")
+	d.SetAccount("", func(context.Context, *Client) { m++ })
+	_, _ = d.CreateApp(ctx, map[string]interface{}{"name": "x"})
+	if m != 0 || d.Account != "" {
+		t.Fatal("announced without an account")
+	}
+}

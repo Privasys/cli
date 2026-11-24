@@ -106,7 +106,11 @@ func apiClient(cmd *cobra.Command, env *Env) (*api.Client, error) {
 		return nil, err
 	}
 	c := api.New(env.Cfg.Endpoint, token)
-	c.Account = env.Cfg.Account
+	// A chosen account is named on stderr before the first change made in
+	// it, so nothing is created or deleted in an account the user did not see.
+	c.SetAccount(env.Cfg.Account, func(ctx context.Context, c *api.Client) {
+		fmt.Fprintf(cmd.ErrOrStderr(), "Acting in account %s\n", accountLabel(ctx, c))
+	})
 	return c, nil
 }
 
@@ -190,4 +194,18 @@ func appType(a map[string]interface{}) string {
 		return v
 	}
 	return output.Str(a, "type")
+}
+
+// accountLabel names the client's chosen account: its name and id, or the id
+// alone when the name cannot be read.
+func accountLabel(ctx context.Context, c *api.Client) string {
+	view, err := c.GetAccount(ctx)
+	if err == nil {
+		if acc, ok := view["account"].(map[string]interface{}); ok {
+			if name, _ := acc["name"].(string); name != "" {
+				return fmt.Sprintf("%s (%s)", name, c.Account)
+			}
+		}
+	}
+	return c.Account
 }

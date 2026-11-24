@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,6 +25,9 @@ type Client struct {
 	// --account or the configuration; "" is the caller's personal account.
 	// The control plane honours it only for an account the caller belongs to.
 	Account string
+	// announce runs once, before the first request that changes something in
+	// a chosen account (SetAccount). Shared by copies of the client.
+	announce *accountAnnounce
 }
 
 // New creates a client for the given API base URL and access token.
@@ -193,5 +197,24 @@ func (c *Client) authorize(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.Token)
 	if c.Account != "" {
 		req.Header.Set(AccountHeader, c.Account)
+		if req.Method != http.MethodGet && req.Method != http.MethodHead && c.announce != nil {
+			c.announce.once.Do(func() { c.announce.fn(req.Context(), c) })
+		}
+	}
+}
+
+type accountAnnounce struct {
+	once sync.Once
+	fn   func(context.Context, *Client)
+}
+
+// SetAccount chooses the account requests act in. announce, when set, runs
+// once before the first request that changes something there, so a write
+// never lands in an account the user did not see named.
+func (c *Client) SetAccount(account string, announce func(ctx context.Context, c *Client)) {
+	c.Account = account
+	c.announce = nil
+	if account != "" && announce != nil {
+		c.announce = &accountAnnounce{fn: announce}
 	}
 }
