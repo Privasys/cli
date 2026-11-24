@@ -1197,7 +1197,9 @@ remaining measurement cannot be retired either (it would make the key unusable).
 				// The key's vaults change its policy only with the owner's
 				// approval of the exact new policy.
 				tok, aerr := approvePolicyChange(cmd, env, client, appID, pa, "retire measurement "+digest,
-					func(current, proposed json.RawMessage) error { return secrets.CheckRetireChange(current, proposed, digest) })
+					func(ctx context.Context, current, proposed json.RawMessage, canon secrets.Canonicaliser) error {
+						return secrets.CheckRetireChange(ctx, current, proposed, digest, canon)
+					})
 				if aerr != nil {
 					return aerr
 				}

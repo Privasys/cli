@@ -32,7 +32,10 @@ func CurrentPolicy(ctx context.Context, d *api.VaultDirectory, ownerTok, attTok,
 // profile pinning digest removed, as the control plane's retirePolicy builds
 // it, and nothing else changed. Both are compared as canonical JSON trees, so
 // fields the CLI does not know count too.
-func CheckRetireChange(current, proposed json.RawMessage, digest string) error {
+func CheckRetireChange(ctx context.Context, current, proposed json.RawMessage, digest string, canon Canonicaliser) error {
+	if canon == nil {
+		return errors.New("no vault to canonicalise the policies with")
+	}
 	refuse := func(why string) error {
 		return fmt.Errorf("the requested change does more than retire %s: %s", digest, why)
 	}
@@ -77,11 +80,15 @@ func CheckRetireChange(current, proposed json.RawMessage, digest string) error {
 	if err != nil {
 		return err
 	}
-	wantPD, err := vault.PolicyDigestJSON(expected)
+	// The stored policy writes every default out; the control plane's typed
+	// policy leaves them out. Both go through the vault's own
+	// canonicalisation, which writes the defaults on both sides alike, and
+	// the digests of what it returns are compared.
+	wantPD, err := canonicalPD(ctx, canon, expected)
 	if err != nil {
-		return err
+		return fmt.Errorf("the expected policy: %w", err)
 	}
-	gotPD, err := vault.PolicyDigestJSON(proposed)
+	gotPD, err := canonicalPD(ctx, canon, proposed)
 	if err != nil {
 		return fmt.Errorf("the new policy: %w", err)
 	}
@@ -228,4 +235,53 @@ func teeRefOutsideRules(root map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// Canonicaliser returns a policy as the key's vaults would store it, every
+// field written (Client.CanonicalPolicy), or their refusal.
+type Canonicaliser func(ctx context.Context, policy json.RawMessage) (json.RawMessage, error)
+
+func canonicalPD(ctx context.Context, canon Canonicaliser, policy json.RawMessage) (string, error) {
+	stored, err := canon(ctx, policy)
+	if err != nil {
+		return "", err
+	}
+	return vault.PolicyDigestJSON(stored)
+}
+
+// VaultCanonicaliser asks every vault of d, over pinned RA-TLS, for the
+// policy as it would store it; they must all give the same.
+func VaultCanonicaliser(d *api.VaultDirectory, ownerTok, attTok string) Canonicaliser {
+	return func(ctx context.Context, policy json.RawMessage) (json.RawMessage, error) {
+		verify, err := verifyPolicy(d.MRENCLAVE, d.AttestationServer, attTok)
+		if err != nil {
+			return nil, err
+		}
+		var first json.RawMessage
+		var firstPD string
+		for _, ep := range d.Endpoints {
+			c, derr := vault.Dial(ctx, vaultReg(ep), vault.DialOptions{VaultPolicy: verify, AuthToken: staticToken(ownerTok)})
+			if derr != nil {
+				return nil, fmt.Errorf("canonicalise on %s: %w", ep, derr)
+			}
+			stored, _, cerr := c.CanonicalPolicy(ctx, policy)
+			c.Close()
+			if cerr != nil {
+				return nil, fmt.Errorf("the vault %s refuses the policy: %w", ep, cerr)
+			}
+			pd, perr := vault.PolicyDigestJSON(stored)
+			if perr != nil {
+				return nil, fmt.Errorf("the vault %s: %w", ep, perr)
+			}
+			if first == nil {
+				first, firstPD = stored, pd
+			} else if pd != firstPD {
+				return nil, fmt.Errorf("the key's vaults canonicalise the policy differently")
+			}
+		}
+		if first == nil {
+			return nil, errors.New("no vault to canonicalise the policy with")
+		}
+		return first, nil
+	}
 }

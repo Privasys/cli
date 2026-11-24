@@ -82,7 +82,7 @@ func checkPolicyApproval(pa *api.PolicyApproval, binding int, members []string, 
 // plane answered 428 for, after checking it against the key's vaults, and
 // returns the approval token. what names the change for the wallet.
 func approvePolicyChange(cmd *cobra.Command, env *Env, client *api.Client, appID string, pa *api.PolicyApproval, what string,
-	semantic func(current, proposed json.RawMessage) error) (string, error) {
+	semantic func(ctx context.Context, current, proposed json.RawMessage, canon secrets.Canonicaliser) error) (string, error) {
 	ctx := cmd.Context()
 	if semantic == nil {
 		return "", errors.New("no check of what this policy change does")
@@ -117,15 +117,15 @@ func approvePolicyChange(cmd *cobra.Command, env *Env, client *api.Client, appID
 	}
 	// What the change does, checked against the policy read from every member
 	// (they must agree), not against anything the control plane says.
-	current, curVersion, err := secrets.CurrentPolicy(ctx, &api.VaultDirectory{Endpoints: key.Endpoints, MRENCLAVE: key.MRENCLAVE,
-		AttestationServer: key.AttServer}, vaultTok, attTok, key.Handle)
+	dir := &api.VaultDirectory{Endpoints: key.Endpoints, MRENCLAVE: key.MRENCLAVE, AttestationServer: key.AttServer}
+	current, curVersion, err := secrets.CurrentPolicy(ctx, dir, vaultTok, attTok, key.Handle)
 	if err != nil {
 		return "", err
 	}
 	if uint64(curVersion) != pa.PolicyVersion {
 		return "", fmt.Errorf("refusing the policy change: the key's vaults hold policy version %d, the change is for %d", curVersion, pa.PolicyVersion)
 	}
-	if err := semantic(current, pa.NewPolicy); err != nil {
+	if err := semantic(ctx, current, pa.NewPolicy, secrets.VaultCanonicaliser(dir, vaultTok, attTok)); err != nil {
 		return "", fmt.Errorf("refusing the policy change: %w", err)
 	}
 	bearer, err := auth.AccessToken(ctx, env.Cfg.Issuer)
