@@ -179,7 +179,10 @@ func (f *fakeRoll) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		// The vault client's own field names, as the platform passes them on.
 		v := map[string]interface{}{"Success": true, "PendingID": 0, "PolicyVersion": 4, "AutoPromoted": f.admitted[mgrHandle]}
-		f.reply(w, map[string]interface{}{"handle": mgrHandle, "vaults": []interface{}{v, v}})
+		f.mu.Lock()
+		mgrAud := f.audiences["manager"]
+		f.mu.Unlock()
+		f.reply(w, map[string]interface{}{"handle": mgrHandle, "vaults": []interface{}{v, v}, "oidc_audience": mgrAud})
 	case p == "/api/v1/admin/enclaves/enc-1/data-key/pending":
 		f.reply(w, map[string]interface{}{"handle": mgrHandle, "vaults": []interface{}{map[string]interface{}{"Pending": []interface{}{
 			map[string]interface{}{"id": 0, "profile": fakeProfile},
@@ -395,12 +398,12 @@ func TestPromoteReleaseUnderOneApproval(t *testing.T) {
 }
 
 // Keys on vaults of different audiences get one approval each, and each batch
-// asks for its own audience; the manager key takes the platform's.
+// asks for its own audience, the manager key's included.
 func TestOneApprovalPerAudience(t *testing.T) {
 	auth.SetPlatformAudience("privasys-platform-test")
 	defer auth.SetPlatformAudience(auth.PlatformAudience)
 	f := newFakeRoll(t)
-	f.audiences = map[string]string{"app-a": "privasys-platform-test", "app-b": "privasys-platform-other"}
+	f.audiences = map[string]string{"app-a": "privasys-platform-test", "app-b": "privasys-platform-other", "manager": "privasys-platform-other"}
 	out, err := f.run(t, declined, nil)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -414,7 +417,7 @@ func TestOneApprovalPerAudience(t *testing.T) {
 			got[h] = f.batchAuds[i]
 		}
 	}
-	want := map[string]string{mgrHandle: "privasys-platform-test", aHandle: "privasys-platform-test",
+	want := map[string]string{mgrHandle: "privasys-platform-other", aHandle: "privasys-platform-test",
 		bHandle: "privasys-platform-other", bCred: "privasys-platform-other"}
 	for h, aud := range want {
 		if got[h] != aud {

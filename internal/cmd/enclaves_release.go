@@ -260,6 +260,12 @@ func prepareManagerKey(ctx context.Context, client *api.Client, enclaveID, encla
 	if stage.admitted {
 		return []*approvalOp{admittedOp(handle, enclaveName, "manager /data key")}, nil
 	}
+	// The audience of the vaults holding the manager key ("" from a control
+	// plane that does not report it: the platform's own).
+	audience, err := vaultApprovalAudience(output.Str(staged, "oidc_audience"))
+	if err != nil {
+		return nil, err
+	}
 	pendingID, policyVersion := stage.pending, stage.version
 	pending, err := client.DataKeyPending(ctx, enclaveID)
 	if err != nil {
@@ -274,11 +280,9 @@ func prepareManagerKey(ctx context.Context, client *api.Client, enclaveID, encla
 			Operation: "promote", Handle: handle, MeasurementDigest: digest, PolicyVersion: policyVersion,
 			Context: map[string]string{"app_name": "Enclave manager: " + enclaveName, "version": path.Base(release), "key_type": "manager data key"},
 		},
-		// The control plane does not report the manager key's vaults'
-		// audience yet: the platform's own.
-		Audience: auth.CurrentPlatformAudience(),
+		Audience: audience,
 		Name:     enclaveName,
-		Kind: "manager /data key",
+		Kind:     "manager /data key",
 		Apply: func(ctx context.Context, token string) (string, error) {
 			res, err := client.PromoteDataKey(ctx, enclaveID, pendingID, token)
 			if err != nil {
@@ -346,7 +350,7 @@ func prepareAppKeys(ctx context.Context, client *api.Client, appID, deploymentID
 			},
 			Audience: audience,
 			Name:     name,
-			Kind: "app key",
+			Kind:     "app key",
 			Apply: func(ctx context.Context, token string) (string, error) {
 				sc := *client
 				sc.Token = token
@@ -391,7 +395,7 @@ func prepareAppKeys(ctx context.Context, client *api.Client, appID, deploymentID
 		},
 		Audience: audience,
 		Name:     name,
-		Kind: "registry credential",
+		Kind:     "registry credential",
 		Apply: func(ctx context.Context, token string) (string, error) {
 			sc := *client
 			sc.Token = token
