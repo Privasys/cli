@@ -268,3 +268,31 @@ func (a ApprovalV2) members() []string {
 	}
 	return m
 }
+
+// UpdatePolicyApproval builds the update_policy approval of newPolicy (as
+// given) on handle, with the target computed here from the policy itself.
+// Where every member advertises update_policy_from (formats §5.3), a plain
+// update_policy is refused: those vaults' owners get the form that also binds
+// the policy replaced, which this CLI does not ask privasys.id for yet.
+func UpdatePolicyApproval(handle string, policyVersion uint64, ids []PinnedIdentity, newPolicy json.RawMessage,
+	audience string, context map[string]string) (ApprovalV2, error) {
+	if len(ids) > 0 {
+		all := true
+		for _, id := range ids {
+			if !id.Has(vault.CapabilityUpdatePolicyFrom) {
+				all = false
+				break
+			}
+		}
+		if all {
+			return ApprovalV2{}, errors.New("the key's vaults take policy changes approved as update_policy_from, which this CLI cannot ask for yet; update the CLI")
+		}
+	}
+	pd, err := vault.PolicyDigestJSON(newPolicy)
+	if err != nil {
+		return ApprovalV2{}, fmt.Errorf("the new policy: %w", err)
+	}
+	a := ApprovalV2{Operation: vault.BindUpdatePolicy, Handle: handle, Target: pd, PolicyVersion: policyVersion,
+		Identities: ids, NewPolicy: newPolicy, Audience: audience, Context: context}
+	return a, a.check()
+}

@@ -136,10 +136,11 @@ func approvePolicyChange(cmd *cobra.Command, env *Env, client *api.Client, appID
 	if name := appFriendlyName(ctx, client, appID); name != "" {
 		actx["app_name"] = name
 	}
-	tok, err := secrets.RequestApprovalV2(ctx, env.Cfg.Issuer, bearer, secrets.ApprovalV2{
-		Operation: vault.BindUpdatePolicy, Handle: pa.Handle, PolicyVersion: pa.PolicyVersion,
-		Identities: ids, NewPolicy: pa.NewPolicy, Audience: audience, Context: actx,
-	}, secrets.OpenBrowser, cmd.ErrOrStderr())
+	approval, err := secrets.UpdatePolicyApproval(pa.Handle, pa.PolicyVersion, ids, pa.NewPolicy, audience, actx)
+	if err != nil {
+		return "", fmt.Errorf("refusing the policy change: %w", err)
+	}
+	tok, err := secrets.RequestApprovalV2(ctx, env.Cfg.Issuer, bearer, approval, secrets.OpenBrowser, cmd.ErrOrStderr())
 	if errors.Is(err, secrets.ErrDeclined) {
 		return "", fmt.Errorf("%w: the policy was not changed", err)
 	}
