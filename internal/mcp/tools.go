@@ -309,6 +309,9 @@ func (s *Server) registerTools() {
 							return "", secrets.VaultAddressing{}, err
 						}
 						handle, _ := r.Key["handle"].(string)
+						if err := secrets.CheckVaultKeyHandle(vaultID, name, handle); err != nil {
+							return "", secrets.VaultAddressing{}, err
+						}
 						return r.Grant, secrets.VaultAddressing{
 							Handle:    handle,
 							Endpoints: r.Constellation.Endpoints,
@@ -659,6 +662,9 @@ func (s *Server) registerTools() {
 						return "", secrets.VaultAddressing{}, err
 					}
 					handle, _ := r.Key["handle"].(string)
+					if err := secrets.CheckVaultKeyHandle(vaultID, name, handle); err != nil {
+						return "", secrets.VaultAddressing{}, err
+					}
 					return r.Grant, secrets.VaultAddressing{
 						Handle: handle, Endpoints: r.Constellation.Endpoints, MRENCLAVE: r.Constellation.MRENCLAVE,
 						AttServer: r.Constellation.AttestationServer, Threshold: r.Constellation.Threshold,
@@ -1592,6 +1598,9 @@ func vaultKeyAddr(ctx context.Context, d Deps, vaultID, name string, version int
 	}
 	if handle == "" {
 		return secrets.VaultOpParams{}, fmt.Errorf("key %q not found in vault %s", name, vaultID)
+	}
+	if err := secrets.CheckVaultKeyHandle(vaultID, name, handle); err != nil {
+		return secrets.VaultOpParams{}, err
 	}
 	dir, err := d.Client.VaultDirectoryAt(ctx, home)
 	if err != nil {

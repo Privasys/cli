@@ -383,6 +383,9 @@ func mintVaultKeyGrant(ctx context.Context, client *api.Client, vaultID, name, k
 		return "", secrets.VaultAddressing{}, err
 	}
 	handle, _ := r.Key["handle"].(string)
+	if err := secrets.CheckVaultKeyHandle(vaultID, name, handle); err != nil {
+		return "", secrets.VaultAddressing{}, err
+	}
 	expires, _ := r.Key["expires_at"].(string)
 	return r.Grant, secrets.VaultAddressing{
 		Handle:    handle,
@@ -420,6 +423,9 @@ func resolveVaultKeyHandle(ctx context.Context, client *api.Client, vaultID, nam
 		home, _ := k["constellation_id"].(string)
 		if version > 0 {
 			if v == version {
+				if err := secrets.CheckVaultKeyHandle(vaultID, name, h); err != nil {
+					return "", "", err
+				}
 				return h, home, nil
 			}
 			continue
@@ -429,6 +435,9 @@ func resolveVaultKeyHandle(ctx context.Context, client *api.Client, vaultID, nam
 		}
 	}
 	if best != "" {
+		if err := secrets.CheckVaultKeyHandle(vaultID, name, best); err != nil {
+			return "", "", err
+		}
 		return best, bestHome, nil
 	}
 	if version > 0 {
@@ -862,6 +871,9 @@ func rotateVaultKeyGrant(ctx context.Context, client *api.Client, vaultID, name,
 		return "", secrets.VaultAddressing{}, err
 	}
 	handle, _ := r.Key["handle"].(string)
+	if err := secrets.CheckVaultKeyHandle(vaultID, name, handle); err != nil {
+		return "", secrets.VaultAddressing{}, err
+	}
 	expires, _ := r.Key["expires_at"].(string)
 	return r.Grant, secrets.VaultAddressing{
 		Handle:    handle,
@@ -1012,6 +1024,9 @@ wallet: the approval names the exact vaults and build the key goes to.
 						return "", "", secrets.RenewConstellation{}, secrets.RenewConstellation{}, err
 					}
 					handle, _ := r.Key["handle"].(string)
+					if err := secrets.CheckVaultKeyHandle(vaultID, name, handle); err != nil {
+						return "", "", secrets.RenewConstellation{}, secrets.RenewConstellation{}, err
+					}
 					target := secrets.RenewConstellation{
 						ID: r.Constellation.ID, Endpoints: r.Constellation.Endpoints, MRENCLAVE: r.Constellation.MRENCLAVE,
 						AttestationServer: r.Constellation.AttestationServer, Threshold: r.Constellation.Threshold,
