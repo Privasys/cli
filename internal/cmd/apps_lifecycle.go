@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -816,7 +817,13 @@ generation authorises).`,
 			if err != nil {
 				return err
 			}
-			vid, err := resolveVersionRef(ctx, client, appID, argOr(args, 1, ""))
+			// Without a version, the one that runs: the key is bound to that image.
+			var vid string
+			if ref := argOr(args, 1, ""); ref != "" {
+				vid, err = resolveVersionRef(ctx, client, appID, ref)
+			} else if vid, err = runningVersion(ctx, client, appID); err == nil && !env.Quiet {
+				fmt.Fprintf(cmd.ErrOrStderr(), "Rotating for the running version %s\n", vid)
+			}
 			if err != nil {
 				return err
 			}
@@ -1229,7 +1236,18 @@ func resolveVersionRef(ctx context.Context, client *api.Client, appID, ref strin
 		return "", fmt.Errorf("app has no versions")
 	}
 	if ref == "" {
-		return output.Str(vs[len(vs)-1], "id"), nil
+		// The newest version: the highest version_number, whatever order the
+		// control plane lists them in (it lists newest first).
+		newest, best := "", -1
+		for _, v := range vs {
+			if n, err := strconv.Atoi(output.Str(v, "version_number")); err == nil && n > best {
+				newest, best = output.Str(v, "id"), n
+			}
+		}
+		if newest == "" {
+			return "", fmt.Errorf("the app's versions carry no version number: name the version")
+		}
+		return newest, nil
 	}
 	for _, v := range vs {
 		if output.Str(v, "id") == ref || output.Str(v, "version_number") == ref {
@@ -1237,6 +1255,35 @@ func resolveVersionRef(ctx context.Context, client *api.Client, appID, ref strin
 		}
 	}
 	return "", fmt.Errorf("version %q not found", ref)
+}
+
+// runningVersion is the version the app's active deployment runs. A key is
+// rotated for the image that runs, so no running deployment, or several
+// running different versions, is an error to resolve by naming the version.
+func runningVersion(ctx context.Context, client *api.Client, appID string) (string, error) {
+	deps, err := client.ListDeployments(ctx, appID)
+	if err != nil {
+		return "", err
+	}
+	seen := map[string]bool{}
+	var running []string
+	for _, d := range deps {
+		switch output.Str(d, "status") {
+		case "active", "deployed", "running":
+			if v := output.Str(d, "version_id"); v != "" && !seen[v] {
+				seen[v] = true
+				running = append(running, v)
+			}
+		}
+	}
+	switch len(running) {
+	case 1:
+		return running[0], nil
+	case 0:
+		return "", fmt.Errorf("the app has no running deployment: name the version")
+	default:
+		return "", fmt.Errorf("the app's deployments run %d different versions (%s): name the version", len(running), strings.Join(running, ", "))
+	}
 }
 
 // resolveEnclaveRef picks the target enclave: the flag if set, else the single
