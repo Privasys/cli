@@ -20,6 +20,10 @@ type Client struct {
 	BaseURL string
 	Token   string
 	HTTP    *http.Client
+	// Account is the account requests act in (X-Privasys-Account), from
+	// --account or the configuration; "" is the caller's personal account.
+	// The control plane honours it only for an account the caller belongs to.
+	Account string
 }
 
 // New creates a client for the given API base URL and access token.
@@ -40,7 +44,7 @@ func (c *Client) getJSON(ctx context.Context, path string, out interface{}) erro
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	c.authorize(req)
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
@@ -179,4 +183,15 @@ func statusError(status int, body []byte) error {
 		return nil
 	}
 	return &StatusError{Status: status, Body: body}
+}
+
+// AccountHeader names the account a request acts in.
+const AccountHeader = "X-Privasys-Account"
+
+// authorize sets the bearer and, when one is chosen, the account.
+func (c *Client) authorize(req *http.Request) {
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	if c.Account != "" {
+		req.Header.Set(AccountHeader, c.Account)
+	}
 }

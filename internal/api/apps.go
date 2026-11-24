@@ -33,7 +33,7 @@ func (c *Client) do(ctx context.Context, method, path string, body, out interfac
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	c.authorize(req)
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -171,7 +171,7 @@ func (c *Client) UploadCwasm(ctx context.Context, id, path string) (map[string]i
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	c.authorize(req)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 	resp, err := c.HTTP.Do(req)
 	if err != nil {

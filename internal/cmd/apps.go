@@ -105,7 +105,9 @@ func apiClient(cmd *cobra.Command, env *Env) (*api.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return api.New(env.Cfg.Endpoint, token), nil
+	c := api.New(env.Cfg.Endpoint, token)
+	c.Account = env.Cfg.Account
+	return c, nil
 }
 
 func newAppsListCmd() *cobra.Command {

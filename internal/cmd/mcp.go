@@ -35,6 +35,7 @@ func newMcpCmd() *cobra.Command {
 				if token, err := auth.AccessToken(ctx, env.Cfg.Issuer); err == nil {
 					d.Token = token
 					d.Client = api.New(env.Cfg.Endpoint, token)
+					d.Client.Account = env.Cfg.Account
 					d.Authed = true
 				}
 				return d, nil

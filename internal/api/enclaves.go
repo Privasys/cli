@@ -75,7 +75,7 @@ func (c *Client) PromoteDataKey(ctx context.Context, id string, pendingID uint32
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	c.authorize(req)
 	req.Header.Set("X-Privasys-Step-Up", stepUp)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.HTTP.Do(req)
