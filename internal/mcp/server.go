@@ -30,6 +30,9 @@ type Deps struct {
 	Issuer   string
 	Endpoint string
 	Authed   bool
+	// ActedIn names the account a write of this call acted in, or "" when
+	// none was chosen or nothing was written (set by SetAccount's hook).
+	ActedIn func() string
 }
 
 // DepsFunc returns a fresh Deps. It errors only on hard failures (config load),
@@ -205,7 +208,17 @@ func (s *Server) callTool(ctx context.Context, req *rpcRequest) *rpcResponse {
 		return toolResult(req.ID, nil, errNotAuthenticated)
 	}
 	res, err := t.Handler(ctx, d, p.Arguments)
-	return toolResult(req.ID, res, err)
+	out := toolResult(req.ID, res, err)
+	if d.ActedIn != nil {
+		if acc := d.ActedIn(); acc != "" {
+			// A change made in a chosen account says so, so the agent can
+			// tell the user where it landed.
+			r := out.Result.(map[string]interface{})
+			r["content"] = append(r["content"].([]map[string]interface{}),
+				map[string]interface{}{"type": "text", "text": "Acted in account " + acc})
+		}
+	}
+	return out
 }
 
 // toolResult encodes an MCP tools/call result (content array; isError on error).

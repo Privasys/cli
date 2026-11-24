@@ -35,7 +35,13 @@ func newMcpCmd() *cobra.Command {
 				if token, err := auth.AccessToken(ctx, env.Cfg.Issuer); err == nil {
 					d.Token = token
 					d.Client = api.New(env.Cfg.Endpoint, token)
-					d.Client.Account = env.Cfg.Account
+					// A write in a chosen account is named in the tool's
+					// result (not on stderr, which is only a log here).
+					var acted string
+					d.Client.SetAccount(env.Cfg.Account, func(ctx context.Context, c *api.Client) {
+						acted = accountLabel(ctx, c)
+					})
+					d.ActedIn = func() string { return acted }
 					d.Authed = true
 				}
 				return d, nil
