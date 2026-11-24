@@ -22,14 +22,10 @@ const expirySkew = 60 * time.Second
 // stored user credential (refreshing silently when needed). The token is for
 // the run's platform audience (CurrentPlatformAudience).
 func AccessToken(ctx context.Context, issuer string) (string, error) {
-	return PlatformAccessToken(ctx, issuer, CurrentPlatformAudience())
-}
-
-// PlatformAccessToken is AccessToken for the platform audience aud, cached.
-func PlatformAccessToken(ctx context.Context, issuer, aud string) (string, error) {
 	if t := os.Getenv("PRIVASYS_ACCESS_TOKEN"); t != "" {
 		return t, nil
 	}
+	aud := CurrentPlatformAudience()
 
 	if sk := os.Getenv("PRIVASYS_SERVICE_KEY"); sk != "" {
 		k, err := loadServiceKeyFromEnv(sk)
@@ -133,17 +129,6 @@ func audienceAccessToken(ctx context.Context, issuer string, cred *Credential, a
 		return "", err
 	}
 	return tr.AccessToken, nil
-}
-
-// VaultBearer returns the token the control plane forwards to the vaults when
-// the platform's own audience is not the vaults' (the test platform): a token
-// for the same session under VaultAudience. It returns "" when none is needed,
-// or when PRIVASYS_ACCESS_TOKEN pins the one bearer this run may present.
-func VaultBearer(ctx context.Context, issuer string) (string, error) {
-	if CurrentPlatformAudience() == VaultAudience || os.Getenv("PRIVASYS_ACCESS_TOKEN") != "" {
-		return "", nil
-	}
-	return PlatformAccessToken(ctx, issuer, VaultAudience)
 }
 
 func refresh(ctx context.Context, issuer, refreshToken string) (*TokenResponse, error) {
