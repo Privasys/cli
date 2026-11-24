@@ -5,9 +5,11 @@ package secrets
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	vault "github.com/Privasys/enclave-vaults-client/go/vault"
@@ -152,7 +154,7 @@ func RenewThresholdKeyInVault(ctx context.Context, p ThresholdRenewParams) (*Thr
 		},
 		TargetMrenclave: target.MRENCLAVE,
 		InPlace:         inPlace,
-		StepUp: func(ctx context.Context, contextHex string, policyVersion uint32) (string, error) {
+		StepUp: func(ctx context.Context, a vault.ReshareApproval) (string, error) {
 			// The wallet shows the exact build the key's shares go to: the
 			// vaults deal only to vaults of that build, so this is what the
 			// owner approves.
@@ -160,8 +162,19 @@ func RenewThresholdKeyInVault(ctx context.Context, p ThresholdRenewParams) (*Thr
 			if !strings.EqualFold(home.MRENCLAVE, target.MRENCLAVE) {
 				build = "a NEW vault build"
 			}
+			helpers := make([]string, len(a.Helpers))
+			for i, h := range a.Helpers {
+				helpers[i] = strconv.Itoa(int(h))
+			}
+			// Every input of the resharing context, so the wallet recomputes
+			// the digest it signs from what it shows.
 			actx := approvalContext{
-				"key_type": ThresholdKeyType,
+				"key_type":         ThresholdKeyType,
+				"target_mrenclave": a.TargetMrenclave,
+				"target_vaults":    strings.Join(a.Vaults, ","),
+				"threshold":        strconv.Itoa(int(a.Threshold)),
+				"helpers":          strings.Join(helpers, ","),
+				"public_key":       base64.RawURLEncoding.EncodeToString(a.GroupKey),
 				"summary": fmt.Sprintf("Renew this threshold Ed25519 key onto %d vaults (any %d sign) of %s, "+
 					"MRENCLAVE %s. Its public key does not change.", n, t, build, strings.ToLower(target.MRENCLAVE)),
 			}
@@ -169,8 +182,8 @@ func RenewThresholdKeyInVault(ctx context.Context, p ThresholdRenewParams) (*Thr
 			if out == nil {
 				out = os.Stderr
 			}
-			return RequestStepUpViaBrowser(ctx, p.Issuer, p.OwnerToken, "reshare", handle, contextHex,
-				policyVersion, actx, p.Open, out)
+			return RequestStepUpViaBrowser(ctx, p.Issuer, p.OwnerToken, "reshare", handle, a.ContextHex,
+				a.PolicyVersion, actx, p.Open, out)
 		},
 	})
 	if err != nil {
