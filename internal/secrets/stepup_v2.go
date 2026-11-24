@@ -189,8 +189,8 @@ func verifyBindingV2(a ApprovalV2, got bindingAnswer, gotVaultOp string, now tim
 	if n, err := base64.RawURLEncoding.DecodeString(got.Nonce); err != nil || len(n) != 16 {
 		return vault.BindingV2{}, "", errors.New("the binding's nonce is not 16 bytes")
 	}
-	if left := got.Exp - now.Unix(); left < minApprovalLeftSeconds || left > vault.BindingMaxTTLSeconds+bindingClockSkew {
-		return vault.BindingV2{}, "", fmt.Errorf("the approval expires in %d s, outside the %d s an approval may last", left, vault.BindingMaxTTLSeconds)
+	if left := got.Exp - now.Unix(); left < minApprovalLeftSeconds || left > a.Operation.MaxTTLSeconds()+bindingClockSkew {
+		return vault.BindingV2{}, "", fmt.Errorf("the approval expires in %d s, outside the %d s a %s approval may last", left, a.Operation.MaxTTLSeconds(), a.Operation)
 	}
 	b := vault.BindingV2{
 		Members: a.members(), Op: a.Operation, Handle: a.Handle, Target: a.Target,

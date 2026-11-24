@@ -26,13 +26,43 @@ import (
 )
 
 // batchableV2 says whether an operation may be approved in a batch. Export and
-// delete never are.
+// delete never are; delete_after only beside its successor (checkDeleteAfter).
 func batchableV2(op vault.BindingOp) bool {
 	switch op {
-	case vault.BindCreate, vault.BindPromote, vault.BindUpdatePolicy, vault.BindReshare, vault.BindIssuerUpdate:
+	case vault.BindCreate, vault.BindPromote, vault.BindUpdatePolicy, vault.BindReshare, vault.BindIssuerUpdate,
+		vault.BindDeleteAfter:
 		return true
 	}
 	return false
+}
+
+// checkDeleteAfter requires every delete_after to name a successor promoted or
+// created in the same batch, so the old key's delete is approved only with the
+// migration or upgrade it follows.
+func checkDeleteAfter(entries []ApprovalV2) error {
+	successors := map[string]bool{}
+	for _, a := range entries {
+		var target string
+		switch a.Operation {
+		case vault.BindPromote:
+			target = a.Target
+		case vault.BindCreate:
+			target = ""
+		default:
+			continue
+		}
+		t, err := vault.DeleteAfterTarget(a.Handle, target)
+		if err != nil {
+			return err
+		}
+		successors[t] = true
+	}
+	for _, a := range entries {
+		if a.Operation == vault.BindDeleteAfter && !successors[a.Target] {
+			return fmt.Errorf("the delete of %s names no successor promoted or created in this batch", a.Handle)
+		}
+	}
+	return nil
 }
 
 type batchV2Answer struct {
@@ -58,7 +88,10 @@ func BeginBatchV2(ctx context.Context, issuer, bearer, label, audience string, e
 	if len(entries) == 0 || len(entries) > MaxBatchEntries {
 		return nil, fmt.Errorf("a batch holds 1 to %d operations", MaxBatchEntries)
 	}
-	identities := []vault.VaultIdentity{}
+	if err := checkDeleteAfter(entries); err != nil {
+		return nil, err
+	}
+	identities := []PinnedIdentity{}
 	seen := map[string]bool{}
 	reqEntries := make([]map[string]interface{}, 0, len(entries))
 	keys := map[string]bool{}
@@ -75,8 +108,8 @@ func BeginBatchV2(ctx context.Context, issuer, bearer, label, audience string, e
 		}
 		keys[k] = true
 		for _, id := range a.Identities {
-			if !seen[id.MemberID] {
-				seen[id.MemberID] = true
+			if !seen[id.MemberID()] {
+				seen[id.MemberID()] = true
 				identities = append(identities, id)
 			}
 		}
@@ -158,7 +191,13 @@ func verifyBatchV2(label string, requested []ApprovalV2, answer []byte, now time
 		if e.Operation != string(a.Operation) || e.Handle != a.Handle {
 			return nil, fmt.Errorf("entry %d is %s, %s %s was asked", i, k, a.Operation, a.Handle)
 		}
-		if e.Binding.Exp != ans.Exp {
+		// Every entry expires with the batch, except a delete_after, which is
+		// held until the migration ends and may last up to 24 hours.
+		if a.Operation == vault.BindDeleteAfter {
+			if e.Binding.Exp < ans.Exp {
+				return nil, fmt.Errorf("%s expires before the batch", k)
+			}
+		} else if e.Binding.Exp != ans.Exp {
 			return nil, fmt.Errorf("%s expires at another time than the batch", k)
 		}
 		b, vaultOp, err := verifyBindingV2(a, e.Binding, e.VaultOp, now)
@@ -166,7 +205,8 @@ func verifyBatchV2(label string, requested []ApprovalV2, answer []byte, now time
 			return nil, fmt.Errorf("%s: %w", k, err)
 		}
 		out.Entries = append(out.Entries, BatchEntry{Operation: e.Operation, Handle: e.Handle,
-			MeasurementDigest: orDash(a.Target), PolicyVersion: a.PolicyVersion, Nonce: b.Nonce, VaultOp: vaultOp})
+			MeasurementDigest: orDash(a.Target), PolicyVersion: a.PolicyVersion, Nonce: b.Nonce, VaultOp: vaultOp,
+			Exp: b.Exp})
 	}
 	if ans.BatchID != computeBatchID(label, ans.Exp, out.Entries) {
 		return nil, errors.New("the batch id does not match the list")

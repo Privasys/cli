@@ -80,6 +80,9 @@ type BatchEntry struct {
 	Nonce             string            `json:"nonce,omitempty"`
 	VaultOp           string            `json:"vault_op,omitempty"`
 	Context           map[string]string `json:"context,omitempty"`
+	// Exp is this entry's own expiry, where it differs from the batch's (a v2
+	// delete_after). Zero means the batch's.
+	Exp int64 `json:"-"`
 }
 
 // Key names an entry within a batch.
@@ -332,7 +335,11 @@ func verifyBatchTokens(b *Batch, tokens []batchToken) (map[string]string, error)
 		if err != nil {
 			return nil, fmt.Errorf("the token for %s: %w", e.Key(), err)
 		}
-		if t.VaultOp != e.VaultOp || claims.VaultOp != e.VaultOp || claims.Nonce != e.Nonce || claims.Exp != b.Exp {
+		exp := b.Exp
+		if e.Exp != 0 {
+			exp = e.Exp
+		}
+		if t.VaultOp != e.VaultOp || claims.VaultOp != e.VaultOp || claims.Nonce != e.Nonce || claims.Exp != exp {
 			return nil, fmt.Errorf("the token for %s does not bind that operation", e.Key())
 		}
 		out[e.Key()] = t.AccessToken
