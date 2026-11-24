@@ -169,7 +169,7 @@ subject), and `apps_owners_remove` manage who can access and manage an app.
 
 - Encrypted storage is sealed with a **data key that belongs to the user**, generated inside the confidential hardware; the platform never sees it. See `references/data-protection.md`.
 - On a new version or enclave upgrade the data is **locked until the owner approves the new measurement**: `apps_versions_pending` then `apps_versions_promote` (or guided `apps upgrade`). The platform cannot approve for them.
-- `apps_rotate_key` rotates the key without re-encrypting the data; `apps_cosign` requires a second team approver on promote (separation of duties).
+- `apps_rotate_key` rotates the key without re-encrypting the data; `apps_cosign` requires a second team approver on promote (separation of duties). Without a `version`, the key is rotated for the version the app is **running**; it refuses when none is running or several are, so then pass the running version's id.
 - `apps export-key` lets the owner take their key out. **DANGER:** it writes the key to a *local file only*. Never request, echo, log, or pass the key material anywhere it could reach a model or service. Confirm with the human first.
 - `secrets_create` makes a user-owned key in the vault (Shamir-split; the platform never holds it). It generates random material — you never see or handle the secret bytes.
 - `secrets_export` writes a secret the owner owns to a **local file only** and returns just a path + fingerprint — never the key. It is **dangerous** (raw key to disk) and requires a fresh WebAuthn step-up the owner approves in their wallet; you cannot approve it. Confirm with the human first.
@@ -192,7 +192,12 @@ the platform never sees it. The full key surface is available as MCP tools:
   `vault_key_wrap` / `vault_key_unwrap` (encrypt / decrypt data under an AES key
   — `unwrap` returns the plaintext to you, so only use it when the user wants
   the cleartext back).
-- **User secrets:** `secrets_create` / `secrets_export` (above).
+- **User secrets:** `secrets_create` / `secrets_export` (above). A secret's name
+  may not end in `gen-<number>`: on vaults that keep renewals as generations,
+  that suffix names them (`<name>/gen-2`, …), and every lookup by the plain name
+  finds the newest one it can trace to the owner's renewal. If a lookup warns
+  about a generation it cannot trace, or refuses because several exist, tell
+  the human: only the owner decides which to delete.
 
 For existing tooling, `privasys vault serve` runs an **Azure Key Vault-shaped
 REST facade** over a vault (CLI only) so non-CLI clients use the vHSM unchanged.
@@ -208,7 +213,9 @@ REST facade** over a vault (CLI only) so non-CLI clients use the vHSM unchanged.
   on every command of a session.
 - `--account <id>` acts on another account the user belongs to.
 - A version id (`apps versions`) pins exactly what you stage, promote or deploy;
-  pass it rather than relying on a default.
+  pass it rather than relying on a default. Without one, CLI v0.58.8 and later
+  take the newest version (the highest version number), and `rotate-key` the
+  running one; **older CLIs took the oldest version**, so with one, always pass it.
 - Apps are addressable by **name or id** interchangeably.
 - Every CLI command supports `--format json`; output auto-switches to JSON when piped. `--no-input` never prompts.
 - Exit codes: `0` ok, `3` not authenticated, `4` not authorized, `5` not found.

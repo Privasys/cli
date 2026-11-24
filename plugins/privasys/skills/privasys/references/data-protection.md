@@ -31,7 +31,9 @@ against the source before you release the key to it.
 ## Other controls
 
 - **Key rotation** (`apps_rotate_key`): rotate the key without re-encrypting the
-  data (the per-volume key is re-wrapped, not the data re-written).
+  data (the per-volume key is re-wrapped, not the data re-written). The key is
+  bound to the image that runs, so without a version it is rotated for the
+  running version.
 - **Separation of duties** (`apps_cosign`): require a *second* team member to
   co-sign a promote, so no single person can authorize new code over the data.
 - **Owner-approved upgrades survive data**: approved upgrades reattach the same
