@@ -40,7 +40,7 @@ func batchableV2(op vault.BindingOp) bool {
 // created in the same batch, so the old key's delete is approved only with the
 // migration or upgrade it follows.
 func checkDeleteAfter(entries []ApprovalV2) error {
-	successors := map[string]bool{}
+	successors := map[string]string{} // delete_after target -> successor handle
 	for _, a := range entries {
 		var target string
 		switch a.Operation {
@@ -55,11 +55,20 @@ func checkDeleteAfter(entries []ApprovalV2) error {
 		if err != nil {
 			return err
 		}
-		successors[t] = true
+		successors[t] = a.Handle
 	}
 	for _, a := range entries {
-		if a.Operation == vault.BindDeleteAfter && !successors[a.Target] {
+		if a.Operation != vault.BindDeleteAfter {
+			continue
+		}
+		succ, ok := successors[a.Target]
+		if !ok {
 			return fmt.Errorf("the delete of %s names no successor promoted or created in this batch", a.Handle)
+		}
+		// A key is never its own successor: the vault would find "the
+		// successor" promoted and delete the key just promoted.
+		if succ == a.Handle {
+			return fmt.Errorf("the delete of %s names itself as its successor", a.Handle)
 		}
 	}
 	return nil
@@ -124,6 +133,9 @@ func BeginBatchV2(ctx context.Context, issuer, bearer, label, audience string, e
 		}
 		if len(a.NewPolicy) != 0 {
 			e["new_policy"] = a.NewPolicy
+		}
+		if a.TTLSeconds != 0 {
+			e["ttl_seconds"] = a.TTLSeconds
 		}
 		reqEntries = append(reqEntries, e)
 	}

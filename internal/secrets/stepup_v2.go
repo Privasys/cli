@@ -47,8 +47,29 @@ type ApprovalV2 struct {
 	Identities    []PinnedIdentity // each member vault, read with ReadPinnedIdentity
 	IssuerIndex   uint32           // the key's issuer entry that approves
 	NewPolicy     json.RawMessage  // update_policy only: the full new policy
-	Audience      string           // "" = privasys.id's default
-	Context       approvalContext
+	// TTLSeconds is how long a delete_after stays valid: what the migration or
+	// upgrade can realistically take, at most 24 hours. Zero is privasys.id's
+	// default of an hour. A shorter one fails safe: the old key then expires
+	// by itself. Refused on every other operation.
+	TTLSeconds int64
+	Audience   string // "" = privasys.id's default
+	Context    approvalContext
+}
+
+// deleteAfterDefaultTTL is privasys.id's lifetime for a delete_after that asks
+// for none.
+const deleteAfterDefaultTTL = 3600
+
+// maxLeft is the longest an approval for a may have left when privasys.id
+// answers: what was asked for a delete_after, else the operation's limit.
+func (a ApprovalV2) maxLeft() int64 {
+	if a.Operation != vault.BindDeleteAfter {
+		return a.Operation.MaxTTLSeconds()
+	}
+	if a.TTLSeconds == 0 {
+		return deleteAfterDefaultTTL
+	}
+	return a.TTLSeconds
 }
 
 // approvalV2Answer is privasys.id's answer to a v2 begin.
@@ -88,6 +109,14 @@ func (a ApprovalV2) check() error {
 	} else if len(a.NewPolicy) != 0 {
 		return fmt.Errorf("a %s carries no new policy", a.Operation)
 	}
+	if a.TTLSeconds != 0 {
+		if a.Operation != vault.BindDeleteAfter {
+			return fmt.Errorf("only a delete_after chooses its lifetime, not a %s", a.Operation)
+		}
+		if a.TTLSeconds < minApprovalLeftSeconds || a.TTLSeconds > vault.DeleteAfterMaxTTLSeconds {
+			return fmt.Errorf("a delete_after lasts %d to %d s", minApprovalLeftSeconds, vault.DeleteAfterMaxTTLSeconds)
+		}
+	}
 	if len(a.Identities) == 0 {
 		return errors.New("an approval must name the vaults it is for")
 	}
@@ -102,6 +131,9 @@ func (a ApprovalV2) check() error {
 // RequestApprovalV2 opens a v2 approval at privasys.id, verifies the binding it
 // returns, shows the approval to the owner and returns the token once approved.
 func RequestApprovalV2(ctx context.Context, issuer, bearer string, a ApprovalV2, open BrowserOpener, out io.Writer) (string, error) {
+	if a.Operation == vault.BindDeleteAfter {
+		return "", errors.New("a delete_after is approved only in a batch with its successor's promote or creation")
+	}
 	if err := a.check(); err != nil {
 		return "", err
 	}
@@ -189,8 +221,8 @@ func verifyBindingV2(a ApprovalV2, got bindingAnswer, gotVaultOp string, now tim
 	if n, err := base64.RawURLEncoding.DecodeString(got.Nonce); err != nil || len(n) != 16 {
 		return vault.BindingV2{}, "", errors.New("the binding's nonce is not 16 bytes")
 	}
-	if left := got.Exp - now.Unix(); left < minApprovalLeftSeconds || left > a.Operation.MaxTTLSeconds()+bindingClockSkew {
-		return vault.BindingV2{}, "", fmt.Errorf("the approval expires in %d s, outside the %d s a %s approval may last", left, a.Operation.MaxTTLSeconds(), a.Operation)
+	if left := got.Exp - now.Unix(); left < minApprovalLeftSeconds || left > a.maxLeft()+bindingClockSkew {
+		return vault.BindingV2{}, "", fmt.Errorf("the approval expires in %d s, outside the %d s this %s approval may last", left, a.maxLeft(), a.Operation)
 	}
 	b := vault.BindingV2{
 		Members: a.members(), Op: a.Operation, Handle: a.Handle, Target: a.Target,

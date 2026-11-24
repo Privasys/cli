@@ -104,7 +104,7 @@ func TestBatchV2DeleteAfter(t *testing.T) {
 	succ, _ := vault.DeleteAfterTarget("apps.privasys.org/new/k", profile)
 	entries := []ApprovalV2{
 		{Operation: vault.BindPromote, Handle: "apps.privasys.org/new/k", Target: profile, PolicyVersion: 1, Identities: ids},
-		{Operation: vault.BindDeleteAfter, Handle: "apps.privasys.org/old/k", Target: succ, PolicyVersion: 4, Identities: ids},
+		{Operation: vault.BindDeleteAfter, Handle: "apps.privasys.org/old/k", Target: succ, PolicyVersion: 4, Identities: ids, TTLSeconds: 86400},
 	}
 	if err := checkDeleteAfter(entries); err != nil {
 		t.Fatal(err)
@@ -157,5 +157,48 @@ func TestBatchV2DeleteAfter(t *testing.T) {
 	m["entries"].([]map[string]interface{})[0]["binding"].(map[string]interface{})["exp"] = now.Unix() + 3600
 	if _, err := verifyBatchV2("migrate", entries, enc(m), now); err == nil {
 		t.Error("a promote outliving the batch was accepted")
+	}
+}
+
+func TestDeleteAfterGuards(t *testing.T) {
+	now := time.Unix(1764000000, 0)
+	ids := []PinnedIdentity{fakeIdentity(t, 1)}
+	profile := strings.Repeat("e", 64)
+
+	// A key named as its own successor.
+	self, _ := vault.DeleteAfterTarget("apps.privasys.org/k", profile)
+	if err := checkDeleteAfter([]ApprovalV2{
+		{Operation: vault.BindPromote, Handle: "apps.privasys.org/k", Target: profile, Identities: ids},
+		{Operation: vault.BindDeleteAfter, Handle: "apps.privasys.org/k", Target: self, Identities: ids},
+	}); err == nil || !strings.Contains(err.Error(), "itself") {
+		t.Errorf("a key deleting itself after its own promote: %v", err)
+	}
+
+	// Never on its own.
+	if _, err := RequestApprovalV2(t.Context(), "http://127.0.0.1:1", "b",
+		ApprovalV2{Operation: vault.BindDeleteAfter, Handle: "h", Target: self, Identities: ids}, nil, nil); err == nil || !strings.Contains(err.Error(), "only in a batch") {
+		t.Errorf("a single delete_after: %v", err)
+	}
+
+	// The lifetime is the delete_after's alone, within bounds.
+	for name, a := range map[string]ApprovalV2{
+		"ttl on a promote": {Operation: vault.BindPromote, Handle: "h", Target: profile, Identities: ids, TTLSeconds: 600},
+		"ttl beyond 24 h":  {Operation: vault.BindDeleteAfter, Handle: "h", Target: self, Identities: ids, TTLSeconds: 86401},
+		"ttl too short":    {Operation: vault.BindDeleteAfter, Handle: "h", Target: self, Identities: ids, TTLSeconds: 5},
+	} {
+		if err := a.check(); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+
+	// The answer may not outlive what was asked (default: an hour).
+	succ, _ := vault.DeleteAfterTarget("apps.privasys.org/new/k", profile)
+	entries := []ApprovalV2{
+		{Operation: vault.BindPromote, Handle: "apps.privasys.org/new/k", Target: profile, PolicyVersion: 1, Identities: ids},
+		{Operation: vault.BindDeleteAfter, Handle: "apps.privasys.org/old/k", Target: succ, PolicyVersion: 4, Identities: ids},
+	}
+	enc := func(m map[string]interface{}) []byte { b, _ := json.Marshal(m); return b }
+	if _, err := verifyBatchV2("migrate", entries, enc(honestBatch(t, "migrate", entries, now)), now); err == nil {
+		t.Error("a 24 h delete_after was accepted where an hour was asked")
 	}
 }
