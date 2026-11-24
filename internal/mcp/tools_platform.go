@@ -391,7 +391,12 @@ func platformTools() []tool {
 				if err != nil {
 					return nil, err
 				}
-				return d.Client.RetireMeasurement(ctx, id, digest)
+				res, err := d.Client.RetireMeasurement(ctx, id, digest)
+				if _, need := api.PolicyApprovalFrom(err); need {
+					return nil, fmt.Errorf("this app's key changes its policy only with the owner's approval in the Privasys Wallet; "+
+						"ask the owner to run 'privasys apps retire-measurement %s %s' in a terminal", id, digest)
+				}
+				return res, err
 			},
 		},
 

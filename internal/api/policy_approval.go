@@ -1,0 +1,70 @@
+// Copyright (c) Privasys. All rights reserved.
+// Licensed under the GNU Affero General Public License v3.0.
+
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+)
+
+// PolicyApproval is what the control plane asks the owner to approve before
+// it changes the policy of a key whose vaults take binding v2 (a 428
+// policy_approval_required answer). NewPolicy is the exact policy, as bytes,
+// to approve and to send back.
+type PolicyApproval struct {
+	Operation       string          `json:"operation"`
+	Handle          string          `json:"handle"`
+	PolicyVersion   uint64          `json:"policy_version"`
+	Target          string          `json:"target"`
+	NewPolicy       json.RawMessage `json:"new_policy"`
+	Audience        string          `json:"audience"`
+	ConstellationID string          `json:"constellation_id"`
+	BindingVersion  int             `json:"binding_version"`
+	Members         []string        `json:"members"`
+}
+
+// PolicyApprovalFrom reads a 428 policy_approval_required answer.
+func PolicyApprovalFrom(err error) (*PolicyApproval, bool) {
+	var se *StatusError
+	if !errors.As(err, &se) || se.Status != http.StatusPreconditionRequired {
+		return nil, false
+	}
+	var doc struct {
+		Code     string          `json:"code"`
+		Approval *PolicyApproval `json:"approval"`
+	}
+	if json.Unmarshal(se.Body, &doc) != nil || doc.Code != "policy_approval_required" || doc.Approval == nil {
+		return nil, false
+	}
+	return doc.Approval, true
+}
+
+// PolicyChangeCode is the code of a refused policy change (policy_approval_stale,
+// policy_diverged, policy_not_lossless, policy_refused), or "".
+func PolicyChangeCode(err error) string {
+	var se *StatusError
+	if !errors.As(err, &se) {
+		return ""
+	}
+	var doc struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(se.Body, &doc) != nil {
+		return ""
+	}
+	return doc.Code
+}
+
+// RetireMeasurementApproved repeats a retire-measurement with the approved
+// policy. The client's token must be the owner's approval token.
+func (c *Client) RetireMeasurementApproved(ctx context.Context, id, digest string, newPolicy json.RawMessage) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/apps/"+id+"/retire-measurement",
+		map[string]any{"measurement_digest": digest, "new_policy": newPolicy}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

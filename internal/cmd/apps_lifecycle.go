@@ -1193,8 +1193,19 @@ remaining measurement cannot be retired either (it would make the key unusable).
 				}
 			}
 			res, err := client.RetireMeasurement(cmd.Context(), appID, digest)
+			if pa, need := api.PolicyApprovalFrom(err); need {
+				// The key's vaults change its policy only with the owner's
+				// approval of the exact new policy.
+				tok, aerr := approvePolicyChange(cmd, env, client, appID, pa, "retire measurement "+digest)
+				if aerr != nil {
+					return aerr
+				}
+				sc := *client
+				sc.Token = tok
+				res, err = sc.RetireMeasurementApproved(cmd.Context(), appID, digest, pa.NewPolicy)
+			}
 			if err != nil {
-				return err
+				return policyChangeError(err)
 			}
 			if !env.Quiet {
 				output.Success(cmd.ErrOrStderr(), "Retired measurement %s", truncHex(digest))
