@@ -50,6 +50,14 @@ type BrowserOpener func(rawURL string) error
 // a convenience hint, never the security decision.
 type approvalContext map[string]string
 
+// name sets the display name the IdP puts in the wallet push body ("app_name",
+// the field it reads for every operation). Empty leaves the IdP's fallback.
+func (c approvalContext) name(display string) {
+	if display != "" {
+		c["app_name"] = display
+	}
+}
+
 func RequestStepUpViaBrowser(ctx context.Context, issuer, bearer, operation, handle, measurementDigestHex string, policyVersion uint32, actx approvalContext, open BrowserOpener, out io.Writer) (string, error) {
 	return RequestStepUpViaBrowserFor(ctx, issuer, bearer, "", operation, handle, measurementDigestHex, policyVersion, actx, open, out)
 }

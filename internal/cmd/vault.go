@@ -800,6 +800,16 @@ without destroying the material on the vaults.`,
 }
 
 // getPrimaryVaultKeyType returns the key_type of a key's current primary version.
+// vaultKeyDisplayName names a vault key on the owner's wallet approval: "key
+// <name> in vault <vault name>", or "key <name>" when the vault's name cannot
+// be read. Owner-given names only, since it travels in the wallet push.
+func vaultKeyDisplayName(ctx context.Context, client *api.Client, vaultID, name string) string {
+	if vn := client.KeyVaultName(ctx, vaultID); vn != "" {
+		return "key " + name + " in vault " + vn
+	}
+	return "key " + name
+}
+
 func getPrimaryVaultKeyType(ctx context.Context, client *api.Client, vaultID, name string) (string, error) {
 	keys, err := client.ListVaultKeys(ctx, vaultID)
 	if err != nil {
@@ -976,6 +986,7 @@ wallet: the approval names the exact vaults and build the key goes to.
 					return auth.VaultTokenFor(ctx, env.Cfg.Issuer, aud)
 				},
 				Out: cmd.ErrOrStderr(), Open: secrets.OpenBrowser,
+				DisplayName: vaultKeyDisplayName(ctx, client, vaultID, name),
 				Mint: func(ctx context.Context, cnf string) (string, string, secrets.RenewConstellation, secrets.RenewConstellation, error) {
 					r, err := client.RenewVaultKeyGrant(ctx, vaultID, name, cnf)
 					if err != nil {

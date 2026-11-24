@@ -916,6 +916,7 @@ a fingerprint, never the key.`,
 				// Assert nil = the human ceremony (wallet push, browser
 				// fallback), the same one `apps versions promote` drives.
 				RequireStepUp: target.RequireStepUp,
+				DisplayName:   appFriendlyName(ctx, client, appID),
 				Out:           cmd.ErrOrStderr(), Open: secrets.OpenBrowser,
 				GenerationSize: secrets.AppDEKGenerationSize,
 			})
@@ -1399,14 +1400,7 @@ func promoteWithStepUp(cmd *cobra.Command, env *Env, client *api.Client, appID, 
 // appFriendlyName returns the name an approver recognises (the display title,
 // else the app name), or "" when the lookup fails.
 func appFriendlyName(ctx context.Context, client *api.Client, appID string) string {
-	app, err := client.GetApp(ctx, appID)
-	if err != nil {
-		return ""
-	}
-	if name := output.Str(app, "display_name"); name != "" {
-		return name
-	}
-	return output.Str(app, "name")
+	return client.AppFriendlyName(ctx, appID)
 }
 
 // promoteApprovalContext builds the advisory display context (app friendly name

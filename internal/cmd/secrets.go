@@ -228,7 +228,7 @@ a fingerprint, never the key.`,
 				// Assert nil = the human ceremony: /begin pushes the owner's
 				// wallet (where a Privasys Wallet credential lives), with the
 				// IdP page as the system-passkey fallback.
-				RequireStepUp: true,
+				RequireStepUp: true, DisplayName: "secret " + args[0],
 				Out:           cmd.ErrOrStderr(), Open: secrets.OpenBrowser,
 			})
 			if err != nil {

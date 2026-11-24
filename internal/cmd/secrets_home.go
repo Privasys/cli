@@ -170,7 +170,8 @@ An expired secret cannot be renewed: its value can no longer be exported.`,
 				Issuer: s.env.Cfg.Issuer, Bearer: homeTok, Audience: home.OIDCAudience, Sub: s.sub, Handle: handle,
 				Endpoints: home.Endpoints, Threshold: threshold, MRENCLAVE: home.MRENCLAVE,
 				AttServer: home.AttestationServer, AttToken: s.attTok,
-				RequireStepUp: true, Out: cmd.ErrOrStderr(), Open: secrets.OpenBrowser,
+				RequireStepUp: true, DisplayName: "secret " + args[0],
+				Out: cmd.ErrOrStderr(), Open: secrets.OpenBrowser,
 			})
 			if err != nil {
 				return err

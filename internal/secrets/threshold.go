@@ -100,7 +100,11 @@ type ThresholdRenewParams struct {
 	// on the active constellation: returns the grant, the handle, the target
 	// and the key's current home.
 	Mint func(ctx context.Context, cnf string) (grant, handle string, target, home RenewConstellation, err error)
-	Out  io.Writer
+	// DisplayName names the key on the owner's approval, e.g. "key card1 in
+	// vault wallet-card-test": owner-given names only, as it travels in the
+	// wallet push.
+	DisplayName string
+	Out         io.Writer
 	Open BrowserOpener
 }
 
@@ -189,6 +193,7 @@ func RenewThresholdKeyInVault(ctx context.Context, p ThresholdRenewParams) (*Thr
 				"summary": fmt.Sprintf("Renew this threshold Ed25519 key onto %d vaults (any %d sign) of %s, "+
 					"MRENCLAVE %s. Its public key does not change.", n, t, build, strings.ToLower(target.MRENCLAVE)),
 			}
+			actx.name(p.DisplayName)
 			out := p.Out
 			if out == nil {
 				out = os.Stderr

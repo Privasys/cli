@@ -280,6 +280,10 @@ type ExportParams struct {
 	AttServer     string   // attestation server verify endpoint
 	AttToken      string   // aud=attestation-server bearer for quote verification
 	RequireStepUp bool     // when set, drive an operation-bound WebAuthn step-up
+	// DisplayName names the key on the owner's approval, e.g. "secret home-1"
+	// or "app my-app". It travels in the wallet push, so it holds only names
+	// the owner gave, never a subject or key material.
+	DisplayName string
 	// Assert produces the WebAuthn step-up assertion in-process (the E2E
 	// software-authenticator path). Leave nil for a human owner: the step-up
 	// then runs the same wallet-push ceremony `apps versions promote` uses,

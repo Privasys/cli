@@ -60,6 +60,7 @@ func Export(ctx context.Context, p ExportParams) ([]byte, *ExportResult, error) 
 			return nil, nil, fmt.Errorf("get key info: %w", err)
 		}
 		actx := approvalContext{"key_type": string(info.KeyType)}
+		actx.name(p.DisplayName)
 		var stepTok string
 		if p.Assert != nil {
 			// In-process authenticator (E2E).

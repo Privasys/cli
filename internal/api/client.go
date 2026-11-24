@@ -77,6 +77,36 @@ func (c *Client) GetApp(ctx context.Context, id string) (map[string]interface{},
 	return unwrapObject(raw, "app")
 }
 
+// AppFriendlyName returns the name an approver recognises (the display title,
+// else the app name), or "" when the lookup fails.
+func (c *Client) AppFriendlyName(ctx context.Context, id string) string {
+	app, err := c.GetApp(ctx, id)
+	if err != nil {
+		return ""
+	}
+	for _, k := range []string{"display_name", "name"} {
+		if s, ok := app[k].(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// KeyVaultName returns a key vault's name, or "" when the lookup fails.
+func (c *Client) KeyVaultName(ctx context.Context, id string) string {
+	vaults, err := c.ListVaults(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, v := range vaults {
+		if vid, _ := v["id"].(string); vid == id {
+			name, _ := v["name"].(string)
+			return name
+		}
+	}
+	return ""
+}
+
 // unwrapList accepts either a bare JSON array or an object wrapping the array
 // under a known key (e.g. {"apps":[...]} or {"data":[...]}).
 func unwrapList(raw json.RawMessage, key string) ([]map[string]interface{}, error) {

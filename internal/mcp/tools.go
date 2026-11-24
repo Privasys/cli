@@ -218,7 +218,7 @@ func (s *Server) registerTools() {
 					Handle:    "users/" + sub + "/" + name,
 					Endpoints: endpoints, Threshold: 2,
 					MRENCLAVE: mrenclave, AttServer: attServer, AttToken: attTok,
-					RequireStepUp: true,
+					RequireStepUp: true, DisplayName: "secret " + name,
 					// The agent cannot approve WebAuthn step-up; the human does it in
 					// their wallet. Surfaced as a clear instruction until the wallet
 					// Vault-approvals relay lands.
@@ -362,6 +362,7 @@ func (s *Server) registerTools() {
 					Endpoints: target.Endpoints, Threshold: target.Threshold,
 					MRENCLAVE: target.MRENCLAVE, AttServer: target.AttestationServer, AttToken: attTok,
 					RequireStepUp:  target.RequireStepUp,
+					DisplayName:    d.Client.AppFriendlyName(ctx, appID),
 					GenerationSize: secrets.AppDEKGenerationSize,
 					Assert: func(context.Context, []byte) ([]byte, error) {
 						return nil, errors.New("export needs WebAuthn step-up: the owner must approve it in the Privasys Wallet under Vault approvals")
