@@ -6,6 +6,8 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -202,10 +204,32 @@ func accountLabel(ctx context.Context, c *api.Client) string {
 	view, err := c.GetAccount(ctx)
 	if err == nil {
 		if acc, ok := view["account"].(map[string]interface{}); ok {
-			if name, _ := acc["name"].(string); name != "" {
-				return fmt.Sprintf("%s (%s)", name, c.Account)
+			if name := safeAccountName(acc["name"]); name != "" {
+				return fmt.Sprintf("%q (%s)", name, c.Account)
 			}
 		}
 	}
 	return c.Account
+}
+
+// safeAccountName is an account's name fit to show a person or an agent: the
+// name is chosen by whoever administers that account, so control, format and
+// line-separator characters are dropped and it is cut to 64 characters. The
+// caller quotes it, so it cannot read as anything but a name.
+func safeAccountName(v interface{}) string {
+	name, _ := v.(string)
+	var b strings.Builder
+	n := 0
+	for _, r := range name {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Zl, unicode.Zp, unicode.Cf) {
+			continue
+		}
+		if n == 64 {
+			b.WriteRune('…')
+			break
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return strings.TrimSpace(b.String())
 }
