@@ -205,7 +205,9 @@ func (s *Server) registerTools() {
 				// The secret's home: after a vault roll it may be a
 				// constellation other than the active one.
 				audience := ""
-				if home, _, lerr := secrets.LocateSecret(ctx, d.Client, "users/"+sub+"/"+name, mcpVaultTokens(d), attTok); lerr == nil {
+				handle := "users/" + sub + "/" + name
+				if home, info, lerr := secrets.LocateSecret(ctx, d.Client, handle, mcpVaultTokens(d), attTok); lerr == nil {
+					handle = info.Handle // the newest generation
 					endpoints, mrenclave, attServer = home.Endpoints, home.MRENCLAVE, home.AttestationServer
 					audience = home.OIDCAudience
 				}
@@ -215,7 +217,7 @@ func (s *Server) registerTools() {
 				}
 				material, res, err := secrets.Export(ctx, secrets.ExportParams{
 					Issuer: d.Issuer, Bearer: vaultTok, Audience: audience, Sub: sub,
-					Handle:    "users/" + sub + "/" + name,
+					Handle:    handle,
 					Endpoints: endpoints, Threshold: 2,
 					MRENCLAVE: mrenclave, AttServer: attServer, AttToken: attTok,
 					RequireStepUp: true, DisplayName: "secret " + name,

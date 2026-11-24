@@ -210,7 +210,8 @@ a fingerprint, never the key.`,
 			if len(endpoints) == 0 && mrenclave == "" && attServer == "" {
 				// The secret's home: after a vault roll it may be a constellation
 				// other than the active one.
-				if home, _, lerr := secrets.LocateSecret(ctx, client, handle, vaultTokens(env), attTok); lerr == nil {
+				if home, info, lerr := secrets.LocateSecret(ctx, client, handle, vaultTokens(env), attTok); lerr == nil {
+					handle = info.Handle // the newest generation
 					endpoints, mrenclave, attServer = home.Endpoints, home.MRENCLAVE, home.AttestationServer
 					audience = home.OIDCAudience
 				}

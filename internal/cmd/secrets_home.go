@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/Privasys/enclave-vaults-client/go/vault"
 	"github.com/spf13/cobra"
 
 	"github.com/Privasys/cli/internal/api"
@@ -107,12 +108,12 @@ still need before it expires (privasys secrets renew).`,
 			}
 			onActive := active != nil && active.ID == dir.ID
 			out := map[string]any{
-				"handle": s.handle(args[0]), "constellation": dir.Name, "constellation_id": dir.ID,
+				"handle": info.Handle, "constellation": dir.Name, "constellation_id": dir.ID,
 				"on_active_constellation": onActive, "expires_at": info.ExpiresAt,
 			}
 			return output.Emit(s.env.Format, out, func() output.Table {
 				rows := [][]string{
-					{"handle", s.handle(args[0])},
+					{"handle", info.Handle},
 					{"constellation", fmt.Sprintf("%s (active: %t)", dir.Name, onActive)},
 					{"expires", expiryCell(info.ExpiresAt, time.Now())},
 				}
@@ -141,6 +142,12 @@ be deleted before the new one can take its name. If creating it again then
 fails, the value is written to <name>.rescue (0600) in the current directory
 so it is not lost; create it again from that file and delete the file.
 
+On vaults that bind approvals to their constellation, a secret is renewed into
+its next generation instead (<name>/v2, /v3, ...), which keeps its value and its
+policy; the previous generation is then deleted once you approve it in your
+wallet, or left to expire if you decline. Every command that takes the name
+finds the newest generation by itself.
+
 An expired secret cannot be renewed: its value can no longer be exported.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -167,7 +174,7 @@ An expired secret cannot be renewed: its value can no longer be exported.`,
 				return err
 			}
 			material, _, err := secrets.Export(ctx, secrets.ExportParams{
-				Issuer: s.env.Cfg.Issuer, Bearer: homeTok, Audience: home.OIDCAudience, Sub: s.sub, Handle: handle,
+				Issuer: s.env.Cfg.Issuer, Bearer: homeTok, Audience: home.OIDCAudience, Sub: s.sub, Handle: info.Handle,
 				Endpoints: home.Endpoints, Threshold: threshold, MRENCLAVE: home.MRENCLAVE,
 				AttServer: home.AttestationServer, AttToken: s.attTok,
 				RequireStepUp: true, DisplayName: "secret " + args[0],
@@ -190,6 +197,17 @@ An expired secret cannot be renewed: its value can no longer be exported.`,
 			}
 			if homeTok, err = auth.VaultTokenFor(ctx, s.env.Cfg.Issuer, home.OIDCAudience); err != nil {
 				return err
+			}
+			// A secret on binding v2 vaults is renewed into its next
+			// generation, and the previous one is deleted with the owner's
+			// approval. Others keep today's path.
+			binding, _, _, err := secrets.KeyApproval(ctx, secrets.KeyTarget{Handle: info.Handle, Endpoints: home.Endpoints,
+				MRENCLAVE: home.MRENCLAVE, AttServer: home.AttestationServer, AttToken: s.attTok, Bearer: homeTok}, vault.OpDeleteKey)
+			if err != nil {
+				return err
+			}
+			if binding == 2 {
+				return renewSecretV2(cmd, s, args[0], handle, info.Handle, info.ExpiresAt, material, threshold, home, active)
 			}
 			oldOp := secrets.VaultOpParams{
 				Handle: handle, Endpoints: home.Endpoints, MRENCLAVE: home.MRENCLAVE,
@@ -250,4 +268,88 @@ An expired secret cannot be renewed: its value can no longer be exported.`,
 	}
 	cmd.Flags().IntVar(&threshold, "threshold", 2, "Shamir threshold (k of n vaults)")
 	return cmd
+}
+
+// renewSecretV2 renews a secret held on binding v2 vaults: its next generation
+// takes the same value and the same policy, then the owner is asked once to
+// delete the previous generation. Declining leaves that one to expire.
+func renewSecretV2(cmd *cobra.Command, s *secretSession, name, base, old, oldExpires string, material []byte, threshold int, home, active *api.VaultDirectory) error {
+	ctx := cmd.Context()
+	sourceTok, err := auth.VaultTokenFor(ctx, s.env.Cfg.Issuer, home.OIDCAudience)
+	if err != nil {
+		return err
+	}
+	targetTok, err := auth.VaultTokenFor(ctx, s.env.Cfg.Issuer, active.OIDCAudience)
+	if err != nil {
+		return err
+	}
+	res, err := secrets.RenewV2(ctx, secrets.RenewV2Params{
+		Issuer: s.env.Cfg.Issuer, Bearer: s.tok, Sub: s.sub, Base: base, Old: old, OldGen: secrets.GenerationOf(base, old),
+		Material: material, Threshold: threshold, AttToken: s.attTok,
+		Source: home, Target: active, SourceToken: sourceTok, TargetToken: targetTok,
+	})
+	if err != nil {
+		return err
+	}
+	expires := time.Now().Add(secrets.UserKeyTTLSeconds * time.Second).UTC().Format(time.RFC3339)
+	if !s.env.Quiet {
+		output.Success(cmd.ErrOrStderr(), "Renewed %s as %s on %s (%d/%d vaults), expires %s",
+			name, res.Handle, active.Name, res.Created, res.Total, expiryCell(expires, time.Now()))
+	}
+
+	// The previous generation goes, with the owner's approval.
+	oldExpiry := "when its time runs out"
+	if oldExpires != "" {
+		oldExpiry = "on " + expiryCell(oldExpires, time.Now())
+	}
+	if err := s.refresh(ctx); err != nil {
+		return err
+	}
+	oldTok, err := auth.VaultTokenFor(ctx, s.env.Cfg.Issuer, home.OIDCAudience)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(cmd.ErrOrStderr(), "\nNow approve deleting the previous generation, %s.\n", old)
+	deletedOn, derr := secrets.DestroyKeyInVault(ctx, secrets.VaultOpParams{
+		Handle: old, Endpoints: home.Endpoints, MRENCLAVE: home.MRENCLAVE,
+		AttServer: home.AttestationServer, AttToken: s.attTok, OwnerToken: oldTok,
+		ApproveV2: secretApprover(cmd, s, home.OIDCAudience, name),
+	})
+	deleted := derr == nil && len(deletedOn) > 0
+	if !deleted && !s.env.Quiet {
+		why := "it was not deleted"
+		if derr != nil {
+			why = derr.Error()
+		}
+		fmt.Fprintf(cmd.ErrOrStderr(), "The previous generation %s is still on %s (%s); it expires %s.\n", old, home.Name, why, oldExpiry)
+	}
+	return output.Emit(s.env.Format, map[string]any{
+		"handle": res.Handle, "previous": old, "previous_deleted": deleted,
+		"constellation": active.Name, "constellation_id": active.ID, "vaults": res.Created, "expires_at": expires,
+	}, func() output.Table {
+		return output.Table{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
+			{"handle", res.Handle},
+			{"constellation", active.Name},
+			{"expires", expiryCell(expires, time.Now())},
+			{"previous", fmt.Sprintf("%s (deleted: %t)", old, deleted)},
+		}}
+	})
+}
+
+// secretApprover asks the owner for a binding v2 approval on one of their
+// secrets, named as they named it.
+func secretApprover(cmd *cobra.Command, s *secretSession, vaultAudience, name string) func(context.Context, secrets.ApprovalV2) (string, error) {
+	return func(ctx context.Context, a secrets.ApprovalV2) (string, error) {
+		audience, err := vaultApprovalAudience(vaultAudience)
+		if err != nil {
+			return "", err
+		}
+		bearer, err := auth.AccessToken(ctx, s.env.Cfg.Issuer)
+		if err != nil {
+			return "", err
+		}
+		a.Audience = audience
+		a.Context = map[string]string{"app_name": "secret " + name}
+		return secrets.RequestApprovalV2(ctx, s.env.Cfg.Issuer, bearer, a, secrets.OpenBrowser, cmd.ErrOrStderr())
+	}
 }

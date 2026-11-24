@@ -361,6 +361,9 @@ func GetPublicKeyInVault(ctx context.Context, p VaultOpParams) (*PublicKeyResult
 // leaf so the vault's cnf check passes. Returns once at least `Threshold`
 // vaults have accepted a share.
 func Create(ctx context.Context, p CreateParams) (*Result, error) {
+	if err := checkSecretName(p.Handle); err != nil {
+		return nil, err
+	}
 	if len(p.Endpoints) == 0 {
 		return nil, fmt.Errorf("no vault endpoints configured")
 	}

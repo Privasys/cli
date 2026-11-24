@@ -151,6 +151,8 @@ type PublicKeyResult struct {
 	// extends it; a long-lived key needs renewing before then.
 	ExpiresAt     string `json:"expires_at,omitempty"`
 	PolicyVersion uint32 `json:"policy_version"`
+	// Handle is the generation a lookup by name resolved (LocateSecret).
+	Handle string `json:"handle,omitempty"`
 }
 
 // ErrKeyNotFound: every vault reached answered that it holds no such key.
