@@ -135,7 +135,7 @@ func TestDuplicateGenerations(t *testing.T) {
 }
 
 func TestIgnoredGenerationsWarn(t *testing.T) {
-	if w := joinWarnings("", ignoredWarning([]string{"users/s/x/gen-2 on dev-v0.42.0"})); !strings.Contains(w, "gen-2 on dev-v0.42.0") {
+	if w := joinWarnings("", ignoredWarning([]genCandidate{{Handle: "users/s/x/gen-2", Gen: 2, Dir: &api.VaultDirectory{Name: "dev-v0.42.0"}}})); !strings.Contains(w, "gen-2 on dev-v0.42.0") {
 		t.Fatalf("warning: %q", w)
 	}
 	if ignoredWarning(nil) != "" || joinWarnings("", "") != "" {

@@ -97,7 +97,7 @@ type genCandidate struct {
 // CapabilityGenerations does not refuse a first creation of a gen-<n> handle,
 // so its generations n > 1 are left out and returned as ignored. listed is
 // false when no vault answered.
-func listGenerations(ctx context.Context, d *api.VaultDirectory, ownerTok, attTok, base string, now time.Time) (cands []genCandidate, ignored []string, listed bool) {
+func listGenerations(ctx context.Context, d *api.VaultDirectory, ownerTok, attTok, base string, now time.Time) (cands, ignored []genCandidate, listed bool) {
 	verify, err := verifyPolicy(d.MRENCLAVE, d.AttestationServer, attTok)
 	if err != nil {
 		return nil, nil, false
@@ -122,7 +122,7 @@ func listGenerations(ctx context.Context, d *api.VaultDirectory, ownerTok, attTo
 				continue
 			}
 			if n > 1 && !trusted {
-				ignored = append(ignored, k.Handle+" on "+d.Name)
+				ignored = append(ignored, genCandidate{Handle: k.Handle, Gen: n, Dir: d, Expires: k.ExpiresAt})
 				continue
 			}
 			cand := genCandidate{Handle: k.Handle, Gen: n, Dir: d, Expires: k.ExpiresAt}

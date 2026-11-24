@@ -4,7 +4,11 @@
 package cmd
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -18,13 +22,14 @@ func newSecretsRmCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rm <name>",
 		Short: "Delete a secret you own from the vaults (cannot be undone)",
-		Long: `Finds a secret you own on the vault constellations and destroys its material
-on every vault that holds it. This cannot be undone: export the secret first if
-you may need its value again.
+		Long: `Finds every copy of a secret you own, on every vault constellation and in
+every generation a renewal left, and destroys each one, newest first. This
+cannot be undone: export the secret first if you may need its value again.
 
-A secret whose policy asks for it is deleted only with your approval in the
-Privasys Wallet. When the secret has several generations, the newest one is
-deleted; older ones expire on their own.`,
+A copy whose policy asks for it is deleted only with your approval in the
+Privasys Wallet, one approval per copy. Declining one stops there; the copies
+not deleted stay on the vaults until they expire. At the end the vaults are
+asked again, and the command says whether anything of that name is still held.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := newSecretSession(cmd)
@@ -32,15 +37,25 @@ deleted; older ones expire on their own.`,
 				return err
 			}
 			ctx := cmd.Context()
-			home, info, err := secrets.LocateSecret(ctx, s.client, s.handle(args[0]), vaultTokens(s.env), s.attTok)
+			errOut := cmd.ErrOrStderr()
+			base := s.handle(args[0])
+			copies, unreachable, err := secrets.FindSecretCopies(ctx, s.client, base, vaultTokens(s.env), s.attTok)
 			if err != nil {
 				return err
 			}
-			if info.Warning != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+info.Warning)
+			if len(unreachable) > 0 {
+				fmt.Fprintf(errOut, "warning: %d constellation(s) did not answer and may still hold copies: %s\n",
+					len(unreachable), strings.Join(unreachable, ", "))
+			}
+			if len(copies) == 0 {
+				return fmt.Errorf("secret %s not found: nothing to delete", base)
+			}
+			fmt.Fprintf(errOut, "Copies of %s held on the vaults (deleted newest first):\n", args[0])
+			for _, c := range copies {
+				fmt.Fprintf(errOut, "  %s, expires %s\n", c.Where(), copyExpiry(c))
 			}
 			if !yes {
-				ok, err := confirm(cmd, s.env, fmt.Sprintf("Destroy %s on %s? This cannot be undone. [y/N] ", info.Handle, home.Name))
+				ok, err := confirm(cmd, s.env, fmt.Sprintf("Destroy these %d copies? This cannot be undone. [y/N] ", len(copies)))
 				if err != nil {
 					return err
 				}
@@ -48,32 +63,85 @@ deleted; older ones expire on their own.`,
 					return fmt.Errorf("nothing was deleted")
 				}
 			}
-			ownerTok, err := auth.VaultTokenFor(ctx, s.env.Cfg.Issuer, home.OIDCAudience)
-			if err != nil {
-				return err
-			}
-			deletedOn, err := secrets.DestroyKeyInVault(ctx, secrets.VaultOpParams{
-				Handle: info.Handle, Endpoints: home.Endpoints, MRENCLAVE: home.MRENCLAVE,
-				AttServer: home.AttestationServer, AttToken: s.attTok, OwnerToken: ownerTok,
-				ApproveV2: secretApprover(cmd, s, home.OIDCAudience, args[0]),
+			results, rmErr := secrets.RemoveSecretCopies(ctx, copies, func(ctx context.Context, c secrets.SecretCopy) error {
+				ownerTok, err := auth.VaultTokenFor(ctx, s.env.Cfg.Issuer, c.Dir.OIDCAudience)
+				if err != nil {
+					return err
+				}
+				deletedOn, err := secrets.DestroyKeyInVault(ctx, secrets.VaultOpParams{
+					Handle: c.Handle, Endpoints: c.Dir.Endpoints, MRENCLAVE: c.Dir.MRENCLAVE,
+					AttServer: c.Dir.AttestationServer, AttToken: s.attTok, OwnerToken: ownerTok,
+					ApproveV2: secretApprover(cmd, s, c.Dir.OIDCAudience, args[0]),
+				})
+				if err != nil {
+					return err
+				}
+				if len(deletedOn) == 0 {
+					return errors.New("no vault deleted it")
+				}
+				return nil
 			})
-			if err != nil {
-				return err
+
+			// What is left is what the vaults say now, not what was attempted.
+			left, leftUnreachable, findErr := secrets.FindSecretCopies(ctx, s.client, base, vaultTokens(s.env), s.attTok)
+			rows := make([][]string, 0, len(results))
+			out := make([]map[string]any, 0, len(results))
+			for _, r := range results {
+				state := "deleted"
+				switch {
+				case !r.Attempted:
+					state = "not attempted"
+				case r.Err != nil:
+					state = "NOT deleted: " + r.Err.Error()
+				}
+				rows = append(rows, []string{r.Copy.Where(), state})
+				out = append(out, map[string]any{"handle": r.Copy.Handle, "constellation": r.Copy.Dir.Name, "deleted": r.Deleted, "error": errString(r.Err)})
 			}
-			if !s.env.Quiet {
-				output.Success(cmd.ErrOrStderr(), "Deleted %s (%d/%d vaults)", info.Handle, len(deletedOn), len(home.Endpoints))
+			var verdict string
+			gone := false
+			switch {
+			case findErr != nil:
+				verdict = "could not check what is left: " + findErr.Error()
+			case len(left) > 0:
+				names := make([]string, len(left))
+				for i, c := range left {
+					names[i] = c.Where() + " (expires " + copyExpiry(c) + ")"
+				}
+				verdict = fmt.Sprintf("STILL HELD: %d copies: %s", len(left), strings.Join(names, "; "))
+			case len(leftUnreachable) > 0:
+				verdict = "no copy found, but these constellations did not answer: " + strings.Join(leftUnreachable, ", ")
+			default:
+				verdict = "nothing of that name is held on any vault"
+				gone = true
 			}
-			return output.Emit(s.env.Format, map[string]any{
-				"handle": info.Handle, "constellation": home.Name, "constellation_id": home.ID, "deleted_on": len(deletedOn),
-			}, func() output.Table {
-				return output.Table{Headers: []string{"FIELD", "VALUE"}, Rows: [][]string{
-					{"handle", info.Handle},
-					{"constellation", home.Name},
-					{"deleted on", fmt.Sprintf("%d of %d vaults", len(deletedOn), len(home.Endpoints))},
-				}}
-			})
+			fmt.Fprintln(errOut, verdict)
+			if eerr := output.Emit(s.env.Format, map[string]any{"name": args[0], "copies": out, "gone": gone, "result": verdict},
+				func() output.Table { return output.Table{Headers: []string{"COPY", "RESULT"}, Rows: rows} }); eerr != nil {
+				return eerr
+			}
+			if rmErr != nil {
+				return rmErr
+			}
+			if !gone {
+				return fmt.Errorf("secret %s is not fully deleted", args[0])
+			}
+			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "delete without an interactive confirmation")
 	return cmd
+}
+
+func copyExpiry(c secrets.SecretCopy) string {
+	if c.Expires == 0 {
+		return "at an unknown date"
+	}
+	return time.Unix(int64(c.Expires), 0).UTC().Format(time.RFC3339)
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

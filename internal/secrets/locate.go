@@ -38,7 +38,7 @@ func LocateSecret(ctx context.Context, dir Directory, handle string, tokenFor To
 		cons = []api.LiveConstellation{{}}
 	}
 	var cands []genCandidate
-	var ignored []string // generations on vaults that do not enforce them
+	var ignored []genCandidate // generations on vaults that do not enforce them
 	tokens := map[*api.VaultDirectory]string{}
 	var lastErr error
 	unreachable := []string{}
@@ -107,11 +107,15 @@ func LocateSecret(ctx context.Context, dir Directory, handle string, tokenFor To
 
 // ignoredWarning names generations found on vaults that do not enforce
 // generations, which a lookup never uses.
-func ignoredWarning(ignored []string) string {
+func ignoredWarning(ignored []genCandidate) string {
 	if len(ignored) == 0 {
 		return ""
 	}
-	return "not used, since their vaults do not guard generation names: " + strings.Join(ignored, ", ")
+	names := make([]string, len(ignored))
+	for i := range ignored {
+		names[i] = ignored[i].where()
+	}
+	return "not used, since their vaults do not guard generation names: " + strings.Join(names, ", ")
 }
 
 func joinWarnings(ws ...string) string {
