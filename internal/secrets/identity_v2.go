@@ -75,3 +75,12 @@ func ConstellationIdentities(ctx context.Context, endpoints []string, mrenclave,
 
 // BillingID is the vault's billing configuration id.
 func (p PinnedIdentity) BillingID() string { return p.id.BillingID }
+
+// memberIDs is the member id of each identity.
+func memberIDs(ids []PinnedIdentity) []string {
+	m := make([]string, len(ids))
+	for i, id := range ids {
+		m[i] = id.MemberID()
+	}
+	return m
+}

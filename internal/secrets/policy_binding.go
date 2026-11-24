@@ -70,6 +70,9 @@ func KeyApproval(ctx context.Context, t KeyTarget, op vault.Operation) (binding 
 	if err != nil {
 		return 0, nil, 0, err
 	}
+	// Every member holding the key is read: an approval binds one policy
+	// version, so members that disagree (a partial update) must be resolved
+	// before anything is approved.
 	var policy *vault.KeyPolicy
 	for _, ep := range t.Endpoints {
 		c, derr := vault.Dial(ctx, vaultReg(ep), vault.DialOptions{VaultPolicy: verify, AuthToken: staticToken(t.Bearer)})
@@ -78,9 +81,13 @@ func KeyApproval(ctx context.Context, t KeyTarget, op vault.Operation) (binding 
 		}
 		p, v, perr := c.GetPolicy(ctx, t.Handle)
 		c.Close()
-		if perr == nil {
+		if perr != nil {
+			continue
+		}
+		if policy == nil {
 			policy, policyVersion = &p, v
-			break
+		} else if v != policyVersion {
+			return 0, nil, 0, fmt.Errorf("the vaults hold %s at different policy versions (%d and %d): resolve that partial update first", t.Handle, policyVersion, v)
 		}
 	}
 	if policy == nil {

@@ -139,7 +139,27 @@ func DestroyKeyInVault(ctx context.Context, p VaultOpParams) (deletedOn []string
 	if verr != nil {
 		return nil, verr
 	}
-	opts := vault.DialOptions{AuthToken: staticToken(p.OwnerToken), VaultPolicy: verify}
+	// A key whose policy gates DeleteKey on binding v2 is deleted with the
+	// owner's v2 approval, the same token on every member.
+	tok := p.OwnerToken
+	binding, ids, policyVersion, err := KeyApproval(ctx, KeyTarget{Handle: p.Handle, Endpoints: p.Endpoints,
+		MRENCLAVE: p.MRENCLAVE, AttServer: p.AttServer, AttToken: p.AttToken, Bearer: p.OwnerToken}, vault.OpDeleteKey)
+	if err != nil {
+		return nil, err
+	}
+	if binding == 2 {
+		if p.ApproveV2 == nil {
+			return nil, fmt.Errorf("deleting %q needs the owner's approval in the Privasys Wallet", p.Handle)
+		}
+		if tok, err = p.ApproveV2(ctx, ApprovalV2{Operation: vault.BindDelete, Handle: p.Handle,
+			PolicyVersion: uint64(policyVersion), Identities: ids}); err != nil {
+			return nil, err
+		}
+	}
+	opts := vault.DialOptions{AuthToken: staticToken(tok), VaultPolicy: verify}
+	if binding == 2 {
+		opts.BindingMembers = memberIDs(ids)
+	}
 	var deleted []string
 	var lastErr error
 	for _, ep := range p.Endpoints {
@@ -349,6 +369,12 @@ func Create(ctx context.Context, p CreateParams) (*Result, error) {
 	}
 	if len(p.Secret) == 0 {
 		return nil, fmt.Errorf("empty secret material")
+	}
+
+	// Vaults that answer the identity call run a binding v2 build, which
+	// refuses a key whose owner operations ask for no approval.
+	if _, ierr := ConstellationIdentities(ctx, p.Endpoints, p.MRENCLAVE, p.AttServer, p.AttToken); ierr == nil {
+		p.bindingV2 = true
 	}
 
 	cert, cnf, err := generateClientCert(p.Sub)

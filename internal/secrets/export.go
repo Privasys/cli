@@ -43,6 +43,7 @@ func Export(ctx context.Context, p ExportParams) ([]byte, *ExportResult, error) 
 	// token (which also carries the owner sub, so it satisfies the owner
 	// principal AND the OidcStepUp condition in one token).
 	authTok := p.Bearer
+	var bindingMembers []string // set for a binding v2 approval
 	if p.RequireStepUp {
 		// Read the key's current policy_version (a read; the owner bearer
 		// suffices) so the step-up token binds the right version.
@@ -85,6 +86,7 @@ func Export(ctx context.Context, p ExportParams) ([]byte, *ExportResult, error) 
 			if out == nil {
 				out = os.Stderr
 			}
+			bindingMembers = memberIDs(ids)
 			stepTok, err = RequestApprovalV2(ctx, p.Issuer, p.Bearer, ApprovalV2{
 				Operation: vault.BindExport, Handle: p.Handle, PolicyVersion: uint64(info.PolicyVersion),
 				Identities: ids, Audience: p.Audience, Context: actx,
@@ -112,8 +114,9 @@ func Export(ctx context.Context, p ExportParams) ([]byte, *ExportResult, error) 
 	// generation-prefixed shares (the manager's KEK-rotation layout); user
 	// secrets are raw shares.
 	con := vault.NewStaticConstellation(p.Endpoints, vault.DialOptions{
-		VaultPolicy: verify,
-		AuthToken:   vault.StaticToken(authTok),
+		VaultPolicy:    verify,
+		AuthToken:      vault.StaticToken(authTok),
+		BindingMembers: bindingMembers,
 	})
 	var secret []byte
 	var results []vault.EndpointResult

@@ -4,6 +4,7 @@
 package secrets
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -14,7 +15,7 @@ import (
 )
 
 func TestUserKeyPolicyJSON(t *testing.T) {
-	raw := userKeyPolicyJSON("https://privasys.id", "user-1", true)
+	raw := userKeyPolicyJSON("https://privasys.id", "user-1", true, false)
 	var p map[string]interface{}
 	if err := json.Unmarshal(raw, &p); err != nil {
 		t.Fatalf("policy not valid JSON: %v", err)
@@ -53,7 +54,7 @@ func TestUserKeyPolicyJSON(t *testing.T) {
 
 	// A non-exportable policy must not grant ExportKey anywhere.
 	var p2 map[string]interface{}
-	_ = json.Unmarshal(userKeyPolicyJSON("https://privasys.id", "u", false), &p2)
+	_ = json.Unmarshal(userKeyPolicyJSON("https://privasys.id", "u", false, false), &p2)
 	for _, o := range p2["operations"].([]interface{}) {
 		for _, op := range o.(map[string]interface{})["ops"].([]interface{}) {
 			if op == "ExportKey" {
@@ -113,5 +114,47 @@ func TestRequestGrant(t *testing.T) {
 	}
 	if len(gotBody.Policy) == 0 {
 		t.Error("policy must be sent")
+	}
+}
+
+// On a v2 vault build, every owner operation asks for a bound step-up with
+// binding 2, so the vault's approval by default accepts the policy.
+func TestUserKeyPolicyOnV2(t *testing.T) {
+	var p struct {
+		Operations []struct {
+			Ops      []string `json:"ops"`
+			Requires []struct {
+				OidcStepUp *struct {
+					RequiredAmr    []string `json:"required_amr"`
+					OperationBound bool     `json:"operation_bound"`
+					Binding        int      `json:"binding"`
+				} `json:"OidcStepUp"`
+			} `json:"requires"`
+		} `json:"operations"`
+	}
+	if err := json.Unmarshal(userKeyPolicyJSON("https://privasys.id", "u", true, true), &p); err != nil {
+		t.Fatal(err)
+	}
+	gated := map[string]bool{}
+	for _, r := range p.Operations {
+		if len(r.Requires) != 1 || r.Requires[0].OidcStepUp == nil {
+			t.Fatalf("rule %v asks for no step-up", r.Ops)
+		}
+		s := r.Requires[0].OidcStepUp
+		if s.Binding != 2 || !s.OperationBound || len(s.RequiredAmr) != 1 || s.RequiredAmr[0] != "webauthn" {
+			t.Fatalf("rule %v: %+v", r.Ops, s)
+		}
+		for _, op := range r.Ops {
+			gated[op] = true
+		}
+	}
+	for _, op := range []string{"DeleteKey", "UpdatePolicy", "ExportKey"} {
+		if !gated[op] {
+			t.Errorf("%s is not gated", op)
+		}
+	}
+	// v1 policies stay as they were: no binding field anywhere.
+	if raw := userKeyPolicyJSON("https://privasys.id", "u", true, false); bytes.Contains(raw, []byte("binding")) {
+		t.Errorf("a v1 policy names a binding: %s", raw)
 	}
 }

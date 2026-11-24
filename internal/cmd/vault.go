@@ -461,7 +461,26 @@ func vaultKeyAddressing(ctx context.Context, cmd *cobra.Command, env *Env, clien
 		AttServer:  dir.AttestationServer,
 		AttToken:   attTok,
 		OwnerToken: ownerTok,
+		ApproveV2:  vaultKeyApprover(cmd, env, client, dir.OIDCAudience, vaultID, name),
 	}, nil
+}
+
+// vaultKeyApprover asks the owner for a binding v2 approval on a vault key,
+// named on the wallet as the owner named it, for the audience its vaults accept.
+func vaultKeyApprover(cmd *cobra.Command, env *Env, client *api.Client, vaultAudience, vaultID, name string) func(context.Context, secrets.ApprovalV2) (string, error) {
+	return func(ctx context.Context, a secrets.ApprovalV2) (string, error) {
+		audience, err := vaultApprovalAudience(vaultAudience)
+		if err != nil {
+			return "", err
+		}
+		bearer, err := auth.AccessToken(ctx, env.Cfg.Issuer)
+		if err != nil {
+			return "", err
+		}
+		a.Audience = audience
+		a.Context = map[string]string{"app_name": vaultKeyDisplayName(ctx, client, vaultID, name)}
+		return secrets.RequestApprovalV2(ctx, env.Cfg.Issuer, bearer, a, secrets.OpenBrowser, cmd.ErrOrStderr())
+	}
 }
 
 func newVaultKeySignCmd() *cobra.Command {

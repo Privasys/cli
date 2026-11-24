@@ -78,6 +78,9 @@ type CreateParams struct {
 	MRENCLAVE  string   // expected vault MRENCLAVE (hex)
 	AttServer  string   // attestation server verify endpoint
 	AttToken   string   // aud=attestation-server bearer for quote verification
+
+	// bindingV2 is set by Create when the vaults run a binding v2 build.
+	bindingV2 bool
 }
 
 // VaultAddressing is the constellation a vault key is created on, returned by
@@ -126,6 +129,10 @@ type VaultOpParams struct {
 	AttServer  string   // attestation server verify endpoint
 	AttToken   string   // aud=attestation-server bearer for quote verification
 	OwnerToken string   // the owner's OIDC bearer (aud = the vault audience)
+	// ApproveV2 asks the owner for a binding v2 approval and returns its token,
+	// for an operation the key's policy gates on v2. Nil: such an operation is
+	// refused before anything is sent.
+	ApproveV2 func(ctx context.Context, a ApprovalV2) (string, error)
 }
 
 // SignResult is an in-enclave signature (the private key never left the vault).
@@ -222,26 +229,31 @@ const stepUpFreshSeconds = 300
 // owner bearer alone cannot export — the owner must additionally prove a fresh
 // wallet assertion bound to this exact export. Hand-built (no SDK import) so
 // this stays in the plain-Go path.
-func userKeyPolicyJSON(issuer, sub string, exportable bool) json.RawMessage {
-	operations := []interface{}{
-		map[string]interface{}{
-			"ops":        []string{"DeleteKey", "UpdatePolicy"},
-			"principals": []string{"Owner"},
-		},
+func userKeyPolicyJSON(issuer, sub string, exportable, v2 bool) json.RawMessage {
+	stepUp := map[string]interface{}{
+		"required_amr":      []string{"webauthn"},
+		"operation_bound":   true,
+		"fresh_for_seconds": stepUpFreshSeconds,
 	}
+	if v2 {
+		// On a v2 vault build, approval by default: every owner operation is
+		// gated on a bound step-up naming the constellation's members.
+		stepUp["binding"] = 2
+	}
+	requires := []interface{}{map[string]interface{}{"OidcStepUp": stepUp}}
+	manage := map[string]interface{}{
+		"ops":        []string{"DeleteKey", "UpdatePolicy"},
+		"principals": []string{"Owner"},
+	}
+	if v2 {
+		manage["requires"] = requires
+	}
+	operations := []interface{}{manage}
 	if exportable {
 		operations = append(operations, map[string]interface{}{
 			"ops":        []string{"ExportKey"},
 			"principals": []string{"Owner"},
-			"requires": []interface{}{
-				map[string]interface{}{
-					"OidcStepUp": map[string]interface{}{
-						"required_amr":      []string{"webauthn"},
-						"operation_bound":   true,
-						"fresh_for_seconds": stepUpFreshSeconds,
-					},
-				},
-			},
+			"requires":   requires,
 		})
 	}
 	policy := map[string]interface{}{
@@ -329,7 +341,7 @@ func requestGrant(ctx context.Context, p CreateParams, cnf string) (string, erro
 		Scope:      "users/" + p.Sub,
 		KeyType:    "RawShare",
 		Exportable: p.Exportable,
-		Policy:     userKeyPolicyJSON(p.Issuer, p.Sub, p.Exportable),
+		Policy:     userKeyPolicyJSON(p.Issuer, p.Sub, p.Exportable, p.bindingV2),
 		CnfX5tS256: cnf,
 		TTLSeconds: 120,
 	})
