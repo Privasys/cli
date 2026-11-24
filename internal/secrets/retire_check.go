@@ -44,12 +44,13 @@ func CheckRetireChange(current, proposed json.RawMessage, digest string) error {
 	if err != nil {
 		return fmt.Errorf("the key's current policy: %w", err)
 	}
-	// Tees are referred to by index ({"Tee": n}). Removing one would shift
-	// what such a reference names, so a policy holding one is refused.
-	if hasTeeIndexRef(doc) {
-		return refuse("the key's policy refers to a TEE by position, which removing one would change")
-	}
 	root, _ := doc.(map[string]any)
+	// Tees are referred to by index ({"Tee": n}), which the control plane
+	// renumbers only in operations[].principals. One anywhere else would
+	// change meaning when a tee is removed, so it is refused.
+	if teeRefOutsideRules(root) {
+		return refuse("the key's policy refers to a TEE by position outside its operation rules")
+	}
 	principals, _ := root["principals"].(map[string]any)
 	tees, _ := principals["tees"].([]any)
 	idx := -1
@@ -69,6 +70,9 @@ func CheckRetireChange(current, proposed json.RawMessage, digest string) error {
 	kept = append(kept, tees[:idx]...)
 	kept = append(kept, tees[idx+1:]...)
 	principals["tees"] = kept
+	if ops, ok := root["operations"].([]any); ok {
+		root["operations"] = renumberTeeRefs(ops, idx)
+	}
 	expected, err := json.Marshal(root)
 	if err != nil {
 		return err
@@ -131,6 +135,95 @@ func hasTeeIndexRef(v any) bool {
 		for _, c := range t {
 			if hasTeeIndexRef(c) {
 				return true
+			}
+		}
+	}
+	return false
+}
+
+// teeIndex is n when p is a {"Tee": n} reference.
+func teeIndex(p any) (int64, bool) {
+	m, ok := p.(map[string]any)
+	if !ok || len(m) != 1 {
+		return 0, false
+	}
+	n, ok := m["Tee"].(json.Number)
+	if !ok {
+		return 0, false
+	}
+	i, err := n.Int64()
+	return i, err == nil
+}
+
+// renumberTeeRefs is what the control plane's retirePolicy does to the rules
+// when the tee at removed goes: a {"Tee": i} above it becomes i-1, one naming
+// it is dropped, and a rule left naming nobody is dropped.
+func renumberTeeRefs(rules []any, removed int) []any {
+	out := make([]any, 0, len(rules))
+	for _, r := range rules {
+		rule, ok := r.(map[string]any)
+		if !ok {
+			out = append(out, r)
+			continue
+		}
+		// A null or missing principals list is an empty one, as in the
+		// control plane's typed rule, and the rule is dropped like any rule
+		// left naming nobody.
+		ps, ok := rule["principals"].([]any)
+		if !ok && rule["principals"] != nil {
+			out = append(out, r)
+			continue
+		}
+		kept := make([]any, 0, len(ps))
+		for _, p := range ps {
+			if i, isTee := teeIndex(p); isTee {
+				if i == int64(removed) {
+					continue
+				}
+				if i > int64(removed) {
+					p = map[string]any{"Tee": json.Number(fmt.Sprint(i - 1))}
+				}
+			}
+			kept = append(kept, p)
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		rule["principals"] = kept
+		out = append(out, rule)
+	}
+	return out
+}
+
+// teeRefOutsideRules reports a {"Tee": n} reference anywhere but in an
+// operation rule's principals.
+func teeRefOutsideRules(root map[string]any) bool {
+	for k, v := range root {
+		if k != "operations" {
+			if hasTeeIndexRef(v) {
+				return true
+			}
+			continue
+		}
+		rules, ok := v.([]any)
+		if !ok {
+			if hasTeeIndexRef(v) {
+				return true
+			}
+			continue
+		}
+		for _, r := range rules {
+			rule, ok := r.(map[string]any)
+			if !ok {
+				if hasTeeIndexRef(r) {
+					return true
+				}
+				continue
+			}
+			for rk, rv := range rule {
+				if rk != "principals" && hasTeeIndexRef(rv) {
+					return true
+				}
 			}
 		}
 	}
