@@ -105,7 +105,17 @@ func apiClient(cmd *cobra.Command, env *Env) (*api.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return api.New(env.Cfg.Endpoint, token), nil
+	return withVaultBearer(api.New(env.Cfg.Endpoint, token), env.Cfg.Issuer), nil
+}
+
+// withVaultBearer lets the control plane reach the vaults for a platform whose
+// audience is not the vaults' (the test platform): it attaches a token for the
+// vaults' audience on the routes that act on them. Production needs none.
+func withVaultBearer(c *api.Client, issuer string) *api.Client {
+	if auth.CurrentPlatformAudience() != auth.VaultAudience {
+		c.SetVaultBearer(func(ctx context.Context) (string, error) { return auth.VaultBearer(ctx, issuer) })
+	}
+	return c
 }
 
 func newAppsListCmd() *cobra.Command {

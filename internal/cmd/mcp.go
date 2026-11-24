@@ -34,7 +34,7 @@ func newMcpCmd() *cobra.Command {
 				d := mcp.Deps{Issuer: env.Cfg.Issuer, Endpoint: env.Cfg.Endpoint}
 				if token, err := auth.AccessToken(ctx, env.Cfg.Issuer); err == nil {
 					d.Token = token
-					d.Client = api.New(env.Cfg.Endpoint, token)
+					d.Client = withVaultBearer(api.New(env.Cfg.Endpoint, token), env.Cfg.Issuer)
 					d.Authed = true
 				}
 				return d, nil

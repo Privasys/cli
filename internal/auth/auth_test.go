@@ -253,3 +253,31 @@ func TestAccessTokenForTheTestAudience(t *testing.T) {
 		t.Errorf("production audience: %q, %v", tok, err)
 	}
 }
+
+// The vaults' token is the session's production-audience token, and only on the
+// test platform; production and a pinned PRIVASYS_ACCESS_TOKEN send none.
+func TestVaultBearer(t *testing.T) {
+	keyring.MockInit()
+	t.Setenv("PRIVASYS_CONFIG_DIR", t.TempDir())
+	t.Setenv("PRIVASYS_ACCESS_TOKEN", "")
+	t.Setenv("PRIVASYS_SERVICE_KEY", "")
+	const issuer = "https://issuer.invalid"
+	if err := Save(&Credential{Issuer: issuer, AccessToken: "prod-token",
+		AccessExpiresAt: time.Now().Add(time.Hour), RefreshToken: "rt"}); err != nil {
+		t.Fatal(err)
+	}
+	defer SetPlatformAudience("")
+
+	SetPlatformAudience("")
+	if tok, err := VaultBearer(context.Background(), issuer); tok != "" || err != nil {
+		t.Errorf("production: %q, %v", tok, err)
+	}
+	SetPlatformAudience("privasys-platform-test")
+	if tok, err := VaultBearer(context.Background(), issuer); tok != "prod-token" || err != nil {
+		t.Errorf("test platform: %q, %v", tok, err)
+	}
+	t.Setenv("PRIVASYS_ACCESS_TOKEN", "pinned")
+	if tok, _ := VaultBearer(context.Background(), issuer); tok != "" {
+		t.Errorf("a pinned token: %q", tok)
+	}
+}
