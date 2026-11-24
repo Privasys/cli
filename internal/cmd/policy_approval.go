@@ -139,9 +139,14 @@ func approvePolicyChange(cmd *cobra.Command, env *Env, client *api.Client, appID
 	if err != nil {
 		return "", err
 	}
-	actx := map[string]string{"app_id": appID, "change": what}
+	// What the wallet shows: what the change does, and the kind of key, read
+	// from the key's own vaults.
+	actx := map[string]string{"app_id": appID, "change": what, "summary": what}
 	if name := appFriendlyName(ctx, client, appID); name != "" {
 		actx["app_name"] = name
+	}
+	if info, ierr := secrets.KeyInfoAt(ctx, dir, vaultTok, attTok, key.Handle); ierr == nil && info.KeyType != "" {
+		actx["key_type"] = string(info.KeyType)
 	}
 	approval, err := secrets.UpdatePolicyApproval(pa.Handle, pa.PolicyVersion, ids, pa.NewPolicy, current, audience, actx)
 	if err != nil {

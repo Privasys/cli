@@ -1196,7 +1196,8 @@ remaining measurement cannot be retired either (it would make the key unusable).
 			if pa, need := api.PolicyApprovalFrom(err); need {
 				// The key's vaults change its policy only with the owner's
 				// approval of the exact new policy.
-				tok, aerr := approvePolicyChange(cmd, env, client, appID, pa, "retire measurement "+digest,
+				tok, aerr := approvePolicyChange(cmd, env, client, appID, pa,
+					"Stop releasing this key to the build with workload digest "+truncHex(digest),
 					func(ctx context.Context, current, proposed json.RawMessage, canon secrets.Canonicaliser) error {
 						return secrets.CheckRetireChange(ctx, current, proposed, digest, canon)
 					})

@@ -192,3 +192,9 @@ func keyInfoAt(ctx context.Context, d *api.VaultDirectory, ownerTok, attTok, han
 	}
 	return first, nil
 }
+
+// KeyInfoAt reads a key's public metadata from every vault of d over pinned
+// RA-TLS; they must agree on its type and exportability.
+func KeyInfoAt(ctx context.Context, d *api.VaultDirectory, ownerTok, attTok, handle string) (*vault.KeyInfo, error) {
+	return keyInfoAt(ctx, d, ownerTok, attTok, handle)
+}
