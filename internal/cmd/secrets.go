@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -127,6 +128,11 @@ Renew one you still need before then with 'privasys secrets renew'.`,
 				Secret: secret, Exportable: exportable, Endpoints: endpoints,
 				Threshold: threshold, MRENCLAVE: mrenclave, AttServer: attServer, AttToken: attTok,
 			})
+			if err != nil && strings.Contains(err.Error(), "key deleted") {
+				// The vaults keep a deleted secret's name until its original
+				// expiry (formats §9.3).
+				return fmt.Errorf("a secret named %s was deleted, and the vaults keep its name until the date it would have expired; choose another name (%w)", args[0], err)
+			}
 			if err != nil {
 				return err
 			}

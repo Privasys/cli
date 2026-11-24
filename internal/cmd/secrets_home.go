@@ -215,6 +215,20 @@ An expired secret cannot be renewed: its value can no longer be exported.`,
 			if binding == 2 {
 				return renewSecretV2(cmd, s, args[0], handle, info.Handle, info.ExpiresAt, material, threshold, home, active)
 			}
+			// On the same constellation the old path deletes the name and
+			// creates it again. Vaults that keep a deleted key's name until
+			// its expiry (formats §9.3) refuse that re-creation, so where
+			// every member guards generations the secret moves to its next
+			// generation instead; only older builds keep the old path.
+			if home.ID == active.ID {
+				ids, ierr := secrets.ConstellationIdentities(ctx, home.Endpoints, home.MRENCLAVE, home.AttestationServer, s.attTok)
+				if ierr != nil {
+					return ierr
+				}
+				if allHave(ids, vault.CapabilityGenerations) {
+					return renewSecretV2(cmd, s, args[0], handle, info.Handle, info.ExpiresAt, material, threshold, home, active)
+				}
+			}
 			oldOp := secrets.VaultOpParams{
 				Handle: handle, Endpoints: home.Endpoints, MRENCLAVE: home.MRENCLAVE,
 				AttServer: home.AttestationServer, AttToken: s.attTok, OwnerToken: homeTok,
@@ -315,7 +329,7 @@ func renewSecretV2(cmd *cobra.Command, s *secretSession, name, base, old, oldExp
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "\nNow approve deleting the previous generation, %s.\n", old)
+	fmt.Fprintf(cmd.ErrOrStderr(), "\nDeleting the previous generation, %s (approve it in the Privasys Wallet if asked).\n", old)
 	deletedOn, derr := secrets.DestroyKeyInVault(ctx, secrets.VaultOpParams{
 		Handle: old, Endpoints: home.Endpoints, MRENCLAVE: home.MRENCLAVE,
 		AttServer: home.AttestationServer, AttToken: s.attTok, OwnerToken: oldTok,
@@ -358,4 +372,17 @@ func secretApprover(cmd *cobra.Command, s *secretSession, vaultAudience, name st
 		a.Context = map[string]string{"app_name": "secret " + name}
 		return secrets.RequestApprovalV2(ctx, s.env.Cfg.Issuer, bearer, a, secrets.OpenBrowser, cmd.ErrOrStderr())
 	}
+}
+
+// allHave says every identity advertises capability.
+func allHave(ids []secrets.PinnedIdentity, capability string) bool {
+	if len(ids) == 0 {
+		return false
+	}
+	for _, id := range ids {
+		if !id.Has(capability) {
+			return false
+		}
+	}
+	return true
 }
