@@ -6,6 +6,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	qrcode "github.com/skip2/go-qrcode"
@@ -314,15 +315,22 @@ func newAuthListCmd() *cobra.Command {
 				listed = append(listed, summarizeCredential(c))
 			}
 			return output.Emit(env.Format, listed, func() output.Table {
-				rows := make([][]string, 0, len(creds))
-				for _, c := range creds {
-					kind := "wallet"
-					if c.IsServiceKeyAcc {
-						kind = "service-account"
+				// One sign-in per platform: the platform and a fingerprint
+				// tell the rows apart (never a token's value).
+				rows := make([][]string, 0, len(listed))
+				for _, s := range listed {
+					platform := s.Platform
+					if platform == "" {
+						platform = "(not recorded)"
 					}
-					rows = append(rows, []string{c.Issuer, c.Subject, kind})
+					expires := ""
+					if s.AccessExpiresAt != nil {
+						expires = s.AccessExpiresAt.UTC().Format("2006-01-02 15:04Z")
+					}
+					rows = append(rows, []string{platform, s.Subject, s.Type, s.AccessToken, expires, s.Issuer})
 				}
-				return output.Table{Headers: []string{"ISSUER", "SUBJECT", "TYPE"}, Rows: rows}
+				sort.Slice(rows, func(i, j int) bool { return rows[i][0] < rows[j][0] })
+				return output.Table{Headers: []string{"PLATFORM", "SUBJECT", "TYPE", "TOKEN FINGERPRINT", "ACCESS EXPIRES", "ISSUER"}, Rows: rows}
 			})
 		},
 	}
