@@ -377,7 +377,7 @@ func platformTools() []tool {
 		},
 		{
 			Name:        "apps_retire_measurement",
-			Description: "Retire a measurement so that code identity can no longer unlock the app's data. NEVER retire the measurement the app is currently running: it would lock the live app out of its own volume. Check apps_measurements first and confirm with the human.",
+			Description: "Retire a measurement so that code identity can no longer unlock the app's data. NEVER retire the measurement the app is currently running: it would lock the live app out of its own volume. Check apps_measurements first and confirm with the human. On a key whose vaults require the owner's approval for every policy change, this tool refuses and names the CLI command: the owner runs it and approves in the Privasys Wallet.",
 			Schema: obj(map[string]interface{}{
 				"app_id": strProp("the app id"),
 				"digest": strProp("the measurement digest to retire (hex, from apps_measurements)"),

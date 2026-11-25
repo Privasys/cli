@@ -937,7 +937,7 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "apps_versions",
-			Description: "List an app's versions with their ids, the latest last. Deploy, stage and promote take a version id from here and default to the latest.",
+			Description: "List an app's versions with their ids and version numbers, newest first. Deploy, stage and promote take a version id from here; without one they use the newest (the highest version number). Pass the id explicitly when it matters which version runs.",
 			Schema:      obj(map[string]interface{}{"app_id": strProp("the app id")}, "app_id"),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
 				id, err := requireStr(args, "app_id")
@@ -1234,7 +1234,7 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "apps_rotate_key",
-			Description: "Rotate a vault-backed app's data encryption key (key hygiene, NOT an upgrade). The app keeps running and data is never re-encrypted: the platform provisions a new key generation, re-keys the running volume online, advances the key handle, and retires the old generation. Owner-only. Surface the resulting old→new key handles to a human; the app must be running on the target enclave.",
+			Description: "Rotate a vault-backed app's data encryption key (key hygiene, NOT an upgrade). The app keeps running and data is never re-encrypted: the platform provisions a new key generation, re-keys the running volume online, advances the key handle, and retires the old generation. Owner-only. Surface the resulting old→new key handles to a human; the app must be running on the target enclave. On a key whose vaults require the owner's approval, the answer carries delete_approval and a 'next' note: deleting the old key needs the owner's tap in the Privasys Wallet, which you cannot give, so ask them to run `privasys apps rotate-key` in a terminal, or leave the old key to expire.",
 			Schema: obj(map[string]interface{}{
 				"app_id":  strProp("the app id"),
 				"version": strProp("the running version id (default: the version the app's active deployment runs)"),
@@ -1308,7 +1308,7 @@ func (s *Server) registerTools() {
 		},
 		{
 			Name:        "apps_migrate_constellation",
-			Description: "Migrate a vault-backed app's data key to a different vault constellation (advanced ops, e.g. region change). Owner-only. Surface the target to a human before running.",
+			Description: "Migrate a vault-backed app's data key to a different vault constellation (advanced ops, e.g. region change). Owner-only. Surface the target to a human before running. As with apps_rotate_key, deleting the old key afterwards may need the owner's wallet approval (see the answer's 'next' note).",
 			Schema: obj(map[string]interface{}{
 				"app_id": strProp("the app id"),
 				"target": strProp("the target constellation id"),

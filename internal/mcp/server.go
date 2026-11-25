@@ -17,8 +17,26 @@ import (
 	"github.com/Privasys/cli/internal/api"
 )
 
-// protocolVersion is the MCP revision this server implements.
-const protocolVersion = "2024-11-05"
+// protocolVersion is the newest MCP revision this server implements; it is
+// what a client that asks for another revision is offered.
+const protocolVersion = "2025-06-18"
+
+// supportedVersions are the revisions this server speaks. Tool annotations
+// (title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint) exist
+// from 2025-03-26; they are sent to every client, and older ones ignore them.
+var supportedVersions = map[string]bool{"2025-06-18": true, "2025-03-26": true, "2024-11-05": true}
+
+// negotiateVersion answers initialize: the client's requested revision when
+// this server speaks it, else the newest it does (the client then decides).
+func negotiateVersion(params json.RawMessage) string {
+	var p struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if json.Unmarshal(params, &p) == nil && supportedVersions[p.ProtocolVersion] {
+		return p.ProtocolVersion
+	}
+	return protocolVersion
+}
 
 // Deps is the per-call context a tool handler needs. It is rebuilt per call so
 // tokens refresh transparently. Issuer/Endpoint are always populated; Client +
@@ -150,7 +168,7 @@ func (s *Server) dispatch(ctx context.Context, req *rpcRequest) (*rpcResponse, b
 	switch req.Method {
 	case "initialize":
 		return &rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]interface{}{
-			"protocolVersion": protocolVersion,
+			"protocolVersion": negotiateVersion(req.Params),
 			"capabilities":    map[string]interface{}{"tools": map[string]interface{}{}},
 			"serverInfo":      map[string]interface{}{"name": "privasys", "version": s.version},
 		}}, false
@@ -177,9 +195,14 @@ func (s *Server) toolList() []map[string]interface{} {
 		if schema == nil {
 			schema = map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
 		}
-		out = append(out, map[string]interface{}{
+		entry := map[string]interface{}{
 			"name": t.Name, "description": t.Description, "inputSchema": schema,
-		})
+			"annotations": annotationsFor(t.Name),
+		}
+		if h, ok := toolHints[t.Name]; ok {
+			entry["title"] = h.title // the 2025-06-18 top-level title
+		}
+		out = append(out, entry)
 	}
 	return out
 }
