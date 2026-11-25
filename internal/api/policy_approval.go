@@ -141,3 +141,27 @@ func (c *Client) SetAutoMigrate(ctx context.Context, id string, on bool, newPoli
 	}
 	return out, nil
 }
+
+// RetiredProfile names one TEE profile of an app's data key: its build and
+// its runtime measurement, as /measurements lists them.
+type RetiredProfile struct {
+	WorkloadDigest string `json:"workload_digest"`
+	MRTD           string `json:"mrtd"`
+	RTMR1          string `json:"rtmr1"`
+	RTMR2          string `json:"rtmr2"`
+}
+
+// RetireProfile removes exactly one profile from the app's data key (POST
+// /apps/{id}/retire-measurement with "profile"). newPolicy as for
+// SetTCBPolicy.
+func (c *Client) RetireProfile(ctx context.Context, id string, p RetiredProfile, newPolicy json.RawMessage) (map[string]interface{}, error) {
+	body := map[string]any{"profile": p}
+	if len(newPolicy) != 0 {
+		body["new_policy"] = newPolicy
+	}
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/apps/"+id+"/retire-measurement", body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

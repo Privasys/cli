@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Privasys/enclave-vaults-client/go/vault"
 	"github.com/spf13/cobra"
@@ -155,4 +156,27 @@ func changeKeyPolicyV1(cmd *cobra.Command, env *Env, client *api.Client, appID s
 	}
 	res["checked"] = "the vaults hold exactly the policy asked for"
 	return res, nil
+}
+
+// refuseRunningProfile refuses, before any approval, to retire the profile
+// the app is running on, as the control plane's /measurements marks it
+// (running_profile). An older control plane without the mark is left to
+// refuse it itself.
+func refuseRunningProfile(cmd *cobra.Command, client *api.Client, appID string, p api.RetiredProfile) error {
+	m, err := client.AppMeasurements(cmd.Context(), appID)
+	if err != nil {
+		return nil
+	}
+	list, _ := m["measurements"].([]interface{})
+	eq := func(a, b string) bool { return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b)) }
+	for _, x := range list {
+		e, _ := x.(map[string]interface{})
+		s := func(k string) string { v, _ := e[k].(string); return v }
+		if eq(s("workload_digest"), p.WorkloadDigest) && eq(s("mrtd"), p.MRTD) && eq(s("rtmr1"), p.RTMR1) && eq(s("rtmr2"), p.RTMR2) {
+			if running, _ := e["running_profile"].(bool); running {
+				return errors.New("that is the profile the app is running on; it cannot be retired")
+			}
+		}
+	}
+	return nil
 }

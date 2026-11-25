@@ -1160,16 +1160,23 @@ uses, and flags which are older versions you can retire now (see
 
 func newAppsRetireMeasurementCmd() *cobra.Command {
 	var yes bool
+	var mrtd, rtmr1, rtmr2 string
 	cmd := &cobra.Command{
-		Use:   "retire-measurement <app> <workload-digest>",
+		Use:   "retire-measurement <app> <workload-digest> [--mrtd <hex> --rtmr1 <hex> --rtmr2 <hex>]",
 		Short: "Revoke a superseded version's access to the app's vault key",
 		Long: `Removes an OLDER version's measurement from the app's vault key policy so that
 version can no longer reconstruct (unwrap) the key — closing the door on key
 extraction with a retired build. Get the digest from 'apps measurements'.
 
+With the workload digest alone, every profile of that build is removed. With
+--mrtd, --rtmr1 and --rtmr2 as well, exactly the one profile of that build on
+that runtime is removed: use it to drop a running build's profiles for an OLDER
+runtime, which runtime upgrades leave behind.
+
 The CURRENT running version can never be retired: deploy and confirm the new
-version healthy first (so it holds the key), then retire the old one. The last
-remaining measurement cannot be retired either (it would make the key unusable).`,
+version healthy first (so it holds the key), then retire the old one. The
+profile the app is running on cannot be retired either, nor the last remaining
+measurement (it would make the key unusable).`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := loadEnv(cmd)
@@ -1185,8 +1192,24 @@ remaining measurement cannot be retired either (it would make the key unusable).
 				return err
 			}
 			digest := args[1]
+			byProfile := mrtd != "" || rtmr1 != "" || rtmr2 != ""
+			if byProfile && (mrtd == "" || rtmr1 == "" || rtmr2 == "") {
+				return fmt.Errorf("a profile is named by --mrtd, --rtmr1 and --rtmr2 together")
+			}
+			profile := api.RetiredProfile{WorkloadDigest: digest, MRTD: mrtd, RTMR1: rtmr1, RTMR2: rtmr2}
+			if byProfile {
+				if err := refuseRunningProfile(cmd, client, appID, profile); err != nil {
+					return err
+				}
+			}
+			question := fmt.Sprintf("Retire every profile of build %s from %s's vault key? That build will no longer be able to unwrap the key.", truncHex(digest), args[0])
+			summary := "Stop releasing this key to the build with workload digest " + truncHex(digest)
+			if byProfile {
+				question = fmt.Sprintf("Retire the profile of build %s on runtime MRTD %s from %s's vault key?", truncHex(digest), truncHex(mrtd), args[0])
+				summary = "Stop releasing this key to build " + truncHex(digest) + " on the older runtime MRTD " + truncHex(mrtd)
+			}
 			if !yes {
-				ok, cErr := confirm(cmd, env, fmt.Sprintf("Retire measurement %s from %s's vault key? That version will no longer be able to unwrap the key.", truncHex(digest), args[0]))
+				ok, cErr := confirm(cmd, env, question)
 				if cErr != nil {
 					return cErr
 				}
@@ -1197,9 +1220,17 @@ remaining measurement cannot be retired either (it would make the key unusable).
 			// The key's own rule decides the approval: a v1 step-up, a
 			// binding-v2 approval of the exact new policy, or none.
 			res, err := changeKeyPolicy(cmd, env, client, appID, keyPolicyChange{
-				summary: "Stop releasing this key to the build with workload digest " + truncHex(digest),
-				expect:  func(current json.RawMessage) (json.RawMessage, error) { return secrets.ExpectRetire(current, digest) },
+				summary: summary,
+				expect: func(current json.RawMessage) (json.RawMessage, error) {
+					if byProfile {
+						return secrets.ExpectRetireProfile(current, secrets.RetiredProfile{WorkloadDigest: digest, MRTD: mrtd, RTMR1: rtmr1, RTMR2: rtmr2})
+					}
+					return secrets.ExpectRetire(current, digest)
+				},
 				call: func(c *api.Client, newPolicy json.RawMessage) (map[string]interface{}, error) {
+					if byProfile {
+						return c.RetireProfile(cmd.Context(), appID, profile, newPolicy)
+					}
 					if len(newPolicy) != 0 {
 						return c.RetireMeasurementApproved(cmd.Context(), appID, digest, newPolicy)
 					}
@@ -1213,11 +1244,14 @@ remaining measurement cannot be retired either (it would make the key unusable).
 				output.Success(cmd.ErrOrStderr(), "Retired measurement %s", truncHex(digest))
 			}
 			return output.Emit(env.Format, res, func() output.Table {
-				return kvTable(res, []string{"retired", "all_succeeded", "warning"})
+				return kvTable(res, []string{"retired", "retired_profile", "retired_profiles", "all_succeeded", "checked", "warning"})
 			})
 		},
 	}
 	cmd.Flags().BoolVar(&yes, "yes", false, "skip the confirmation prompt")
+	cmd.Flags().StringVar(&mrtd, "mrtd", "", "retire only the profile on this runtime MRTD (with --rtmr1 and --rtmr2)")
+	cmd.Flags().StringVar(&rtmr1, "rtmr1", "", "the profile's RTMR1")
+	cmd.Flags().StringVar(&rtmr2, "rtmr2", "", "the profile's RTMR2")
 	return cmd
 }
 

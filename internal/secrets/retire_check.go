@@ -68,29 +68,106 @@ func ExpectRetire(current json.RawMessage, digest string) (json.RawMessage, erro
 	if teeRefOutsideRules(root) {
 		return nil, refuse("the key's policy refers to a TEE by position outside its operation rules")
 	}
-	principals, _ := root["principals"].(map[string]any)
-	tees, _ := principals["tees"].([]any)
-	idx := -1
-	for i, t := range tees {
-		if teeDigest(t) == want {
-			idx = i
-			break
-		}
+	// Every profile of that build goes (the control plane removes them all in
+	// one update).
+	n, err := removeTees(root, func(t any) bool { return teeDigest(t) == want })
+	if err != nil {
+		return nil, err
 	}
-	if idx < 0 {
+	if n == 0 {
 		return nil, fmt.Errorf("the key's policy has no measurement %s", digest)
 	}
-	if len(tees) <= 1 {
-		return nil, errors.New("the last measurement cannot be retired")
+	return json.Marshal(root)
+}
+
+// RetiredProfile names exactly one TEE profile: its build (the OID workload
+// digest) and its runtime (the first TDX measurement's MRTD, RTMR1, RTMR2).
+type RetiredProfile struct {
+	WorkloadDigest, MRTD, RTMR1, RTMR2 string
+}
+
+// ExpectRetireProfile is current with exactly the one TEE profile p names
+// removed, as the control plane builds it, and nothing else changed. Several
+// profiles matching all four values are refused: which one would go is not
+// the owner's choice to leave to the control plane.
+func ExpectRetireProfile(current json.RawMessage, p RetiredProfile) (json.RawMessage, error) {
+	lower := func(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+	want := RetiredProfile{lower(p.WorkloadDigest), lower(p.MRTD), lower(p.RTMR1), lower(p.RTMR2)}
+	if want.WorkloadDigest == "" || want.MRTD == "" || want.RTMR1 == "" || want.RTMR2 == "" {
+		return nil, errors.New("a profile is named by its workload digest, MRTD, RTMR1 and RTMR2")
 	}
-	kept := make([]any, 0, len(tees)-1)
-	kept = append(kept, tees[:idx]...)
-	kept = append(kept, tees[idx+1:]...)
-	principals["tees"] = kept
-	if ops, ok := root["operations"].([]any); ok {
-		root["operations"] = renumberTeeRefs(ops, idx)
+	doc, err := decodeTree(current)
+	if err != nil {
+		return nil, fmt.Errorf("the key's current policy: %w", err)
+	}
+	root, _ := doc.(map[string]any)
+	if teeRefOutsideRules(root) {
+		return nil, errors.New("the key's policy refers to a TEE by position outside its operation rules")
+	}
+	match := func(t any) bool {
+		m, r1, r2 := teeTDX(t)
+		return teeDigest(t) == want.WorkloadDigest && m == want.MRTD && r1 == want.RTMR1 && r2 == want.RTMR2
+	}
+	principals, _ := root["principals"].(map[string]any)
+	tees, _ := principals["tees"].([]any)
+	found := 0
+	for _, t := range tees {
+		if match(t) {
+			found++
+		}
+	}
+	switch {
+	case found == 0:
+		return nil, errors.New("the key's policy has no profile with that build and runtime")
+	case found > 1:
+		return nil, fmt.Errorf("the key's policy holds %d identical profiles with that build and runtime", found)
+	}
+	if _, err := removeTees(root, match); err != nil {
+		return nil, err
 	}
 	return json.Marshal(root)
+}
+
+// removeTees removes every TEE profile match selects from root, renumbering
+// the rules' {"Tee": i} references, and refuses to leave none.
+func removeTees(root map[string]any, match func(t any) bool) (int, error) {
+	principals, _ := root["principals"].(map[string]any)
+	tees, _ := principals["tees"].([]any)
+	removed := map[int]bool{}
+	kept := make([]any, 0, len(tees))
+	for i, t := range tees {
+		if match(t) {
+			removed[i] = true
+			continue
+		}
+		kept = append(kept, t)
+	}
+	if len(removed) == 0 {
+		return 0, nil
+	}
+	if len(kept) == 0 {
+		return 0, errors.New("the last measurement cannot be retired")
+	}
+	principals["tees"] = kept
+	if ops, ok := root["operations"].([]any); ok {
+		root["operations"] = renumberTeeRefs(ops, removed)
+	}
+	return len(removed), nil
+}
+
+// teeTDX is the first TDX measurement of a {"Tee": profile} principal.
+func teeTDX(p any) (mrtd, rtmr1, rtmr2 string) {
+	m, _ := p.(map[string]any)
+	prof, _ := m["Tee"].(map[string]any)
+	ms, _ := prof["measurements"].([]any)
+	for _, x := range ms {
+		xm, _ := x.(map[string]any)
+		if tdx, ok := xm["Tdx"].(map[string]any); ok {
+			s := func(k string) string { v, _ := tdx[k].(string); return strings.ToLower(strings.TrimSpace(v)) }
+			return s("mrtd"), s("rtmr1"), s("rtmr2")
+		}
+	}
+	return "", "", ""
 }
 
 // SameStoredPolicy reports whether two policies are the same once the key's
@@ -180,7 +257,7 @@ func teeIndex(p any) (int64, bool) {
 // renumberTeeRefs is what the control plane's retirePolicy does to the rules
 // when the tee at removed goes: a {"Tee": i} above it becomes i-1, one naming
 // it is dropped, and a rule left naming nobody is dropped.
-func renumberTeeRefs(rules []any, removed int) []any {
+func renumberTeeRefs(rules []any, removed map[int]bool) []any {
 	out := make([]any, 0, len(rules))
 	for _, r := range rules {
 		rule, ok := r.(map[string]any)
@@ -199,11 +276,17 @@ func renumberTeeRefs(rules []any, removed int) []any {
 		kept := make([]any, 0, len(ps))
 		for _, p := range ps {
 			if i, isTee := teeIndex(p); isTee {
-				if i == int64(removed) {
+				if removed[int(i)] {
 					continue
 				}
-				if i > int64(removed) {
-					p = map[string]any{"Tee": json.Number(fmt.Sprint(i - 1))}
+				below := 0
+				for r := range removed {
+					if int64(r) < i {
+						below++
+					}
+				}
+				if below > 0 {
+					p = map[string]any{"Tee": json.Number(fmt.Sprint(i - int64(below)))}
 				}
 			}
 			kept = append(kept, p)
