@@ -66,7 +66,8 @@ func requestExportStepUp(ctx context.Context, issuer, bearer, audience, handle s
 		return "", fmt.Errorf("step-up assertion: %w", err)
 	}
 	completeURL := issuer + "/fido2/vault-approval/complete?challenge=" + url.QueryEscape(opts.PublicKey.Challenge)
-	respBody, err := postBearer(ctx, completeURL, bearer, assertion)
+	// The assertion waited on a person: the bearer may be near its end.
+	respBody, err := postBearer(ctx, completeURL, pollBearer(ctx, bearer), assertion)
 	if err != nil {
 		return "", fmt.Errorf("step-up complete: %w", err)
 	}

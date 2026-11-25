@@ -192,6 +192,7 @@ func awaitApproval(ctx context.Context, issuer, bearer, operation string, option
 		if time.Now().After(deadline) {
 			return "", fmt.Errorf("step-up timed out waiting for approval (wallet or browser)")
 		}
+		bearer = pollBearer(ctx, bearer)
 		tok, pending, err := getStepUpToken(ctx, tokenURL, bearer)
 		if err != nil {
 			return "", err

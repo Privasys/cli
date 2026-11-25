@@ -255,6 +255,7 @@ func CollectBatchTokens(ctx context.Context, issuer, bearer string, b *Batch) (m
 	u := strings.TrimRight(issuer, "/") + "/fido2/vault-approval/batch/token?challenge=" + url.QueryEscape(b.ID)
 	deadline := time.Unix(b.Exp, 0).Add(15 * time.Second)
 	for {
+		bearer = pollBearer(ctx, bearer)
 		tokens, pending, err := pollBatchToken(ctx, u, bearer)
 		if err != nil {
 			return nil, err

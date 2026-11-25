@@ -5,6 +5,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -81,7 +82,7 @@ func NewRoot() *cobra.Command {
 // Execute runs the CLI.
 func Execute() {
 	installUserAgent()
-	if err := NewRoot().Execute(); err != nil {
+	if err := NewRoot().ExecuteContext(withPollBearers(context.Background())); err != nil {
 		// Cobra already printed nothing (SilenceErrors); print to stderr.
 		os.Stderr.WriteString("error: " + err.Error() + "\n")
 		os.Exit(exitCode(err))
@@ -143,6 +144,7 @@ func loadEnv(cmd *cobra.Command) (*Env, error) {
 	// The test platform takes its own audience: tokens follow the endpoint
 	// unless the configuration names one.
 	auth.SetPlatformAudience(cfg.PlatformAudience())
+	setRunIssuer(cfg.Issuer)
 	format := cfg.Format
 	if v, _ := cmd.Flags().GetString("format"); v != "" {
 		format = v
