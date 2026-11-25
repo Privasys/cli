@@ -71,8 +71,14 @@ func RemovePending() {
 	}
 }
 
-// SaveUserCredential stores the tokens from a completed user login.
+// SaveUserCredential stores the tokens from a completed user login as the
+// sign-in of the platform its access token was issued for (this run's
+// platform when the token names none).
 func SaveUserCredential(issuer string, tr *TokenResponse) error {
+	platform := audienceOf(tr.AccessToken)
+	if platform == "" {
+		platform = CurrentPlatformAudience()
+	}
 	cred := &Credential{
 		Issuer:          issuer,
 		ClientID:        ClientID,
@@ -82,8 +88,9 @@ func SaveUserCredential(issuer string, tr *TokenResponse) error {
 		IDToken:         tr.IDToken,
 		RefreshToken:    tr.RefreshToken,
 		AccessExpiresAt: time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second),
+		Platform:        platform,
 	}
-	return Save(cred)
+	return withCredentialLock(func() error { return Save(cred) })
 }
 
 func subjectOf(token string) string {

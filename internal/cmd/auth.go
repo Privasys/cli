@@ -56,7 +56,7 @@ func newAuthLoginCmd() *cobra.Command {
 				}
 			}
 
-			dr, verifier, err := auth.BeginDevice(ctx, env.Cfg.Issuer, auth.DefaultScope, "")
+			dr, verifier, err := auth.BeginDevice(ctx, env.Cfg.Issuer, auth.LoginScope(), "")
 			if err != nil {
 				return err
 			}
@@ -100,7 +100,7 @@ func newAuthBeginCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			dr, verifier, err := auth.BeginDevice(cmd.Context(), env.Cfg.Issuer, auth.DefaultScope, agent)
+			dr, verifier, err := auth.BeginDevice(cmd.Context(), env.Cfg.Issuer, auth.LoginScope(), agent)
 			if err != nil {
 				return err
 			}
@@ -212,6 +212,7 @@ func newAuthActivateSACmd() *cobra.Command {
 				Subject:         key.UserID,
 				ServiceKey:      string(data),
 				IsServiceKeyAcc: true,
+				Platform:        auth.CurrentPlatformAudience(),
 			}
 			if err := auth.Save(cred); err != nil {
 				return err

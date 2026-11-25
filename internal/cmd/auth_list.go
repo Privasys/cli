@@ -20,6 +20,7 @@ type credentialSummary struct {
 	Subject         string            `json:"subject,omitempty"`
 	Scope           string            `json:"scope,omitempty"`
 	Type            string            `json:"type"`
+	Platform        string            `json:"platform,omitempty"`
 	AccessToken     string            `json:"access_token_fingerprint,omitempty"`
 	AccessExpiresAt *time.Time        `json:"access_expires_at,omitempty"`
 	HasIDToken      bool              `json:"has_id_token"`
@@ -46,7 +47,7 @@ func tokenFingerprint(tok string) string {
 func summarizeCredential(c *auth.Credential) credentialSummary {
 	s := credentialSummary{
 		Issuer: c.Issuer, ClientID: c.ClientID, Subject: c.Subject, Scope: c.Scope,
-		Type: "wallet", AccessToken: tokenFingerprint(c.AccessToken),
+		Type: "wallet", Platform: c.Platform, AccessToken: tokenFingerprint(c.AccessToken),
 		HasIDToken: c.IDToken != "", HasRefreshToken: c.HasRefreshToken(),
 	}
 	if c.IsServiceKeyAcc {

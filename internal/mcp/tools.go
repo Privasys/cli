@@ -58,7 +58,7 @@ func (s *Server) registerTools() {
 				"agent": strProp("name of the agent requesting access, shown to the user (unverified)"),
 			}),
 			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
-				dr, verifier, err := auth.BeginDevice(ctx, d.Issuer, auth.DefaultScope, argStr(args, "agent"))
+				dr, verifier, err := auth.BeginDevice(ctx, d.Issuer, auth.LoginScope(), argStr(args, "agent"))
 				if err != nil {
 					return nil, err
 				}

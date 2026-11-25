@@ -40,6 +40,10 @@ type Credential struct {
 	IDToken         string    `json:"id_token,omitempty"`
 	AccessExpiresAt time.Time `json:"access_expires_at,omitempty"`
 
+	// Platform is the platform audience this sign-in was made for: one per
+	// platform, never refreshed into another's ("" = the production one).
+	Platform string `json:"platform,omitempty"`
+
 	// AudienceTokens caches access tokens for a platform audience other than
 	// the default one (the test platform's), keyed by audience. AccessToken
 	// above stays the default audience's.
@@ -105,69 +109,82 @@ func saveFile(m map[string]*Credential) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-// Save persists a credential, pushing the long-lived secrets to the keychain
-// when it is available (falling back to the 0600 file otherwise).
+// Save persists a credential in its platform's slot, pushing the long-lived
+// secrets to the keychain when it is available (falling back to the 0600 file
+// otherwise).
 func Save(c *Credential) error {
 	m, err := loadFile()
 	if err != nil {
 		return err
 	}
+	slot := slotKey(c.Issuer, c.Platform)
 
 	stored := *c // copy we mutate before writing to the file
 
 	if c.RefreshToken != "" {
-		if err := keyring.Set(keychainService, keyName(c.Issuer, "refresh"), c.RefreshToken); err == nil {
+		if err := keyring.Set(keychainService, keyName(slot, "refresh"), c.RefreshToken); err == nil {
 			stored.RefreshToken = ""
 			stored.refreshInKeychain = true
 		}
 	}
 	if c.ServiceKey != "" {
-		if err := keyring.Set(keychainService, keyName(c.Issuer, "sakey"), c.ServiceKey); err == nil {
+		if err := keyring.Set(keychainService, keyName(slot, "sakey"), c.ServiceKey); err == nil {
 			stored.ServiceKey = ""
 			stored.keyInKeychain = true
 		}
 	}
 
-	m[c.Issuer] = &stored
+	m[slot] = &stored
 	return saveFile(m)
 }
 
-// Load returns the credential for an issuer, rehydrating secrets from the
-// keychain when they were stored there.
+// Load returns the sign-in for the issuer on this run's platform
+// (CurrentPlatformAudience), rehydrating secrets from the keychain.
 func Load(issuer string) (*Credential, error) {
+	return LoadFor(issuer, CurrentPlatformAudience())
+}
+
+// LoadFor returns the sign-in for the issuer made for platform. Each platform
+// has its own: a token one platform accepts never comes from another's.
+func LoadFor(issuer, platform string) (*Credential, error) {
 	m, err := loadFile()
 	if err != nil {
 		return nil, err
 	}
-	c, ok := m[issuer]
+	slot := slotKey(issuer, platform)
+	c, ok := m[slot]
 	if !ok {
-		return nil, ErrNotLoggedIn
+		return nil, &NotSignedInError{Platform: platformName(platform)}
+	}
+	if c.Platform == "" && slot == issuer {
+		c.Platform = PlatformAudience // a sign-in stored before per-platform slots
 	}
 	if c.refreshInKeychain {
-		if v, err := keyring.Get(keychainService, keyName(issuer, "refresh")); err == nil {
+		if v, err := keyring.Get(keychainService, keyName(slot, "refresh")); err == nil {
 			c.RefreshToken = v
 		}
 	}
 	if c.keyInKeychain {
-		if v, err := keyring.Get(keychainService, keyName(issuer, "sakey")); err == nil {
+		if v, err := keyring.Get(keychainService, keyName(slot, "sakey")); err == nil {
 			c.ServiceKey = v
 		}
 	}
 	return c, nil
 }
 
-// Delete removes a credential and any keychain secrets for the issuer.
+// Delete removes the sign-in for the issuer on this run's platform and its
+// keychain secrets.
 func Delete(issuer string) error {
-	_ = keyring.Delete(keychainService, keyName(issuer, "refresh"))
-	_ = keyring.Delete(keychainService, keyName(issuer, "sakey"))
+	slot := slotKey(issuer, CurrentPlatformAudience())
+	_ = keyring.Delete(keychainService, keyName(slot, "refresh"))
+	_ = keyring.Delete(keychainService, keyName(slot, "sakey"))
 	m, err := loadFile()
 	if err != nil {
 		return err
 	}
-	delete(m, issuer)
+	delete(m, slot)
 	return saveFile(m)
 }
-
 // List returns the stored credentials (without rehydrating keychain secrets).
 func List() ([]*Credential, error) {
 	m, err := loadFile()

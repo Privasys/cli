@@ -13,10 +13,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -211,45 +213,97 @@ func readCredsFile(t *testing.T) (string, error) {
 	return string(b), err
 }
 
-// The test platform's token comes from the refresh grant with its audience
-// scope, is cached apart from the production token, and leaves that one alone.
-func TestAccessTokenForTheTestAudience(t *testing.T) {
+
+// Each platform has its own sign-in: a test-platform token never comes from
+// the production sign-in (the IdP refuses that refresh, and it must never be
+// asked), and the two are stored and refreshed apart.
+func TestEachPlatformHasItsOwnSignIn(t *testing.T) {
 	keyring.MockInit()
 	t.Setenv("PRIVASYS_CONFIG_DIR", t.TempDir())
 	t.Setenv("PRIVASYS_ACCESS_TOKEN", "")
 	t.Setenv("PRIVASYS_SERVICE_KEY", "")
-	var scopes []string
+	var asked []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
-		scopes = append(scopes, r.PostForm.Get("scope"))
+		asked = append(asked, r.PostForm.Get("refresh_token")+" "+r.PostForm.Get("scope"))
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"access_token": "test-token", "refresh_token": "rt-2", "expires_in": 3600,
+			"access_token": "test-token-2", "refresh_token": "rt-test-2", "expires_in": 3600,
 		})
 	}))
 	defer srv.Close()
-	if err := Save(&Credential{Issuer: srv.URL, AccessToken: "prod-token",
-		AccessExpiresAt: time.Now().Add(time.Hour), RefreshToken: "rt-1"}); err != nil {
-		t.Fatal(err)
-	}
 	defer SetPlatformAudience("")
 
+	// Only a production sign-in: the test platform has none, and nothing is asked.
+	if err := Save(&Credential{Issuer: srv.URL, AccessToken: "prod-token",
+		AccessExpiresAt: time.Now().Add(time.Hour), RefreshToken: "rt-prod"}); err != nil {
+		t.Fatal(err)
+	}
 	SetPlatformAudience("privasys-platform-test")
-	for i := 0; i < 2; i++ {
-		tok, err := AccessToken(context.Background(), srv.URL)
-		if err != nil || tok != "test-token" {
-			t.Fatalf("test audience: %q, %v", tok, err)
-		}
+	if _, err := AccessToken(context.Background(), srv.URL); !errors.Is(err, ErrNotLoggedIn) {
+		t.Fatalf("test platform without its sign-in: err = %v, want ErrNotLoggedIn", err)
 	}
-	if len(scopes) != 1 || scopes[0] != "openid audience:privasys-platform-test" {
-		t.Errorf("token requests: %q, want one for the test audience, then the cache", scopes)
-	}
-	cred, _ := Load(srv.URL)
-	if cred.RefreshToken != "rt-2" {
-		t.Errorf("the rotated refresh token was not kept: %q", cred.RefreshToken)
+	if len(asked) != 0 {
+		t.Fatalf("a cross-platform refresh was asked: %q", asked)
 	}
 
+	// A test-platform sign-in (expired): refreshed with its own token and audience.
+	if err := Save(&Credential{Issuer: srv.URL, Platform: "privasys-platform-test", AccessToken: "test-token-1",
+		AccessExpiresAt: time.Now().Add(-time.Hour), RefreshToken: "rt-test-1"}); err != nil {
+		t.Fatal(err)
+	}
+	tok, err := AccessToken(context.Background(), srv.URL)
+	if err != nil || tok != "test-token-2" {
+		t.Fatalf("test platform: %q, %v", tok, err)
+	}
+	if len(asked) != 1 || asked[0] != "rt-test-1 openid audience:privasys-platform-test" {
+		t.Errorf("refreshes: %q, want the test sign-in's own token and audience", asked)
+	}
+	test, _ := LoadFor(srv.URL, "privasys-platform-test")
+	prod, _ := LoadFor(srv.URL, "privasys-platform")
+	if test.RefreshToken != "rt-test-2" || prod.RefreshToken != "rt-prod" {
+		t.Errorf("rotation crossed sign-ins: test %q, prod %q", test.RefreshToken, prod.RefreshToken)
+	}
+
+	// Production is untouched and served from its own cache.
 	SetPlatformAudience("")
 	if tok, err := AccessToken(context.Background(), srv.URL); err != nil || tok != "prod-token" {
-		t.Errorf("production audience: %q, %v", tok, err)
+		t.Errorf("production: %q, %v", tok, err)
+	}
+	// A vault audience that is a platform's comes from that platform's sign-in.
+	if _, err := AccessTokenForAudience(context.Background(), srv.URL, "privasys-platform-test"); err != nil {
+		t.Fatal(err)
+	}
+	if got := asked[len(asked)-1]; got != "rt-test-2 openid audience:privasys-platform-test" {
+		t.Errorf("test vault audience refreshed with %q", got)
+	}
+}
+
+func TestCredentialLockSerialises(t *testing.T) {
+	t.Setenv("PRIVASYS_CONFIG_DIR", t.TempDir())
+	var mu sync.Mutex
+	inside, maxInside := 0, 0
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = withCredentialLock(func() error {
+				mu.Lock()
+				inside++
+				if inside > maxInside {
+					maxInside = inside
+				}
+				mu.Unlock()
+				time.Sleep(5 * time.Millisecond)
+				mu.Lock()
+				inside--
+				mu.Unlock()
+				return nil
+			})
+		}()
+	}
+	wg.Wait()
+	if maxInside != 1 {
+		t.Fatalf("%d holders at once", maxInside)
 	}
 }

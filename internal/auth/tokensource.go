@@ -19,8 +19,9 @@ const expirySkew = 60 * time.Second
 
 // AccessToken returns a valid access token for the issuer, honoring (in order):
 // PRIVASYS_ACCESS_TOKEN, PRIVASYS_SERVICE_KEY, a stored service account, then a
-// stored user credential (refreshing silently when needed). The token is for
-// the run's platform audience (CurrentPlatformAudience).
+// stored user sign-in (refreshing silently when needed). The token is for the
+// run's platform audience (CurrentPlatformAudience), from that platform's own
+// sign-in.
 func AccessToken(ctx context.Context, issuer string) (string, error) {
 	if t := os.Getenv("PRIVASYS_ACCESS_TOKEN"); t != "" {
 		return t, nil
@@ -38,97 +39,82 @@ func AccessToken(ctx context.Context, issuer string) (string, error) {
 		}
 		return tr.AccessToken, nil
 	}
-
-	cred, err := Load(issuer)
-	if err != nil {
-		return "", err
-	}
-	if aud != PlatformAudience {
-		return audienceAccessToken(ctx, issuer, cred, aud)
-	}
-
-	// Service-account credential: mint on demand (no refresh token involved).
-	if cred.IsServiceKeyAcc && cred.ServiceKey != "" {
-		if cred.AccessToken != "" && time.Until(cred.AccessExpiresAt) > expirySkew {
-			return cred.AccessToken, nil
-		}
-		k, err := ParseServiceKey([]byte(cred.ServiceKey))
-		if err != nil {
-			return "", err
-		}
-		tr, err := MintServiceAccountToken(ctx, issuer, k, PlatformAudience)
-		if err != nil {
-			return "", err
-		}
-		cred.AccessToken = tr.AccessToken
-		cred.AccessExpiresAt = time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
-		_ = Save(cred)
-		return tr.AccessToken, nil
-	}
-
-	// User credential: use the cached access token while fresh, else refresh.
-	if cred.AccessToken != "" && time.Until(cred.AccessExpiresAt) > expirySkew {
-		return cred.AccessToken, nil
-	}
-	if cred.RefreshToken == "" {
-		return "", ErrNotLoggedIn
-	}
-	tr, err := refresh(ctx, issuer, cred.RefreshToken)
-	if err != nil {
-		return "", fmt.Errorf("session refresh failed (run `privasys auth login`): %w", err)
-	}
-	cred.AccessToken = tr.AccessToken
-	cred.IDToken = tr.IDToken
-	cred.AccessExpiresAt = time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
-	if tr.RefreshToken != "" {
-		cred.RefreshToken = tr.RefreshToken
-	}
-	if err := Save(cred); err != nil {
-		return "", err
-	}
-	return tr.AccessToken, nil
+	return platformToken(ctx, issuer, aud)
 }
 
-// audienceAccessToken returns a token for a platform audience other than the
-// default one, cached apart from the default audience's token. A user session
-// gets it with the refresh grant and an audience scope; the subject is the
-// same, since the audience does not change the client.
-func audienceAccessToken(ctx context.Context, issuer string, cred *Credential, aud string) (string, error) {
-	if c, ok := cred.AudienceTokens[aud]; ok && c.AccessToken != "" && time.Until(c.ExpiresAt) > expirySkew {
-		return c.AccessToken, nil
+// signInFor is the stored sign-in that gives tokens for platform. A service
+// account activated on the production platform mints for any audience (a
+// JWT-bearer grant, no refresh), as it always did.
+func signInFor(issuer, platform string) (*Credential, error) {
+	cred, err := LoadFor(issuer, platform)
+	if err == nil {
+		return cred, nil
 	}
-	var tr *TokenResponse
-	switch {
-	case cred.IsServiceKeyAcc && cred.ServiceKey != "":
-		k, err := ParseServiceKey([]byte(cred.ServiceKey))
+	if platform != PlatformAudience {
+		if sa, serr := LoadFor(issuer, PlatformAudience); serr == nil && sa.IsServiceKeyAcc && sa.ServiceKey != "" {
+			return sa, nil
+		}
+	}
+	return nil, err
+}
+
+// platformToken is a token for the platform aud, from aud's own sign-in only.
+func platformToken(ctx context.Context, issuer, aud string) (string, error) {
+	var tok string
+	err := withCredentialLock(func() error {
+		cred, err := signInFor(issuer, aud)
 		if err != nil {
-			return "", err
+			return err
 		}
-		if tr, err = MintServiceAccountToken(ctx, issuer, k, aud); err != nil {
-			return "", err
+		own := slotKey(issuer, cred.Platform) == slotKey(issuer, aud)
+		if own && cred.AccessToken != "" && time.Until(cred.AccessExpiresAt) > expirySkew {
+			tok = cred.AccessToken
+			return nil
 		}
-	case cred.RefreshToken != "":
-		var err error
-		if tr, err = refreshWithScope(ctx, issuer, cred.RefreshToken, "openid audience:"+aud); err != nil {
-			return "", fmt.Errorf("session refresh failed (run `privasys auth login`): %w", err)
+		if cred.IsServiceKeyAcc && cred.ServiceKey != "" {
+			k, err := ParseServiceKey([]byte(cred.ServiceKey))
+			if err != nil {
+				return err
+			}
+			tr, err := MintServiceAccountToken(ctx, issuer, k, aud)
+			if err != nil {
+				return err
+			}
+			tok = tr.AccessToken
+			if own {
+				cred.AccessToken = tr.AccessToken
+				cred.AccessExpiresAt = time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
+				_ = Save(cred)
+			}
+			return nil
 		}
+		if cred.RefreshToken == "" {
+			return &NotSignedInError{Platform: platformName(aud)}
+		}
+		// The production sign-in refreshes as it always did; another
+		// platform's names its own audience, which is the one it was made for.
+		scope := ""
+		if aud != PlatformAudience {
+			scope = "openid audience:" + aud
+		}
+		tr, err := refreshWithScope(ctx, issuer, cred.RefreshToken, scope)
+		if err != nil {
+			return fmt.Errorf("the sign-in to %s could not be refreshed (run `privasys auth login` with the same --endpoint or --test): %w",
+				platformName(aud), err)
+		}
+		cred.AccessToken = tr.AccessToken
+		cred.IDToken = tr.IDToken
+		cred.AccessExpiresAt = time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
 		if tr.RefreshToken != "" {
 			cred.RefreshToken = tr.RefreshToken
 		}
-	default:
-		return "", ErrNotLoggedIn
-	}
-	if cred.AudienceTokens == nil {
-		cred.AudienceTokens = map[string]AudienceToken{}
-	}
-	cred.AudienceTokens[aud] = AudienceToken{
-		AccessToken: tr.AccessToken,
-		ExpiresAt:   time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second),
-	}
-	if err := Save(cred); err != nil {
-		return "", err
-	}
-	return tr.AccessToken, nil
+		if err := Save(cred); err != nil {
+			return err
+		}
+		tok = tr.AccessToken
+		return nil
+	})
+	return tok, err
 }
 
 func refresh(ctx context.Context, issuer, refreshToken string) (*TokenResponse, error) {
@@ -165,10 +151,12 @@ func VaultTokenFor(ctx context.Context, issuer, audience string) (string, error)
 }
 
 // AccessTokenForAudience mints an access token bound to a specific audience
-// (e.g. "attestation-server") so the CLI can call that resource server
-// directly. For user sessions it uses the refresh grant with an `audience:`
-// scope (the rotated refresh token keeps the original scope); for service
-// accounts it mints via JWT-bearer. PRIVASYS_ACCESS_TOKEN is returned as-is.
+// (e.g. "attestation-server", or a vault audience) so the CLI can call that
+// resource server directly. A platform's audience comes only from that
+// platform's own sign-in; any other from this run's platform sign-in. For user
+// sessions it uses the refresh grant with an `audience:` scope (the rotated
+// refresh token keeps the original scope); for service accounts it mints via
+// JWT-bearer. PRIVASYS_ACCESS_TOKEN is returned as-is.
 func AccessTokenForAudience(ctx context.Context, issuer, audience string) (string, error) {
 	if t := os.Getenv("PRIVASYS_ACCESS_TOKEN"); t != "" {
 		return t, nil
@@ -184,34 +172,47 @@ func AccessTokenForAudience(ctx context.Context, issuer, audience string) (strin
 		}
 		return tr.AccessToken, nil
 	}
-	cred, err := Load(issuer)
-	if err != nil {
-		return "", err
+	platform := CurrentPlatformAudience()
+	if isPlatformAudience(audience) {
+		platform = audience
 	}
-	if cred.IsServiceKeyAcc && cred.ServiceKey != "" {
-		k, err := ParseServiceKey([]byte(cred.ServiceKey))
+	var tok string
+	err := withCredentialLock(func() error {
+		cred, err := signInFor(issuer, platform)
 		if err != nil {
-			return "", err
+			return err
 		}
-		tr, err := MintServiceAccountToken(ctx, issuer, k, audience)
+		if cred.IsServiceKeyAcc && cred.ServiceKey != "" {
+			k, err := ParseServiceKey([]byte(cred.ServiceKey))
+			if err != nil {
+				return err
+			}
+			tr, err := MintServiceAccountToken(ctx, issuer, k, audience)
+			if err != nil {
+				return err
+			}
+			tok = tr.AccessToken
+			return nil
+		}
+		if cred.RefreshToken == "" {
+			return &NotSignedInError{Platform: platformName(platform)}
+		}
+		tr, err := refreshWithScope(ctx, issuer, cred.RefreshToken, "openid audience:"+audience)
 		if err != nil {
-			return "", err
+			return fmt.Errorf("the sign-in to %s could not be refreshed for %s (run `privasys auth login` with the same --endpoint or --test): %w",
+				platformName(platform), audience, err)
 		}
-		return tr.AccessToken, nil
-	}
-	if cred.RefreshToken == "" {
-		return "", ErrNotLoggedIn
-	}
-	tr, err := refreshWithScope(ctx, issuer, cred.RefreshToken, "openid audience:"+audience)
-	if err != nil {
-		return "", err
-	}
-	// Persist the rotated refresh token (single-use rotation).
-	if tr.RefreshToken != "" {
-		cred.RefreshToken = tr.RefreshToken
-		_ = Save(cred)
-	}
-	return tr.AccessToken, nil
+		// Persist the rotated refresh token (single-use rotation).
+		if tr.RefreshToken != "" {
+			cred.RefreshToken = tr.RefreshToken
+			if err := Save(cred); err != nil {
+				return err
+			}
+		}
+		tok = tr.AccessToken
+		return nil
+	})
+	return tok, err
 }
 
 func loadServiceKeyFromEnv(v string) (*ServiceKey, error) {
