@@ -1194,24 +1194,20 @@ remaining measurement cannot be retired either (it would make the key unusable).
 					return fmt.Errorf("aborted")
 				}
 			}
-			res, err := client.RetireMeasurement(cmd.Context(), appID, digest)
-			if pa, need := api.PolicyApprovalFrom(err); need {
-				// The key's vaults change its policy only with the owner's
-				// approval of the exact new policy.
-				tok, aerr := approvePolicyChange(cmd, env, client, appID, pa,
-					"Stop releasing this key to the build with workload digest "+truncHex(digest),
-					func(ctx context.Context, current, proposed json.RawMessage, canon secrets.Canonicaliser) error {
-						return secrets.CheckRetireChange(ctx, current, proposed, digest, canon)
-					})
-				if aerr != nil {
-					return aerr
-				}
-				sc := *client
-				sc.Token = tok
-				res, err = sc.RetireMeasurementApproved(cmd.Context(), appID, digest, pa.NewPolicy)
-			}
+			// The key's own rule decides the approval: a v1 step-up, a
+			// binding-v2 approval of the exact new policy, or none.
+			res, err := changeKeyPolicy(cmd, env, client, appID, keyPolicyChange{
+				summary: "Stop releasing this key to the build with workload digest " + truncHex(digest),
+				expect:  func(current json.RawMessage) (json.RawMessage, error) { return secrets.ExpectRetire(current, digest) },
+				call: func(c *api.Client, newPolicy json.RawMessage) (map[string]interface{}, error) {
+					if len(newPolicy) != 0 {
+						return c.RetireMeasurementApproved(cmd.Context(), appID, digest, newPolicy)
+					}
+					return c.RetireMeasurement(cmd.Context(), appID, digest)
+				},
+			})
 			if err != nil {
-				return policyChangeError(err)
+				return err
 			}
 			if !env.Quiet {
 				output.Success(cmd.ErrOrStderr(), "Retired measurement %s", truncHex(digest))

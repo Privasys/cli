@@ -33,26 +33,40 @@ func CurrentPolicy(ctx context.Context, d *api.VaultDirectory, ownerTok, attTok,
 // it, and nothing else changed. Both are compared as canonical JSON trees, so
 // fields the CLI does not know count too.
 func CheckRetireChange(ctx context.Context, current, proposed json.RawMessage, digest string, canon Canonicaliser) error {
-	if canon == nil {
-		return errors.New("no vault to canonicalise the policies with")
+	expected, err := ExpectRetire(current, digest)
+	if err != nil {
+		return err
 	}
+	same, err := SameStoredPolicy(ctx, canon, expected, proposed)
+	if err != nil {
+		return err
+	}
+	if !same {
+		return fmt.Errorf("the requested change does more than retire %s: the new policy differs from the current one in more than that measurement", digest)
+	}
+	return nil
+}
+
+// ExpectRetire is current with exactly the TEE profile pinning digest
+// removed, as the control plane's retirePolicy builds it.
+func ExpectRetire(current json.RawMessage, digest string) (json.RawMessage, error) {
 	refuse := func(why string) error {
 		return fmt.Errorf("the requested change does more than retire %s: %s", digest, why)
 	}
 	want := strings.ToLower(strings.TrimSpace(digest))
 	if want == "" {
-		return errors.New("no measurement digest to retire")
+		return nil, errors.New("no measurement digest to retire")
 	}
 	doc, err := decodeTree(current)
 	if err != nil {
-		return fmt.Errorf("the key's current policy: %w", err)
+		return nil, fmt.Errorf("the key's current policy: %w", err)
 	}
 	root, _ := doc.(map[string]any)
 	// Tees are referred to by index ({"Tee": n}), which the control plane
 	// renumbers only in operations[].principals. One anywhere else would
 	// change meaning when a tee is removed, so it is refused.
 	if teeRefOutsideRules(root) {
-		return refuse("the key's policy refers to a TEE by position outside its operation rules")
+		return nil, refuse("the key's policy refers to a TEE by position outside its operation rules")
 	}
 	principals, _ := root["principals"].(map[string]any)
 	tees, _ := principals["tees"].([]any)
@@ -64,10 +78,10 @@ func CheckRetireChange(ctx context.Context, current, proposed json.RawMessage, d
 		}
 	}
 	if idx < 0 {
-		return fmt.Errorf("the key's policy has no measurement %s", digest)
+		return nil, fmt.Errorf("the key's policy has no measurement %s", digest)
 	}
 	if len(tees) <= 1 {
-		return errors.New("the last measurement cannot be retired")
+		return nil, errors.New("the last measurement cannot be retired")
 	}
 	kept := make([]any, 0, len(tees)-1)
 	kept = append(kept, tees[:idx]...)
@@ -76,26 +90,27 @@ func CheckRetireChange(ctx context.Context, current, proposed json.RawMessage, d
 	if ops, ok := root["operations"].([]any); ok {
 		root["operations"] = renumberTeeRefs(ops, idx)
 	}
-	expected, err := json.Marshal(root)
-	if err != nil {
-		return err
+	return json.Marshal(root)
+}
+
+// SameStoredPolicy reports whether two policies are the same once the key's
+// vaults have put each in the form they store. The stored policy writes every
+// default out; the control plane's typed policy leaves them out. Both go
+// through the vault's own canonicalisation, which writes the defaults on both
+// sides alike, and the digests of what it returns are compared.
+func SameStoredPolicy(ctx context.Context, canon Canonicaliser, expected, got json.RawMessage) (bool, error) {
+	if canon == nil {
+		return false, errors.New("no vault to canonicalise the policies with")
 	}
-	// The stored policy writes every default out; the control plane's typed
-	// policy leaves them out. Both go through the vault's own
-	// canonicalisation, which writes the defaults on both sides alike, and
-	// the digests of what it returns are compared.
 	wantPD, err := canonicalPD(ctx, canon, expected)
 	if err != nil {
-		return fmt.Errorf("the expected policy: %w", err)
+		return false, fmt.Errorf("the expected policy: %w", err)
 	}
-	gotPD, err := canonicalPD(ctx, canon, proposed)
+	gotPD, err := canonicalPD(ctx, canon, got)
 	if err != nil {
-		return fmt.Errorf("the new policy: %w", err)
+		return false, fmt.Errorf("the new policy: %w", err)
 	}
-	if wantPD != gotPD {
-		return refuse("the new policy differs from the current one in more than that measurement")
-	}
-	return nil
+	return wantPD == gotPD, nil
 }
 
 // decodeTree reads JSON keeping numbers exact.

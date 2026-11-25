@@ -103,3 +103,49 @@ func KeyApproval(ctx context.Context, t KeyTarget, op vault.Operation) (binding 
 	}
 	return 2, ids, policyVersion, nil
 }
+
+// PolicyRule is how a key's vaults gate one operation, read from the key's
+// own policy on every member (which must agree on its version).
+type PolicyRule struct {
+	Readable bool   // the policy was read; when false, nothing is known
+	Binding  int    // 0 no step-up, 1 a v1 step-up, 2 binding v2
+	Version  uint32 // the policy version every member holds
+}
+
+// ReadPolicyRule reads how op is gated on t's key, without reading the
+// vaults' identities (KeyApproval does that for binding 2).
+func ReadPolicyRule(ctx context.Context, t KeyTarget, op vault.Operation) (PolicyRule, error) {
+	if len(t.Endpoints) == 0 || t.MRENCLAVE == "" {
+		return PolicyRule{}, nil
+	}
+	verify, err := verifyPolicy(t.MRENCLAVE, t.AttServer, t.AttToken)
+	if err != nil {
+		return PolicyRule{}, err
+	}
+	var policy *vault.KeyPolicy
+	var version uint32
+	for _, ep := range t.Endpoints {
+		c, derr := vault.Dial(ctx, vaultReg(ep), vault.DialOptions{VaultPolicy: verify, AuthToken: staticToken(t.Bearer)})
+		if derr != nil {
+			continue
+		}
+		p, v, perr := c.GetPolicy(ctx, t.Handle)
+		c.Close()
+		if perr != nil {
+			continue
+		}
+		if policy == nil {
+			policy, version = &p, v
+		} else if v != version {
+			return PolicyRule{}, fmt.Errorf("the vaults hold %s at different policy versions (%d and %d): resolve that partial update first", t.Handle, version, v)
+		}
+	}
+	if policy == nil {
+		return PolicyRule{}, nil
+	}
+	b, err := BindingVersion(*policy, op)
+	if err != nil {
+		return PolicyRule{}, err
+	}
+	return PolicyRule{Readable: true, Binding: b, Version: version}, nil
+}

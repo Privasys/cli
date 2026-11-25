@@ -111,3 +111,33 @@ func (c *Client) DeleteOldKey(ctx context.Context, id string, da *DeleteApproval
 	}
 	return out, nil
 }
+
+// SetTCBPolicy arms the acceptable Intel TCB statuses on every TEE profile of
+// the app's data key (POST /apps/{id}/tcb-policy). statuses must not be nil:
+// an empty list is the strict floor. newPolicy is set only when repeating the
+// call after a binding-v2 approval of exactly those bytes.
+func (c *Client) SetTCBPolicy(ctx context.Context, id string, statuses []string, newPolicy json.RawMessage) (map[string]interface{}, error) {
+	body := map[string]any{"acceptable_tcb_statuses": statuses}
+	if len(newPolicy) != 0 {
+		body["new_policy"] = newPolicy
+	}
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/apps/"+id+"/tcb-policy", body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SetAutoMigrate turns the data key's auto-migrate flag on or off (PATCH
+// /apps/{id}/auto-migrate). newPolicy as for SetTCBPolicy.
+func (c *Client) SetAutoMigrate(ctx context.Context, id string, on bool, newPolicy json.RawMessage) (map[string]interface{}, error) {
+	body := map[string]any{"auto_migrate": on}
+	if len(newPolicy) != 0 {
+		body["new_policy"] = newPolicy
+	}
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPatch, "/api/v1/apps/"+id+"/auto-migrate", body, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
