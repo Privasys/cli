@@ -86,14 +86,14 @@ var toolHints = map[string]hints{
 	"apps_owners_remove":             destroy("Remove a member's access to an app", true),
 	// For a WASM app the control plane asks the enclave, so the answer comes
 	// from the app's own code.
-	"apps_api":                       {title: "List an app's functions", readOnly: true, idempotent: true, openWorld: true},
-	"apps_mcp":                       {title: "Show an app's MCP tools", readOnly: true, idempotent: true, openWorld: true},
-	"apps_call":                      {title: "Call an app function", destructive: true, openWorld: true},
-	"apps_action":                    {title: "Run an app action", destructive: true, openWorld: true},
-	"apps_configure":                 {title: "Configure an app (one-time)", destructive: true, openWorld: true},
-	"registry_status":                read("Check an app's registry credential"),
-	"registry_rm":                    destroy("Remove an app's registry credential", true),
-	"attest":                         {title: "Verify an enclave's attestation", readOnly: true, idempotent: true, openWorld: true},
+	"apps_api":        {title: "List an app's functions", readOnly: true, idempotent: true, openWorld: true},
+	"apps_mcp":        {title: "Show an app's MCP tools", readOnly: true, idempotent: true, openWorld: true},
+	"apps_call":       {title: "Call an app function", destructive: true, openWorld: true},
+	"apps_action":     {title: "Run an app action", destructive: true, openWorld: true},
+	"apps_configure":  {title: "Configure an app (one-time)", destructive: true, openWorld: true},
+	"registry_status": read("Check an app's registry credential"),
+	"registry_rm":     destroy("Remove an app's registry credential", true),
+	"attest":          {title: "Verify an enclave's attestation", readOnly: true, idempotent: true, openWorld: true},
 
 	// Backups and volumes.
 	"apps_backup_run":    write("Back an app up now", false),
