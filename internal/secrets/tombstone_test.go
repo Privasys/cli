@@ -13,21 +13,24 @@ import (
 )
 
 // A tombstone's errors ("key deleted …", formats §9.3) read as gone, and a
-// deleted key matches both ErrKeyDeleted and ErrKeyNotFound.
+// deleted key matches both ErrKeyDeleted and ErrKeyNotFound. Only the vault's
+// own answer counts: a plain error that merely says "not found" does not.
 func TestKeyGone(t *testing.T) {
+	vaultSaid := func(m string) error { return &vault.ErrVaultError{Message: m} }
 	cases := []struct {
-		msg             string
+		err             error
 		gone, tombstone bool
 	}{
-		{"vault error: key deleted at 2026-11-25T10:00:00Z (delete)", true, true},
-		{"vault error: key not found", true, false},
-		{"caller is not in policy.principals", false, false},
-		{"dial: connection refused", false, false},
+		{vaultSaid("key deleted at 2026-11-25T10:00:00Z (delete)"), true, true},
+		{fmt.Errorf("wrapped: %w", vaultSaid("key not found")), true, false},
+		{vaultSaid("caller is not in policy.principals"), false, false},
+		{errors.New("vault error: key not found"), false, false},
+		{errors.New("dial: connection refused"), false, false},
 	}
 	for _, c := range cases {
-		g, d := keyGone(errors.New(c.msg))
+		g, d := keyGone(c.err)
 		if g != c.gone || d != c.tombstone {
-			t.Errorf("%q: gone %t deleted %t", c.msg, g, d)
+			t.Errorf("%q: gone %t deleted %t", c.err, g, d)
 		}
 	}
 	if g, d := keyGone(nil); g || d {
