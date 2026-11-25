@@ -75,7 +75,14 @@ the control plane's record for --enclave; they must agree.`,
 				if err != nil {
 					return err
 				}
-				if !secrets.CertCarries(oids, secrets.OIDWorkloadID, id) {
+				// A machine's manager leaf names its enclave in OID 1.3 (the
+				// same 16 bytes its data key pins in 4.1); an app's leaf names
+				// the app in 4.1.
+				bindOID := secrets.OIDWorkloadID
+				if strings.Contains(handle, "/manager/data/") {
+					bindOID = secrets.OIDEnclaveInstanceID
+				}
+				if !secrets.CertCarries(oids, bindOID, id) {
 					return fmt.Errorf("%s does not attest the workload this key is for (%s); nothing was changed", host, id)
 				}
 				if running.Equal(r) {

@@ -148,3 +148,8 @@ func CertCarries(oids map[string]string, oid, value string) bool {
 	b, err := hex.DecodeString(got)
 	return err == nil && strings.ToLower(strings.TrimSpace(string(b))) == want
 }
+
+// OIDEnclaveInstanceID is the X.509 OID a machine's manager leaf names its
+// enclave with: the 16 raw bytes of the enclave id, the value its data key
+// pins in OIDWorkloadID.
+const OIDEnclaveInstanceID = "1.3.6.1.4.1.65230.1.3"
