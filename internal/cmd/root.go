@@ -80,6 +80,7 @@ func NewRoot() *cobra.Command {
 
 // Execute runs the CLI.
 func Execute() {
+	installUserAgent()
 	if err := NewRoot().Execute(); err != nil {
 		// Cobra already printed nothing (SilenceErrors); print to stderr.
 		os.Stderr.WriteString("error: " + err.Error() + "\n")
