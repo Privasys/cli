@@ -4,7 +4,10 @@
 package secrets
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/Privasys/enclave-vaults-client/go/vault"
@@ -70,5 +73,21 @@ func TestKeyGoneIsExact(t *testing.T) {
 	}
 	if g, d := keyGone(&vault.ErrVaultError{Message: "key deleted at 1 (delete)"}); !g || !d {
 		t.Error("a tombstone did not count as deleted")
+	}
+}
+
+func TestSameStoredPolicyNeedsNoVaultWhenEqual(t *testing.T) {
+	a := []byte(`{"b":1,"a":{"y":2,"x":[1,2]}}`)
+	b := []byte(`{"a":{"x":[1,2],"y":2},"b":1}`)
+	unsupported := func(context.Context, json.RawMessage) (json.RawMessage, error) {
+		return nil, fmt.Errorf("the vault v refuses the policy: %w", vault.ErrUnsupported)
+	}
+	same, err := SameStoredPolicy(context.Background(), unsupported, a, b)
+	if err != nil || !same {
+		t.Fatalf("equal policies in another key order: same=%v err=%v", same, err)
+	}
+	_, err = SameStoredPolicy(context.Background(), unsupported, a, []byte(`{"b":2}`))
+	if !errors.Is(err, ErrCannotConfirm) {
+		t.Fatalf("a difference on an old build: err=%v, want ErrCannotConfirm", err)
 	}
 }

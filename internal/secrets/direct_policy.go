@@ -90,6 +90,12 @@ func PlanDirectChange(ctx context.Context, members []MemberPolicy, expect func(j
 			return nil, "", err
 		}
 		stored, err := canon(ctx, next)
+		if vault.IsUnsupported(err) {
+			// A vault build without the canonical call: the change is
+			// computed from what the vaults store, so it is sent as it is,
+			// and the read-back of every vault shows whether they hold it.
+			stored, err = next, nil
+		}
 		if err != nil {
 			return nil, "", err
 		}

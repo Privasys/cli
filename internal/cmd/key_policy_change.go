@@ -147,6 +147,10 @@ func changeKeyPolicyV1(cmd *cobra.Command, env *Env, client *api.Client, appID s
 		return res, fmt.Errorf("changed, but the result could not be read back: %w", err)
 	}
 	same, err := secrets.SameStoredPolicy(ctx, secrets.VaultCanonicaliser(dir, fresh, attTok), expected, now)
+	if errors.Is(err, secrets.ErrCannotConfirm) {
+		return res, fmt.Errorf("APPLIED, but not confirmed: the policy the key's vaults now hold does not match the one asked for as written, "+
+			"and their build cannot put policies in its stored form to compare them; check it with `privasys apps measurements %s`", appID)
+	}
 	if err != nil {
 		return res, fmt.Errorf("changed, but the result could not be compared: %w", err)
 	}

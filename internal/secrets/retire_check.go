@@ -171,11 +171,24 @@ func teeTDX(p any) (mrtd, rtmr1, rtmr2 string) {
 // default out; the control plane's typed policy leaves them out. Both go
 // through the vault's own canonicalisation, which writes the defaults on both
 // sides alike, and the digests of what it returns are compared.
+//
+// Two policies with the same digest as they are need no vault: the digest is
+// key-order free, and the same digest is the same policy. Only a difference
+// goes to the vaults, and a vault build without the canonical call
+// (ErrCannotConfirm) cannot settle it.
 func SameStoredPolicy(ctx context.Context, canon Canonicaliser, expected, got json.RawMessage) (bool, error) {
+	if a, aerr := vault.PolicyDigestJSON(expected); aerr == nil {
+		if b, berr := vault.PolicyDigestJSON(got); berr == nil && a == b {
+			return true, nil
+		}
+	}
 	if canon == nil {
 		return false, errors.New("no vault to canonicalise the policies with")
 	}
 	wantPD, err := canonicalPD(ctx, canon, expected)
+	if vault.IsUnsupported(err) {
+		return false, fmt.Errorf("%w: the policies differ as written, and the key's vaults cannot put them in their stored form", ErrCannotConfirm)
+	}
 	if err != nil {
 		return false, fmt.Errorf("the expected policy: %w", err)
 	}
@@ -185,6 +198,11 @@ func SameStoredPolicy(ctx context.Context, canon Canonicaliser, expected, got js
 	}
 	return wantPD == gotPD, nil
 }
+
+// ErrCannotConfirm: two policies differ as written and the key's vaults run a
+// build without the canonical call, so whether they differ once stored cannot
+// be settled.
+var ErrCannotConfirm = errors.New("cannot confirm the policy")
 
 // decodeTree reads JSON keeping numbers exact.
 func decodeTree(raw json.RawMessage) (any, error) {
