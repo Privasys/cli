@@ -843,6 +843,7 @@ generation authorises).`,
 			if err != nil {
 				return err
 			}
+			deleteOldKey(cmd, env, client, appID, res)
 			if !env.Quiet && env.Format == "table" {
 				if nh := output.Str(res, "new_handle"); nh != "" {
 					fmt.Fprintf(cmd.ErrOrStderr(), "rotated to %s\n", nh)
@@ -1073,6 +1074,7 @@ running. Defaults to the currently-active constellation.`,
 			if err != nil {
 				return err
 			}
+			deleteOldKey(cmd, env, client, appID, res)
 			if !env.Quiet && env.Format == "table" {
 				if w := output.Str(res, "warning"); w != "" {
 					fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s\n", w)

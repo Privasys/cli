@@ -1263,7 +1263,7 @@ func (s *Server) registerTools() {
 					}
 					enc, _ = encs[0]["id"].(string)
 				}
-				return d.Client.RotateKey(ctx, id, vid, enc)
+				return withDeleteApprovalNote(d.Client.RotateKey(ctx, id, vid, enc))
 			},
 		},
 		{
@@ -1322,7 +1322,7 @@ func (s *Server) registerTools() {
 				if err != nil {
 					return nil, err
 				}
-				return d.Client.MigrateConstellation(ctx, id, target)
+				return withDeleteApprovalNote(d.Client.MigrateConstellation(ctx, id, target))
 			},
 		},
 		{
@@ -1639,4 +1639,19 @@ func mcpVaultTokens(d Deps) secrets.TokenFor {
 	return func(ctx context.Context, aud string) (string, error) {
 		return auth.VaultTokenFor(ctx, d.Issuer, aud)
 	}
+}
+
+// withDeleteApprovalNote explains a rotation or migration answer's
+// delete_approval to the agent, which cannot give it: the old key is deleted
+// only with the owner's approval in the Privasys Wallet (the CLI command does
+// that), and otherwise stops being served when it expires.
+func withDeleteApprovalNote(res map[string]interface{}, err error) (interface{}, error) {
+	if err != nil {
+		return res, err
+	}
+	if _, ok := res["delete_approval"]; ok {
+		res["next"] = "The previous key is deleted only with the owner's approval in the Privasys Wallet: " +
+			"ask the owner to run the same command with the privasys CLI, or leave it to expire."
+	}
+	return res, nil
 }

@@ -55,6 +55,11 @@ type ApprovalV2 struct {
 	// default of an hour. A shorter one fails safe: the old key then expires
 	// by itself. Refused on every other operation.
 	TTLSeconds int64
+	// SuccessorHandle is the key that replaces Handle, on a delete_after whose
+	// successor already exists (formats §9.2, created successor). Its target
+	// is DeleteAfterTarget(SuccessorHandle, "-") and it lives at most
+	// successorDeleteMaxTTL.
+	SuccessorHandle string
 	Audience   string // "" = privasys.id's default
 	Context    approvalContext
 }
@@ -63,11 +68,24 @@ type ApprovalV2 struct {
 // for none.
 const deleteAfterDefaultTTL = 3600
 
+// successorDeleteMaxTTL bounds a delete_after whose successor exists already:
+// nothing waits, so it gets no long lifetime.
+const successorDeleteMaxTTL = 600
+
+// singleBeginTTL is the lifetime a single v2 begin asks privasys.id for.
+const singleBeginTTL = 300
+
 // maxLeft is the longest an approval for a may have left when privasys.id
 // answers: what was asked for a delete_after, else the operation's limit.
 func (a ApprovalV2) maxLeft() int64 {
 	if a.Operation != vault.BindDeleteAfter {
 		return a.Operation.MaxTTLSeconds()
+	}
+	if a.SuccessorHandle != "" {
+		if a.TTLSeconds == 0 {
+			return singleBeginTTL
+		}
+		return a.TTLSeconds
 	}
 	if a.TTLSeconds == 0 {
 		return deleteAfterDefaultTTL
@@ -109,6 +127,24 @@ func (a ApprovalV2) check() error {
 			return fmt.Errorf("a delete_after lasts %d to %d s", minApprovalLeftSeconds, vault.DeleteAfterMaxTTLSeconds)
 		}
 	}
+	if a.SuccessorHandle != "" {
+		if a.Operation != vault.BindDeleteAfter {
+			return fmt.Errorf("only a delete_after names a successor, not a %s", a.Operation)
+		}
+		if a.SuccessorHandle == a.Handle {
+			return errors.New("a key cannot be its own successor")
+		}
+		if a.TTLSeconds > successorDeleteMaxTTL {
+			return fmt.Errorf("a delete_after whose successor exists lasts at most %d s", successorDeleteMaxTTL)
+		}
+		want, err := vault.DeleteAfterTarget(a.SuccessorHandle, "-")
+		if err != nil {
+			return err
+		}
+		if a.Target != want {
+			return errors.New("the target of a delete_after is not computed from its successor")
+		}
+	}
 	if len(a.Identities) == 0 {
 		return errors.New("an approval must name the vaults it is for")
 	}
@@ -123,11 +159,15 @@ func (a ApprovalV2) check() error {
 // RequestApprovalV2 opens a v2 approval at privasys.id, verifies the binding it
 // returns, shows the approval to the owner and returns the token once approved.
 func RequestApprovalV2(ctx context.Context, issuer, bearer string, a ApprovalV2, open BrowserOpener, out io.Writer) (string, error) {
-	if a.Operation == vault.BindDeleteAfter {
-		return "", errors.New("a delete_after is approved only in a batch with its successor's promote or creation")
+	if a.Operation == vault.BindDeleteAfter && a.SuccessorHandle == "" {
+		return "", errors.New("a delete_after is approved alone only once its successor exists; otherwise in a batch with its successor's promote or creation")
 	}
 	if err := a.check(); err != nil {
 		return "", err
+	}
+	ttl := int64(singleBeginTTL)
+	if a.SuccessorHandle != "" && a.TTLSeconds != 0 {
+		ttl = a.TTLSeconds
 	}
 	issuer = strings.TrimRight(issuer, "/")
 	begin := map[string]interface{}{
@@ -141,7 +181,7 @@ func RequestApprovalV2(ctx context.Context, issuer, bearer string, a ApprovalV2,
 		// and privasys.id checks members are their member ids.
 		"member_identities": a.Identities,
 		"issuer_index":      a.IssuerIndex,
-		"ttl_seconds":       300,
+		"ttl_seconds":       ttl,
 		"context":           a.Context,
 	}
 	if len(a.NewPolicy) != 0 {
@@ -149,6 +189,9 @@ func RequestApprovalV2(ctx context.Context, issuer, bearer string, a ApprovalV2,
 	}
 	if len(a.CurrentPolicy) != 0 {
 		begin["current_policy"] = a.CurrentPolicy
+	}
+	if a.SuccessorHandle != "" {
+		begin["successor_handle"] = a.SuccessorHandle
 	}
 	if a.Audience != "" {
 		begin["audience"] = a.Audience
@@ -342,4 +385,18 @@ func (a ApprovalV2) checkPolicies() error {
 		return fmt.Errorf("a %s carries no policy", a.Operation)
 	}
 	return nil
+}
+
+// DeleteAfterSuccessorApproval builds the delete_after of old, whose
+// successor already exists (formats §9.2, created successor), with the target
+// computed here from the successor.
+func DeleteAfterSuccessorApproval(old, successor string, policyVersion uint64, ids []PinnedIdentity,
+	audience string, context map[string]string) (ApprovalV2, error) {
+	target, err := vault.DeleteAfterTarget(successor, "-")
+	if err != nil {
+		return ApprovalV2{}, err
+	}
+	a := ApprovalV2{Operation: vault.BindDeleteAfter, Handle: old, SuccessorHandle: successor, Target: target,
+		PolicyVersion: policyVersion, Identities: ids, Audience: audience, Context: context}
+	return a, a.check()
 }

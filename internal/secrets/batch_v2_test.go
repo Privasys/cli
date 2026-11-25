@@ -174,9 +174,9 @@ func TestDeleteAfterGuards(t *testing.T) {
 		t.Errorf("a key deleting itself after its own promote: %v", err)
 	}
 
-	// Never on its own.
+	// Never on its own without a successor.
 	if _, err := RequestApprovalV2(t.Context(), "http://127.0.0.1:1", "b",
-		ApprovalV2{Operation: vault.BindDeleteAfter, Handle: "h", Target: self, Identities: ids}, nil, nil); err == nil || !strings.Contains(err.Error(), "only in a batch") {
+		ApprovalV2{Operation: vault.BindDeleteAfter, Handle: "h", Target: self, Identities: ids}, nil, nil); err == nil || !strings.Contains(err.Error(), "only once its successor exists") {
 		t.Errorf("a single delete_after: %v", err)
 	}
 

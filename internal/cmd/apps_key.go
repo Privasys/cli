@@ -115,6 +115,7 @@ needs it.`,
 			if err != nil {
 				return fmt.Errorf("the new key exists but the re-wrap failed (retry with `apps rotate-key %s %s --enclave %s`): %w", appID, versionID, enclaveID, err)
 			}
+			deleteOldKey(cmd, env, client, appID, rot)
 			return output.Emit(env.Format, rot, func() output.Table {
 				return kvTable(rot, []string{"rotated", "new_handle", "old_handle", "warning"})
 			})

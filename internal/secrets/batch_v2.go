@@ -97,6 +97,12 @@ func BeginBatchV2(ctx context.Context, issuer, bearer, label, audience string, e
 	if len(entries) == 0 || len(entries) > MaxBatchEntries {
 		return nil, fmt.Errorf("a batch holds 1 to %d operations", MaxBatchEntries)
 	}
+	for _, a := range entries {
+		if a.SuccessorHandle != "" {
+			// This CLI asks for a created successor's delete_after alone.
+			return nil, fmt.Errorf("the delete_after of %s names its successor and is approved on its own, not in a batch", a.Handle)
+		}
+	}
 	if err := checkDeleteAfter(entries); err != nil {
 		return nil, err
 	}

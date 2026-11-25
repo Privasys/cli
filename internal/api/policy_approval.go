@@ -68,3 +68,46 @@ func (c *Client) RetireMeasurementApproved(ctx context.Context, id, digest strin
 	}
 	return out, nil
 }
+
+// DeleteApproval is what the control plane asks the owner to approve after a
+// rotation or a migration on binding-v2 vaults: the delete of the old key
+// (Handle) now that its successor exists (formats §9.2, created successor).
+type DeleteApproval struct {
+	Operation       string   `json:"operation"`
+	Handle          string   `json:"handle"`
+	SuccessorHandle string   `json:"successor_handle"`
+	PolicyVersion   uint64   `json:"policy_version"`
+	ConstellationID string   `json:"constellation_id"`
+	Audience        string   `json:"audience"`
+	BindingVersion  int      `json:"binding_version"`
+	Members         []string `json:"members"`
+}
+
+// DeleteApprovalFrom reads a rotation or migration answer's delete_approval.
+func DeleteApprovalFrom(res map[string]interface{}) (*DeleteApproval, bool) {
+	raw, ok := res["delete_approval"]
+	if !ok || raw == nil {
+		return nil, false
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil, false
+	}
+	var da DeleteApproval
+	if json.Unmarshal(b, &da) != nil {
+		return nil, false
+	}
+	return &da, true
+}
+
+// DeleteOldKey deletes an app's previous key under the owner's delete_after
+// approval; the client's token must be that approval.
+func (c *Client) DeleteOldKey(ctx context.Context, id string, da *DeleteApproval) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/apps/"+id+"/key/delete-old", map[string]string{
+		"constellation_id": da.ConstellationID, "handle": da.Handle, "successor_handle": da.SuccessorHandle,
+	}, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
