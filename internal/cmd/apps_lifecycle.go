@@ -652,7 +652,7 @@ control or for scripting.`,
 // version (optional), approve the measurement for a vault-backed app, then cut
 // over (the server stops the old version before starting the new one).
 func newAppsUpdateCmd() *cobra.Command {
-	var enclaveID string
+	var enclaveID, location string
 	var pendingID int
 	var yes, watch bool
 	cmd := &cobra.Command{
@@ -707,7 +707,7 @@ version loads cleanly with no locked-data window.`,
 				}
 			}
 
-			enc, err := resolveEnclaveRef(ctx, client, appID, enclaveID)
+			target, err := resolveDeployTarget(ctx, client, appID, enclaveID, location)
 			if err != nil {
 				return err
 			}
@@ -716,6 +716,14 @@ version loads cleanly with no locked-data window.`,
 			// A handle is present only once the app has been deployed before, i.e.
 			// this is an upgrade; the first deploy fills the key and needs no approval.
 			if output.Str(app, "vault_key_handle") != "" {
+				// The measurement is the host the app runs on (an instance's
+				// enclave id is its instance id).
+				enc := target.HostEnclaveID()
+				if enc == "" {
+					if enc, err = resolveEnclaveRef(ctx, client, appID, ""); err != nil {
+						return err
+					}
+				}
 				staged, serr := client.StageProfile(ctx, appID, vid, enc)
 				if serr != nil {
 					return serr
@@ -751,7 +759,7 @@ version loads cleanly with no locked-data window.`,
 
 			// 3. Deploy. The server gate verifies the measurement is promoted and
 			// stops the running version before starting the new one (no overlap).
-			dep, derr := client.DeployVersion(ctx, appID, vid, enc, "", "", "", "", 0)
+			dep, derr := client.DeployVersion(ctx, appID, vid, target.EnclaveID, target.Location, "", "", target.InstanceID, 0)
 			if derr != nil {
 				return derr
 			}
@@ -767,7 +775,8 @@ version loads cleanly with no locked-data window.`,
 	cmd.Flags().String("image", "", "container image ref (package apps)")
 	cmd.Flags().String("channel", "", "cloud-image channel (cloud_image apps)")
 	cmd.Flags().String("version", "", "semver to assign (vX.Y.Z; default auto-bump patch)")
-	cmd.Flags().StringVar(&enclaveID, "enclave", "", "target enclave id (default: the only compatible one)")
+	cmd.Flags().StringVar(&location, "location", "", "deploy location code (default: where the app runs now; see 'apps locations')")
+	cmd.Flags().StringVar(&enclaveID, "enclave", "", "explicit enclave id, a platform admin override (default: where the app runs now)")
 	cmd.Flags().IntVar(&pendingID, "pending", 0, "pending profile id to promote (default 0)")
 	cmd.Flags().BoolVar(&yes, "yes", false, "do not prompt before promoting")
 	cmd.Flags().BoolVar(&watch, "watch", false, "poll until the deployment is active or failed")
@@ -1314,11 +1323,20 @@ func runningVersion(ctx context.Context, client *api.Client, appID string) (stri
 	return client.RunningVersionID(ctx, appID)
 }
 
-// resolveEnclaveRef picks the target enclave: the flag if set, else the single
+// resolveEnclaveRef picks the enclave a version is measured on: the flag if
+// set, else the host the app runs on now (its data lives there, and a
+// dedicated instance is never in the compatible list), else the single
 // compatible enclave, else an error asking for --enclave.
 func resolveEnclaveRef(ctx context.Context, client *api.Client, appID, flag string) (string, error) {
 	if flag != "" {
 		return flag, nil
+	}
+	deps, err := client.ListDeployments(ctx, appID)
+	if err != nil {
+		return "", err
+	}
+	if cur := api.CurrentDeployment(deps); cur != nil {
+		return output.Str(cur, "enclave_id"), nil
 	}
 	encs, err := client.CompatibleEnclaves(ctx, appID)
 	if err != nil {
@@ -1332,6 +1350,18 @@ func resolveEnclaveRef(ctx context.Context, client *api.Client, appID, flag stri
 	default:
 		return "", fmt.Errorf("multiple compatible enclaves; pass --enclave <id>")
 	}
+}
+
+// resolveDeployTarget is where `apps update` deploys: --enclave (an explicit
+// override) or --location as given, else where the app runs now.
+func resolveDeployTarget(ctx context.Context, client *api.Client, appID, enclaveFlag, locationFlag string) (api.DeployTarget, error) {
+	switch {
+	case enclaveFlag != "":
+		return api.DeployTarget{EnclaveID: enclaveFlag}, nil
+	case locationFlag != "":
+		return api.DeployTarget{Location: locationFlag}, nil
+	}
+	return client.ResolveUpgradeTarget(ctx, appID)
 }
 
 func newVersionsStageCmd() *cobra.Command {

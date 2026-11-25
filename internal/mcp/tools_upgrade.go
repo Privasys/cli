@@ -6,6 +6,8 @@ package mcp
 import (
 	"context"
 	"fmt"
+
+	"github.com/Privasys/cli/internal/api"
 )
 
 // upgradeTools give an agent the same guided upgrade flow the CLI offers
@@ -55,8 +57,8 @@ func upgradeTools() []tool {
 				"channel":          strProp("cloud-image channel to ship (cloud_image apps)"),
 				"semver":           strProp("semver to assign the new version (default: auto-bump patch)"),
 				"version":          strProp("existing version id to use instead of shipping a new one (pass back the id from phase one)"),
-				"enclave":          strProp("target enclave id (default: the only compatible one)"),
-				"location":         strProp("deploy location code (see apps_locations)"),
+				"enclave":          strProp("explicit enclave id, a platform admin override (default: where the app runs now)"),
+				"location":         strProp("deploy location code (default: where the app runs now; see apps_locations)"),
 				"size":             strProp("container VM size for this deployment (see apps_sizes)"),
 				"tenancy":          enumProp("mutualised (default) or dedicated", "mutualised", "dedicated"),
 				"instance":         strProp("deploy onto a dedicated instance id you own"),
@@ -185,10 +187,22 @@ func runUpgrade(ctx context.Context, d Deps, args map[string]interface{}, appID,
 	}, nil
 }
 
-// resolveUpgradeEnclave picks the target enclave: explicit, else the only
-// compatible one.
+// resolveUpgradeEnclave picks the enclave the new version is measured on:
+// explicit, else the named instance (its enclave id is its instance id), else
+// the host the app runs on now, else the only compatible one.
 func resolveUpgradeEnclave(ctx context.Context, d Deps, args map[string]interface{}, appID string) (string, error) {
 	if enc := argStr(args, "enclave"); enc != "" {
+		return enc, nil
+	}
+	if inst := argStr(args, "instance"); inst != "" {
+		return inst, nil
+	}
+	deps, err := d.Client.ListDeployments(ctx, appID)
+	if err != nil {
+		return "", err
+	}
+	if cur := api.CurrentDeployment(deps); cur != nil {
+		enc, _ := cur["enclave_id"].(string)
 		return enc, nil
 	}
 	encs, err := d.Client.CompatibleEnclaves(ctx, appID)
@@ -220,22 +234,19 @@ func stepUpNote(stepUp bool) string {
 	return "This key promotes on the owner's session alone, so confirm:true will promote it — get real human sign-off first."
 }
 
-// deployResolved deploys a version with the same placement rules as apps_deploy:
-// an owned instance wins, then an explicit enclave, then the location (using the
-// sole one when there is exactly one).
+// deployResolved deploys a version: an owned instance, an explicit enclave or a
+// location as given; else (and not a new dedicated VM) where the app runs now,
+// so an upgrade never moves an app off its host or instance on its own.
 func deployResolved(ctx context.Context, d Deps, args map[string]interface{}, appID, versionID string) (interface{}, error) {
 	enclaveID := argStr(args, "enclave")
 	location := argStr(args, "location")
 	instanceID := argStr(args, "instance")
-	if instanceID == "" && enclaveID == "" && location == "" {
-		locs, err := d.Client.DeployLocations(ctx, appID)
+	if instanceID == "" && enclaveID == "" && location == "" && argStr(args, "tenancy") != "dedicated" {
+		t, err := d.Client.ResolveUpgradeTarget(ctx, appID)
 		if err != nil {
 			return nil, err
 		}
-		if len(locs) != 1 {
-			return nil, errPickLocation
-		}
-		location, _ = locs[0]["code"].(string)
+		enclaveID, location, instanceID = t.EnclaveID, t.Location, t.InstanceID
 	}
 	return shipSurfaces(ctx, d, args, appID, versionID, func() (map[string]interface{}, error) {
 		return d.Client.DeployVersion(ctx, appID, versionID, enclaveID, location,
