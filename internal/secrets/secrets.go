@@ -39,6 +39,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Privasys/enclave-vaults-client/go/vault"
 )
 
 const grantPath = "/vault/key-creation-grant"
@@ -387,6 +389,9 @@ func keyGone(err error) (gone, deleted bool) {
 	if err == nil {
 		return false, false
 	}
+	if vault.IsKeyDeleted(err) {
+		return true, true
+	}
 	msg := err.Error()
 	if strings.Contains(msg, "key deleted") {
 		return true, true
@@ -394,8 +399,44 @@ func keyGone(err error) (gone, deleted bool) {
 	return strings.Contains(msg, "not found"), false
 }
 
-// deletedErr says the key is deleted, and matches both ErrKeyDeleted and
-// ErrKeyNotFound.
-func deletedErr(handle string) error {
-	return fmt.Errorf("key %q was deleted: %w (%w)", handle, ErrKeyDeleted, ErrKeyNotFound)
+// DeletedError says a key was deleted, with the vault's record of it when a
+// vault gave one. It matches both ErrKeyDeleted and ErrKeyNotFound.
+type DeletedError struct {
+	Handle    string
+	Tombstone *vault.KeyTombstone // nil when the vault gave no record
+}
+
+func (e *DeletedError) Error() string {
+	if e.Tombstone == nil {
+		return fmt.Sprintf("key %q was deleted", e.Handle)
+	}
+	t := e.Tombstone
+	msg := fmt.Sprintf("key %q was deleted on %s (%s)", e.Handle, unixDate(t.DeletedAt), t.Op)
+	if t.Successor != "" && t.Successor != "-" {
+		msg += ", replaced by " + t.Successor
+	}
+	return msg + "; its name is held until " + unixDate(t.ExpiresAt)
+}
+
+// Is makes a DeletedError match ErrKeyDeleted and ErrKeyNotFound.
+func (e *DeletedError) Is(target error) bool {
+	return target == ErrKeyDeleted || target == ErrKeyNotFound
+}
+
+func unixDate(s uint64) string {
+	if s == 0 {
+		return "an unknown date"
+	}
+	return time.Unix(int64(s), 0).UTC().Format(time.RFC3339)
+}
+
+// deletedErr says handle was deleted, with the tombstone err carries if any.
+func deletedErr(handle string, err error) error {
+	de := &DeletedError{Handle: handle}
+	var kd *vault.ErrKeyDeleted
+	if errors.As(err, &kd) {
+		t := kd.Tombstone
+		de.Tombstone = &t
+	}
+	return de
 }

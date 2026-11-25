@@ -335,7 +335,7 @@ func GetPublicKeyInVault(ctx context.Context, p VaultOpParams) (*PublicKeyResult
 	}
 	opts := vault.DialOptions{AuthToken: staticToken(p.OwnerToken), VaultPolicy: verify}
 	var lastErr error
-	wasDeleted := false
+	var deletedBy error // a vault's answer that the key was deleted
 	for _, ep := range p.Endpoints {
 		c, derr := vault.Dial(ctx, vaultReg(ep), opts)
 		if derr != nil {
@@ -346,7 +346,9 @@ func GetPublicKeyInVault(ctx context.Context, p VaultOpParams) (*PublicKeyResult
 		c.Close()
 		if ierr != nil {
 			if gone, tombstone := keyGone(ierr); gone {
-				wasDeleted = wasDeleted || tombstone
+				if tombstone && deletedBy == nil {
+					deletedBy = ierr
+				}
 				continue
 			}
 			lastErr = ierr
@@ -359,8 +361,8 @@ func GetPublicKeyInVault(ctx context.Context, p VaultOpParams) (*PublicKeyResult
 		return res, nil
 	}
 	if lastErr == nil {
-		if wasDeleted {
-			return nil, deletedErr(p.Handle)
+		if deletedBy != nil {
+			return nil, deletedErr(p.Handle, deletedBy)
 		}
 		return nil, fmt.Errorf("no vault has key %q: %w", p.Handle, ErrKeyNotFound)
 	}

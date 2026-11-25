@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Privasys/enclave-vaults-client/go/vault"
 	"github.com/spf13/cobra"
 
 	"github.com/Privasys/cli/internal/api"
@@ -128,7 +129,8 @@ Renew one you still need before then with 'privasys secrets renew'.`,
 				Secret: secret, Exportable: exportable, Endpoints: endpoints,
 				Threshold: threshold, MRENCLAVE: mrenclave, AttServer: attServer, AttToken: attTok,
 			})
-			if err != nil && strings.Contains(err.Error(), "key deleted") {
+			if err != nil && (vault.IsHandleTombstoned(err) || strings.Contains(err.Error(), "handle deleted at") ||
+				strings.Contains(err.Error(), "key deleted")) {
 				// The vaults keep a deleted secret's name until its original
 				// expiry (formats §9.3).
 				return fmt.Errorf("a secret named %s was deleted, and the vaults keep its name until the date it would have expired; choose another name (%w)", args[0], err)
