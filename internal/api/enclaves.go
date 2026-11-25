@@ -93,3 +93,27 @@ func (c *Client) PromoteDataKey(ctx context.Context, id string, pendingID uint32
 	}
 	return out, nil
 }
+
+// EnclaveRuntime is an enclave's recorded TDX runtime measurement.
+type EnclaveRuntime struct {
+	MRTD   string `json:"mrtd"`
+	RTMR1  string `json:"rtmr1"`
+	RTMR2  string `json:"rtmr2"`
+	Source string `json:"source"`
+}
+
+// EnclaveMeasurements reads an enclave's latest recorded runtime measurement
+// (GET /admin/enclaves/{id}/measurements, taken from its boot quote).
+// Platform admins only.
+func (c *Client) EnclaveMeasurements(ctx context.Context, id string) (*EnclaveRuntime, error) {
+	var out struct {
+		Latest *EnclaveRuntime `json:"latest"`
+	}
+	if err := c.getJSON(ctx, "/api/v1/admin/enclaves/"+url.PathEscape(id)+"/measurements", &out); err != nil {
+		return nil, err
+	}
+	if out.Latest == nil {
+		return nil, fmt.Errorf("enclave %s has no recorded measurement", id)
+	}
+	return out.Latest, nil
+}
