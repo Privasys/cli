@@ -345,6 +345,12 @@ func directApproval(cmd *cobra.Command, env *Env, dir *api.VaultDirectory, handl
 	case strings.Contains(handle, "/registry-cred/"):
 		actx["key_type"] = "registry credential"
 	}
+	// The card's heading names the key itself, not the wallet's fallback.
+	cardName := "key " + handle
+	if kt := actx["key_type"]; kt != "" {
+		cardName = kt + " key " + handle
+	}
+	actx = withCardName(actx, cardName)
 	bearer, err := auth.AccessToken(ctx, env.Cfg.Issuer)
 	if err != nil {
 		return secrets.DirectApproval{}, err

@@ -392,7 +392,7 @@ func secretApprover(cmd *cobra.Command, s *secretSession, vaultAudience, name st
 			return "", err
 		}
 		a.Audience = audience
-		a.Context = map[string]string{"app_name": "secret " + name}
+		a.Context = withCardName(a.Context, "secret "+name)
 		return secrets.RequestApprovalV2(ctx, s.env.Cfg.Issuer, bearer, a, secrets.OpenBrowser, cmd.ErrOrStderr())
 	}
 }

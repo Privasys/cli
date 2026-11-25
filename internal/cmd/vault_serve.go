@@ -152,7 +152,7 @@ func (f *kvFacade) create(w http.ResponseWriter, r *http.Request) {
 	mint := func(ctx context.Context, cnf string) (string, secrets.VaultAddressing, error) {
 		return mintVaultKeyGrant(ctx, f.client, f.vaultID, name, kvKeyType(body.Kty), cnf, kvKeyType(body.Kty) == "", "", "")
 	}
-	approvalSub, approveCreate := vaultCreateApprovals(f.env, os.Stderr)
+	approvalSub, approveCreate := vaultCreateApprovals(f.env, os.Stderr, vaultKeyDisplayName(r.Context(), f.client, f.vaultID, name))
 	params := secrets.VaultCreateParams{Sub: sub, AttToken: attTok, MintGrant: mint, ApprovalSub: approvalSub, ApproveCreate: approveCreate}
 	var res *secrets.Result
 	switch kvKeyType(body.Kty) {

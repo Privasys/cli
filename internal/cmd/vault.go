@@ -271,7 +271,7 @@ constellation. The platform never sees the key material.
 
 			var res *secrets.Result
 			var publicKey []byte
-			approvalSub, approveCreate := vaultCreateApprovals(env, cmd.ErrOrStderr())
+			approvalSub, approveCreate := vaultCreateApprovals(env, cmd.ErrOrStderr(), vaultKeyDisplayName(ctx, client, vaultID, name))
 			params := secrets.VaultCreateParams{Sub: sub, Exportable: exp, AttToken: attTok, MintGrant: mint,
 				ApprovalSub: approvalSub, ApproveCreate: approveCreate}
 			switch {
@@ -495,7 +495,7 @@ func vaultKeyApprover(cmd *cobra.Command, env *Env, client *api.Client, vaultAud
 			return "", err
 		}
 		a.Audience = audience
-		a.Context = map[string]string{"app_name": vaultKeyDisplayName(ctx, client, vaultID, name)}
+		a.Context = withCardName(a.Context, vaultKeyDisplayName(ctx, client, vaultID, name))
 		return secrets.RequestApprovalV2(ctx, env.Cfg.Issuer, bearer, a, secrets.OpenBrowser, cmd.ErrOrStderr())
 	}
 }
@@ -1083,8 +1083,9 @@ wallet: the approval names the exact vaults and build the key goes to.
 // vaultCreateApprovals are what a create of a re-created vault key name
 // (".../new-<k>", formats §9.3.1) needs: the subject the key's vaults will
 // see (that of the owner's token for their audience) and the owner's create
-// approval in the Privasys Wallet.
-func vaultCreateApprovals(env *Env, out io.Writer) (func(context.Context, string) (string, error), func(context.Context, secrets.ApprovalV2) (string, error)) {
+// approval in the Privasys Wallet, its card named as every card for the key
+// is (cardName).
+func vaultCreateApprovals(env *Env, out io.Writer, cardName string) (func(context.Context, string) (string, error), func(context.Context, secrets.ApprovalV2) (string, error)) {
 	sub := func(ctx context.Context, reported string) (string, error) {
 		audience, err := vaultApprovalAudience(reported)
 		if err != nil {
@@ -1110,6 +1111,7 @@ func vaultCreateApprovals(env *Env, out io.Writer) (func(context.Context, string
 			return "", err
 		}
 		a.Audience = audience
+		a.Context = withCardName(a.Context, cardName)
 		bearer, err := auth.AccessToken(ctx, env.Cfg.Issuer)
 		if err != nil {
 			return "", err
