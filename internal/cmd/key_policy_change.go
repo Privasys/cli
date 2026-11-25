@@ -116,9 +116,8 @@ func changeKeyPolicyV1(cmd *cobra.Command, env *Env, client *api.Client, appID s
 	if name := appFriendlyName(ctx, client, appID); name != "" {
 		actx["app_name"] = name
 	}
-	if info, ierr := secrets.KeyInfoAt(ctx, dir, vaultTok, attTok, tgt.Handle); ierr == nil && info.KeyType != "" {
-		actx["key_type"] = string(info.KeyType)
-	}
+	// The card names the kind of key as the portal does.
+	actx["key_type"] = "storage"
 	// One approval for this one change, used at once: the vault takes it
 	// for 300 s from its issue.
 	tok, err := secrets.RequestStepUpViaBrowserFor(ctx, env.Cfg.Issuer, bearer, audience, "policy-update",

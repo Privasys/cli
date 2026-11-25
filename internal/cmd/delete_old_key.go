@@ -117,9 +117,8 @@ func approveAndDeleteOldKey(cmd *cobra.Command, env *Env, client *api.Client, ap
 	if name := appFriendlyName(ctx, client, appID); name != "" {
 		actx["app_name"] = name
 	}
-	if info, ierr := secrets.KeyInfoAt(ctx, d, vaultTok, attTok, da.Handle); ierr == nil && info.KeyType != "" {
-		actx["key_type"] = string(info.KeyType)
-	}
+	// The card names the kind of key as the portal does.
+	actx["key_type"] = "storage"
 	approval, err := secrets.DeleteAfterSuccessorApproval(da.Handle, da.SuccessorHandle, da.PolicyVersion, ids, audience, actx)
 	if err != nil {
 		return fmt.Errorf("refusing the delete: %w", err)

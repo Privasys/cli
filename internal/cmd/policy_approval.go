@@ -145,9 +145,8 @@ func approvePolicyChange(cmd *cobra.Command, env *Env, client *api.Client, appID
 	if name := appFriendlyName(ctx, client, appID); name != "" {
 		actx["app_name"] = name
 	}
-	if info, ierr := secrets.KeyInfoAt(ctx, dir, vaultTok, attTok, key.Handle); ierr == nil && info.KeyType != "" {
-		actx["key_type"] = string(info.KeyType)
-	}
+	// The card names the kind of key as the portal does.
+	actx["key_type"] = "storage"
 	approval, err := secrets.UpdatePolicyApproval(pa.Handle, pa.PolicyVersion, ids, pa.NewPolicy, current, audience, actx)
 	if err != nil {
 		return "", fmt.Errorf("refusing the policy change: %w", err)

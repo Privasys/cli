@@ -306,6 +306,12 @@ func directApproval(cmd *cobra.Command, env *Env, dir *api.VaultDirectory, handl
 		return secrets.DirectApproval{}, err
 	}
 	actx := map[string]string{"summary": summary, "change": summary}
+	switch {
+	case strings.Contains(handle, "/manager/data/"):
+		actx["key_type"] = "machine data"
+	case strings.Contains(handle, "/registry-cred/"):
+		actx["key_type"] = "registry credential"
+	}
 	bearer, err := auth.AccessToken(ctx, env.Cfg.Issuer)
 	if err != nil {
 		return secrets.DirectApproval{}, err
