@@ -180,3 +180,23 @@ func refuseRunningProfile(cmd *cobra.Command, client *api.Client, appID string, 
 	}
 	return nil
 }
+
+// requireRetireMode refuses, before any approval, a retire the control plane
+// would make differently from what the CLI checks: it must list mode in
+// /measurements' retire_modes ("digest_all": every profile of a build in one
+// update; "profile": exactly one profile). Older control planes remove one
+// profile per call and list nothing.
+func requireRetireMode(cmd *cobra.Command, client *api.Client, appID, mode string) error {
+	m, err := client.AppMeasurements(cmd.Context(), appID)
+	if err != nil {
+		return fmt.Errorf("read the app's measurements: %w", err)
+	}
+	modes, _ := m["retire_modes"].([]interface{})
+	for _, x := range modes {
+		if s, _ := x.(string); s == mode {
+			return nil
+		}
+	}
+	return errors.New("this control plane retires measurements another way than this CLI checks (it does not list retire mode " +
+		mode + "); nothing was changed. Update the control plane first, or use an older CLI")
+}

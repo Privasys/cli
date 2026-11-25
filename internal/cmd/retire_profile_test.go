@@ -33,3 +33,27 @@ func TestRefuseRunningProfile(t *testing.T) {
 		t.Fatalf("an older runtime's profile was refused: %v", err)
 	}
 }
+
+// A retire is refused before any approval unless the control plane lists the
+// mode the CLI checks.
+func TestRequireRetireMode(t *testing.T) {
+	body := `{"measurements":[]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	c := api.New(srv.URL, "tok")
+	if err := requireRetireMode(cmd, c, "app", "digest_all"); err == nil {
+		t.Fatal("an older control plane (no retire_modes) was accepted")
+	}
+	body = `{"measurements":[],"retire_modes":["digest_all"]}`
+	if err := requireRetireMode(cmd, c, "app", "digest_all"); err != nil {
+		t.Fatalf("digest_all listed: %v", err)
+	}
+	if err := requireRetireMode(cmd, c, "app", "profile"); err == nil {
+		t.Fatal("profile accepted when only digest_all is listed")
+	}
+}

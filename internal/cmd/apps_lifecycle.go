@@ -1197,6 +1197,15 @@ measurement (it would make the key unusable).`,
 				return fmt.Errorf("a profile is named by --mrtd, --rtmr1 and --rtmr2 together")
 			}
 			profile := api.RetiredProfile{WorkloadDigest: digest, MRTD: mrtd, RTMR1: rtmr1, RTMR2: rtmr2}
+			// The control plane must retire the way the CLI checks, before
+			// anything is asked of the owner.
+			mode := "digest_all"
+			if byProfile {
+				mode = "profile"
+			}
+			if err := requireRetireMode(cmd, client, appID, mode); err != nil {
+				return err
+			}
 			if byProfile {
 				if err := refuseRunningProfile(cmd, client, appID, profile); err != nil {
 					return err
