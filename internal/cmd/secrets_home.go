@@ -174,6 +174,13 @@ An expired secret cannot be renewed: its value can no longer be exported.`,
 			if err != nil {
 				return fmt.Errorf("the active constellation: %w", err)
 			}
+			// Both constellations must name their vaults before the owner is
+			// asked for anything: a renew that exports, deletes and then finds
+			// nowhere to create would leave the value only in a rescue file.
+			if len(home.Endpoints) == 0 || len(active.Endpoints) == 0 {
+				return fmt.Errorf("refusing to renew %s: the control plane at %s lists no vaults for %s; nothing was changed",
+					args[0], s.env.Cfg.Endpoint, emptyConstellation(home, active))
+			}
 
 			homeTok, err := auth.VaultTokenFor(ctx, s.env.Cfg.Issuer, home.OIDCAudience)
 			if err != nil {
@@ -279,7 +286,9 @@ An expired secret cannot be renewed: its value can no longer be exported.`,
 					if werr := os.WriteFile(rescue, material, 0o600); werr != nil {
 						return fmt.Errorf("re-create failed (%v) and the value could not be saved to %s (%v): the secret is lost", err, rescue, werr)
 					}
-					return fmt.Errorf("re-create failed: %w; the value is in %s (0600): run 'privasys secrets create %s --from-file %s', then delete the file", err, rescue, args[0], rescue)
+					return fmt.Errorf("re-create failed: %w; the old copy was deleted, so the value is now ONLY in %s (0600) in this directory. "+
+						"Keep that file and share it with no one. Once the cause is fixed, run 'privasys --endpoint %s secrets create %s --from-file %s', "+
+						"check it with 'privasys secrets info %s', and then delete the file", err, rescue, s.env.Cfg.Endpoint, args[0], rescue, args[0])
 				}
 			}
 
@@ -399,4 +408,17 @@ func allHave(ids []secrets.PinnedIdentity, capability string) bool {
 		}
 	}
 	return true
+}
+
+// emptyConstellation names the constellation the control plane listed no
+// vaults for.
+func emptyConstellation(home, active *api.VaultDirectory) string {
+	switch {
+	case len(home.Endpoints) == 0 && len(active.Endpoints) == 0:
+		return "the secret's home " + home.Name + " and the active constellation " + active.Name
+	case len(home.Endpoints) == 0:
+		return "the secret's home " + home.Name
+	default:
+		return "the active constellation " + active.Name
+	}
 }

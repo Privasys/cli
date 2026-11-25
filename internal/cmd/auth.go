@@ -306,7 +306,13 @@ func newAuthListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return output.Emit(env.Format, creds, func() output.Table {
+			// Never a token's value: what is stored, until when, and a short
+			// fingerprint to tell two apart.
+			listed := make([]credentialSummary, 0, len(creds))
+			for _, c := range creds {
+				listed = append(listed, summarizeCredential(c))
+			}
+			return output.Emit(env.Format, listed, func() output.Table {
 				rows := make([][]string, 0, len(creds))
 				for _, c := range creds {
 					kind := "wallet"

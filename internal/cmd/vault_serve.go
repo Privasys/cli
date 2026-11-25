@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -341,7 +342,11 @@ func (f *kvFacade) destroy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := secrets.DestroyKeyInVault(r.Context(), p); err != nil {
-		writeKVError(w, http.StatusBadGateway, err)
+		status := http.StatusBadGateway
+		if errors.Is(err, secrets.ErrKeyNotFound) {
+			status = http.StatusNotFound
+		}
+		writeKVError(w, status, err)
 		return
 	}
 	if err := f.client.DeleteVaultKey(r.Context(), f.vaultID, name); err != nil {

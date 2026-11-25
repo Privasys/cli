@@ -56,6 +56,10 @@ type Credential struct {
 	IsServiceKeyAcc bool `json:"is_service_account,omitempty"`
 }
 
+// HasRefreshToken reports whether a refresh token is stored, in the file or
+// in the keychain.
+func (c *Credential) HasRefreshToken() bool { return c.RefreshToken != "" || c.refreshInKeychain }
+
 // AudienceToken is a cached access token for one audience.
 type AudienceToken struct {
 	AccessToken string    `json:"access_token"`

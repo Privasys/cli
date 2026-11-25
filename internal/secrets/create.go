@@ -135,10 +135,17 @@ func WrapInVault(ctx context.Context, p VaultOpParams, plaintext, aad, iv []byte
 }
 
 // DestroyKeyInVault deletes a key's material from the constellation,
-// authenticating as the owner. It tries every endpoint (a Shamir secret lives on
-// all; a single-enclave operational key on one), ignoring "not found", so it is
-// idempotent. Returns the endpoints the key was deleted from.
+// authenticating as the owner. It asks every endpoint (a Shamir secret lives on
+// all; a single-enclave operational key on one), then reads the key back on
+// every member: it succeeds only when at least one member deleted it (or holds
+// its tombstone) and no member that answers still holds it. A key already
+// deleted (a tombstone) is deleted again idempotently; a key no member holds is
+// ErrKeyNotFound, never a silent success. Returns the endpoints the key was
+// deleted from.
 func DestroyKeyInVault(ctx context.Context, p VaultOpParams) (deletedOn []string, err error) {
+	if len(p.Endpoints) == 0 {
+		return nil, fmt.Errorf("delete %q: no vault endpoints to delete it on", p.Handle)
+	}
 	verify, verr := verifyPolicy(p.MRENCLAVE, p.AttServer, p.AttToken)
 	if verr != nil {
 		return nil, verr
@@ -164,33 +171,92 @@ func DestroyKeyInVault(ctx context.Context, p VaultOpParams) (deletedOn []string
 	if binding == 2 {
 		opts.BindingMembers = memberIDs(ids)
 	}
-	var deleted []string
-	var lastErr error
-	for _, ep := range p.Endpoints {
+	members := make([]memberDelete, len(p.Endpoints))
+	for i, ep := range p.Endpoints {
+		members[i].Endpoint = ep
 		c, derr := vault.Dial(ctx, vaultReg(ep), opts)
 		if derr != nil {
-			lastErr = derr
+			members[i].DelErr = derr
 			continue
 		}
-		derr = c.DeleteKey(ctx, p.Handle)
+		members[i].DelErr = c.DeleteKey(ctx, p.Handle)
+		members[i].Asked = true
 		c.Close()
+	}
+	// The read-back, as the owner: what each member holds now decides, not
+	// what it answered (a vault answers "key not found" for a handle it does
+	// not hold, which says nothing about the members that do).
+	readOpts := vault.DialOptions{AuthToken: staticToken(p.OwnerToken), VaultPolicy: verify}
+	for i, ep := range p.Endpoints {
+		c, derr := vault.Dial(ctx, vaultReg(ep), readOpts)
 		if derr != nil {
-			gone, tombstone := keyGone(derr)
-			if tombstone {
-				// Already deleted there (a tombstone): done, idempotently.
-				deleted = append(deleted, ep)
-				continue
-			}
-			if gone {
-				continue
-			}
-			lastErr = derr
+			members[i].ReadErr = derr
 			continue
 		}
-		deleted = append(deleted, ep)
+		_, members[i].ReadErr = c.GetKeyInfo(ctx, p.Handle)
+		members[i].Read = true
+		c.Close()
 	}
-	if len(deleted) == 0 && lastErr != nil {
-		return nil, fmt.Errorf("delete key material for %q: %v", p.Handle, lastErr)
+	return deleteVerdict(p.Handle, members)
+}
+
+// memberDelete is one member's answer to a delete, and what reading the key
+// back on it afterwards showed.
+type memberDelete struct {
+	Endpoint string
+	Asked    bool  // the delete reached the member (DelErr is its answer)
+	DelErr   error // nil: the member deleted the key
+	Read     bool  // the read-back reached the member (ReadErr is its answer)
+	ReadErr  error // nil: the member still holds the key
+}
+
+// deleteVerdict decides a delete from every member's answer and read-back:
+// success needs at least one member that deleted the key (or holds its
+// tombstone) and every member reached on the read-back to show it gone.
+func deleteVerdict(handle string, ms []memberDelete) ([]string, error) {
+	var deleted, holding, unread []string
+	var lastErr error
+	for _, m := range ms {
+		switch {
+		case !m.Asked:
+			lastErr = m.DelErr
+		case m.DelErr == nil || vault.IsKeyDeleted(m.DelErr):
+			deleted = append(deleted, m.Endpoint)
+		case vaultSaysNotFound(m.DelErr):
+			// This member never held it (or will not say): the read-back decides.
+		default:
+			lastErr = m.DelErr
+		}
+		switch {
+		case !m.Read:
+			unread = append(unread, m.Endpoint)
+		case m.ReadErr == nil:
+			holding = append(holding, m.Endpoint)
+		default:
+			if gone, _ := keyGone(m.ReadErr); !gone {
+				unread = append(unread, m.Endpoint)
+			}
+		}
+	}
+	cause := ""
+	if lastErr != nil {
+		cause = " (" + lastErr.Error() + ")"
+	}
+	if len(holding) > 0 {
+		return deleted, fmt.Errorf("%q was NOT deleted: %s still hold(s) it%s", handle, strings.Join(holding, ", "), cause)
+	}
+	if len(deleted) == 0 {
+		if lastErr != nil {
+			return nil, fmt.Errorf("delete key material for %q: %v", handle, lastErr)
+		}
+		if len(unread) > 0 {
+			return nil, fmt.Errorf("delete %q: no vault deleted it, and %s could not be read back", handle, strings.Join(unread, ", "))
+		}
+		return nil, fmt.Errorf("no vault holds %q: %w", handle, ErrKeyNotFound)
+	}
+	if len(unread) > 0 {
+		return deleted, fmt.Errorf("%q was deleted on %s, but %s could not be read back to confirm it is gone there%s",
+			handle, strings.Join(deleted, ", "), strings.Join(unread, ", "), cause)
 	}
 	return deleted, nil
 }
