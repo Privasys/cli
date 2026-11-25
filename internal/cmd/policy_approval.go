@@ -132,7 +132,14 @@ func approvePolicyChange(cmd *cobra.Command, env *Env, client *api.Client, appID
 	if uint64(curVersion) != pa.PolicyVersion {
 		return "", fmt.Errorf("refusing the policy change: the key's vaults hold policy version %d, the change is for %d", curVersion, pa.PolicyVersion)
 	}
-	if err := semantic(ctx, current, pa.NewPolicy, secrets.VaultCanonicaliser(dir, vaultTok, attTok)); err != nil {
+	canon := secrets.VaultCanonicaliser(dir, vaultTok, attTok)
+	if err := semantic(ctx, current, pa.NewPolicy, canon); err != nil {
+		return "", fmt.Errorf("refusing the policy change: %w", err)
+	}
+	// The vaults take a binding-2 update only with the new policy exactly as
+	// they would store it, and refuse it after the tap otherwise: refuse it
+	// here first, before anything is asked of the owner.
+	if err := secrets.RequireStoredForm(ctx, canon, pa.NewPolicy); err != nil {
 		return "", fmt.Errorf("refusing the policy change: %w", err)
 	}
 	bearer, err := auth.AccessToken(ctx, env.Cfg.Issuer)

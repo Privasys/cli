@@ -153,3 +153,23 @@ func TestCheckRetireChangeStoredDefaults(t *testing.T) {
 		t.Fatal("accepted with no canonicaliser")
 	}
 }
+
+// A binding-2 update must carry the stored form; a typed form with defaults
+// left out is refused before the tap.
+func TestRequireStoredForm(t *testing.T) {
+	stored := json.RawMessage(`{"version":3,"principals":{"auditors":[]},"operations":[{"ops":["Unwrap"],"principals":["AnyTee"],"requires":[]}]}`)
+	typed := json.RawMessage(`{"version":3,"principals":{},"operations":[{"ops":["Unwrap"],"principals":["AnyTee"]}]}`)
+	reordered := json.RawMessage(`{"operations":[{"requires":[],"principals":["AnyTee"],"ops":["Unwrap"]}],"principals":{"auditors":[]},"version":3}`)
+	if err := RequireStoredForm(bg, defaultsCanon, stored); err != nil {
+		t.Fatalf("the stored form was refused: %v", err)
+	}
+	if err := RequireStoredForm(bg, defaultsCanon, reordered); err != nil {
+		t.Fatalf("key order mattered: %v", err)
+	}
+	if err := RequireStoredForm(bg, defaultsCanon, typed); err == nil {
+		t.Fatal("a typed form with defaults left out was accepted")
+	}
+	if err := RequireStoredForm(bg, nil, stored); err == nil {
+		t.Fatal("accepted with no canonicaliser")
+	}
+}

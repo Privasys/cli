@@ -379,3 +379,28 @@ func VaultCanonicaliser(d *api.VaultDirectory, ownerTok, attTok string) Canonica
 		return first, nil
 	}
 }
+
+// RequireStoredForm refuses a policy that is not already in the form the
+// key's vaults store (every member's CanonicalPolicy of it, agreeing): a
+// binding-2 update must send exactly that form, key order aside.
+func RequireStoredForm(ctx context.Context, canon Canonicaliser, policy json.RawMessage) error {
+	if canon == nil {
+		return errors.New("no vault to canonicalise the policy with")
+	}
+	stored, err := canon(ctx, policy)
+	if err != nil {
+		return fmt.Errorf("the new policy: %w", err)
+	}
+	want, err := vault.PolicyDigestJSON(stored)
+	if err != nil {
+		return err
+	}
+	got, err := vault.PolicyDigestJSON(policy)
+	if err != nil {
+		return fmt.Errorf("the new policy: %w", err)
+	}
+	if got != want {
+		return errors.New("the control plane's new policy is not in the vaults' stored form, which the vaults would refuse; nothing was asked of you")
+	}
+	return nil
+}
