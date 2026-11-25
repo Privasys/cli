@@ -101,10 +101,22 @@ against the release's checksums.txt.`,
 				if runtime.GOOS == "windows" {
 					return spawnDetachedScoopUpdate(w)
 				}
-				fmt.Fprintf(w, "Installed via scoop; running: scoop update privasys\n")
+				// scoop refreshes its buckets on an app update only when the
+				// last refresh is 3 hours old or more, so a release made since
+				// then is not seen: refresh them first.
+				fmt.Fprintf(w, "Installed via scoop; running: scoop update, then scoop update privasys\n")
+				if err := runTool(cmd, "scoop", "update"); err != nil {
+					return err
+				}
 				return runTool(cmd, "scoop", "update", "privasys")
 			case "brew":
-				fmt.Fprintf(w, "Installed via Homebrew; running: brew upgrade privasys\n")
+				// Homebrew refreshes its taps on an upgrade only once its own
+				// interval has passed, so a release made since then may not be
+				// seen: refresh them first.
+				fmt.Fprintf(w, "Installed via Homebrew; running: brew update, then brew upgrade privasys\n")
+				if err := runTool(cmd, "brew", "update"); err != nil {
+					return err
+				}
 				return runTool(cmd, "brew", "upgrade", "privasys")
 			case "package":
 				fmt.Fprintf(w, "Installed from a .deb/.rpm package. Download the %s package from:\n  https://github.com/Privasys/cli/releases/latest\n", latest)
@@ -174,6 +186,7 @@ func spawnDetachedScoopUpdate(w io.Writer) error {
 			"  };"+
 			"  Start-Sleep -Milliseconds 700"+
 			"};"+
+			"scoop update;"+
 			"scoop update privasys;"+
 			"Write-Host '';"+
 			"Read-Host 'Done. Press Enter to close' | Out-Null",
@@ -182,7 +195,7 @@ func spawnDetachedScoopUpdate(w io.Writer) error {
 	c := exec.Command("cmd", "/c", "start", "privasys update", "powershell",
 		"-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps)
 	if err := c.Start(); err != nil {
-		fmt.Fprintf(w, "Installed via scoop. Close running privasys processes, then run: scoop update privasys\n")
+		fmt.Fprintf(w, "Installed via scoop. Close running privasys processes, then run: scoop update; scoop update privasys\n")
 		return nil
 	}
 	fmt.Fprintf(w, "Installed via scoop. Since scoop cannot update a running app, an updater\n")

@@ -40,7 +40,10 @@ func NewRoot() *cobra.Command {
 		Long:          "privasys is the command-line interface to the Privasys confidential-computing platform: authenticate with the wallet, deploy apps, manage teams and billing, and verify attestation. Designed for developers, CI, and AI agents.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// `privasys --version` prints the same version as `privasys version`.
+		Version: Version,
 	}
+	root.SetVersionTemplate("privasys {{.Version}}\n")
 
 	root.PersistentFlags().String("format", "", "output format: table|json|yaml")
 	root.PersistentFlags().String("endpoint", "", "platform API base URL (custom environment; overrides --test)")
