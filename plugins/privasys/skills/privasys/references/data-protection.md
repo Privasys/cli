@@ -33,7 +33,12 @@ against the source before you release the key to it.
 - **Key rotation** (`apps_rotate_key`): rotate the key without re-encrypting the
   data (the per-volume key is re-wrapped, not the data re-written). The key is
   bound to the image that runs, so without a version it is rotated for the
-  running version.
+  running version. On keys whose vaults require the owner's approval for every
+  change, deleting the previous key afterwards needs the owner's tap in the
+  wallet (the CLI asks for it; an assistant cannot give it).
+- **Retiring an old version** (`apps_retire_measurement`): stop releasing the
+  key to a superseded build. On those keys the owner approves the exact new
+  policy, after the CLI has checked it retires only that build.
 - **Separation of duties** (`apps_cosign`): require a *second* team member to
   co-sign a promote, so no single person can authorize new code over the data.
 - **Owner-approved upgrades survive data**: approved upgrades reattach the same

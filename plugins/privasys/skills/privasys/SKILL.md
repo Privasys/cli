@@ -170,6 +170,7 @@ subject), and `apps_owners_remove` manage who can access and manage an app.
 - Encrypted storage is sealed with a **data key that belongs to the user**, generated inside the confidential hardware; the platform never sees it. See `references/data-protection.md`.
 - On a new version or enclave upgrade the data is **locked until the owner approves the new measurement**: `apps_versions_pending` then `apps_versions_promote` (or guided `apps upgrade`). The platform cannot approve for them.
 - `apps_rotate_key` rotates the key without re-encrypting the data; `apps_cosign` requires a second team approver on promote (separation of duties). Without a `version`, the key is rotated for the version the app is **running**; it refuses when none is running or several are, so then pass the running version's id.
+- On a key whose vaults require the owner's approval for every change, some steps need a wallet tap that you **cannot** give: `apps_retire_measurement` refuses and asks for the CLI command, and `apps_rotate_key` / `apps_migrate_constellation` succeed but answer with a `next` note, because deleting the previous key needs the owner. Tell the human to run the same `privasys apps …` command in a terminal (CLI v0.59.0 or later), or leave the previous key to expire. The CLI checks the change against the vaults before the wallet shows anything.
 - `apps export-key` lets the owner take their key out. **DANGER:** it writes the key to a *local file only*. Never request, echo, log, or pass the key material anywhere it could reach a model or service. Confirm with the human first.
 - `secrets_create` makes a user-owned key in the vault (Shamir-split; the platform never holds it). It generates random material — you never see or handle the secret bytes.
 - `secrets_export` writes a secret the owner owns to a **local file only** and returns just a path + fingerprint — never the key. It is **dangerous** (raw key to disk) and requires a fresh WebAuthn step-up the owner approves in their wallet; you cannot approve it. Confirm with the human first.
@@ -197,7 +198,10 @@ the platform never sees it. The full key surface is available as MCP tools:
   that suffix names them (`<name>/gen-2`, …), and every lookup by the plain name
   finds the newest one it can trace to the owner's renewal. If a lookup warns
   about a generation it cannot trace, or refuses because several exist, tell
-  the human: only the owner decides which to delete.
+  the human: only the owner decides which to delete. Deleting a secret is
+  CLI only (`privasys secrets rm <name>`, every copy, with wallet approvals);
+  afterwards vaults that keep a record of deleted keys hold its name until the
+  date it would have expired, so a new secret needs another name until then.
 
 For existing tooling, `privasys vault serve` runs an **Azure Key Vault-shaped
 REST facade** over a vault (CLI only) so non-CLI clients use the vHSM unchanged.
@@ -211,7 +215,10 @@ REST facade** over a vault (CLI only) so non-CLI clients use the vHSM unchanged.
 - The CLI and MCP server talk to **production** by default. `--test` targets the
   Privasys test environment, `--endpoint <url>` a custom one. Pass the same flag
   on every command of a session.
-- `--account <id>` acts on another account the user belongs to.
+- `--account <id>` (or the `account` config key) acts in another account the
+  user belongs to. Since CLI v0.59.0 it takes effect; older CLIs ignored it and
+  acted in the personal account. A write tool's result then ends with
+  `Acted in account "<name>" (<id>)`: tell the user where the change landed.
 - A version id (`apps versions`) pins exactly what you stage, promote or deploy;
   pass it rather than relying on a default. Without one, CLI v0.58.8 and later
   take the newest version (the highest version number), and `rotate-key` the
