@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	rc "enclave-os-mini/clients/go/ratls"
@@ -16,14 +17,15 @@ import (
 
 // CallParams configures a direct app call.
 type CallParams struct {
-	Host         string // enclave gateway FQDN
-	ServerName   string // SNI + Host header (the workload hostname)
-	AppName      string // wasm app name (connect_call.app)
-	AppType      string // "container" or "wasm"
-	Function     string
-	Path         string // container endpoint path (default "/"+Function)
-	Body         []byte // raw JSON request body (may be nil)
-	AppToken     string // user JWT presented as app_auth / Bearer
+	Host       string // enclave gateway FQDN
+	ServerName string // SNI + Host header (the workload hostname)
+	AppName    string // wasm app name (connect_call.app)
+	AppType    string // "container" or "wasm"
+	Function   string
+	Path       string // container endpoint path (default "/"+Function)
+	Method     string // container HTTP method (default POST; see CallMethod)
+	Body       []byte // raw JSON request body (may be nil)
+	AppToken   string // user JWT presented as app_auth / Bearer
 	// Headers are extra request headers for a container call (an app's own
 	// protocol headers, e.g. X-Privasys-Reproducibility: strict). Ignored for
 	// wasm, whose connect_call carries no headers.
@@ -78,7 +80,11 @@ func Call(ctx context.Context, p CallParams, out io.Writer) (int, error) {
 		if p.AppToken != "" {
 			hdr.Set("Authorization", "Bearer "+p.AppToken)
 		}
-		resp, err := client.HTTPDoHeader("POST", path, p.ServerName, p.Body, hdr)
+		method := p.Method
+		if method == "" {
+			method = http.MethodPost
+		}
+		resp, err := client.HTTPDoHeader(method, path, p.ServerName, p.Body, hdr)
 		if err != nil {
 			return 0, err
 		}
@@ -105,4 +111,54 @@ func Call(ctx context.Context, p CallParams, out io.Writer) (int, error) {
 	}
 	_, _ = out.Write(body)
 	return 200, nil
+}
+
+// ConfigureEndpoint is the configure endpoint a container app declares in its
+// manifest (container_mcp.configure.endpoint), or "" when it declares none.
+func ConfigureEndpoint(app map[string]interface{}) string {
+	mcp, _ := app["container_mcp"].(map[string]interface{})
+	cfg, _ := mcp["configure"].(map[string]interface{})
+	ep, _ := cfg["endpoint"].(string)
+	return ep
+}
+
+// CallMethod is the HTTP method of a container call. With no method given it
+// is POST, as it always was, except to the app's configure endpoint with no
+// body: that POSTs an empty configuration, which an app may take as "reset my
+// settings" (four dev connectors lost theirs to a call meant as a read), so it
+// is refused and the caller must say which one it means.
+func CallMethod(method string, body []byte, path, configurePath string) (string, error) {
+	m := strings.ToUpper(strings.TrimSpace(method))
+	switch m {
+	case "":
+		if len(body) == 0 && configurePath != "" && samePath(path, configurePath) {
+			return "", fmt.Errorf("%s is the app's configure endpoint, and a call to it with no data POSTs an empty configuration, "+
+				"which can reset the app's settings; set the method to GET to read it, give data to write it, "+
+				"or set the method to POST to send an empty body on purpose", path)
+		}
+		return http.MethodPost, nil
+	case http.MethodGet, http.MethodHead:
+		if len(body) > 0 {
+			return "", fmt.Errorf("a %s carries no body; drop the data or use another method", m)
+		}
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+	default:
+		return "", fmt.Errorf("method %q is not one of GET, HEAD, POST, PUT, PATCH, DELETE", method)
+	}
+	return m, nil
+}
+
+// samePath compares two endpoint paths, ignoring a query and a trailing slash.
+func samePath(a, b string) bool {
+	norm := func(s string) string {
+		s, _, _ = strings.Cut(strings.TrimSpace(s), "?")
+		if !strings.HasPrefix(s, "/") {
+			s = "/" + s
+		}
+		if len(s) > 1 {
+			s = strings.TrimRight(s, "/")
+		}
+		return s
+	}
+	return norm(a) == norm(b)
 }

@@ -1048,7 +1048,12 @@ func (s *Server) registerTools() {
 				"app_id":   strProp("the app id"),
 				"function": strProp("the function name"),
 				"data":     map[string]interface{}{"description": "JSON request body: either a JSON object, or a string already containing encoded JSON (it is not re-encoded)"},
-				"attest":   boolProp("also verify the quote against the attestation server"),
+				"method": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"},
+					"description": "a CONTAINER app's HTTP method (default POST). A call to the app's configure endpoint without data is refused unless method is given: an empty POST there can reset the app's settings, so use GET to read them",
+				},
+				"attest": boolProp("also verify the quote against the attestation server"),
 				"headers": map[string]interface{}{
 					"type":                 "object",
 					"additionalProperties": map[string]interface{}{"type": "string"},
@@ -1090,9 +1095,15 @@ func (s *Server) registerTools() {
 						body, _ = json.Marshal(args["data"])
 					}
 				}
-				path := ""
+				path, method := "", ""
+				reqMethod, _ := args["method"].(string)
 				if aType == "container" {
 					path = containerPath(app, fn)
+					if method, err = ratls.CallMethod(reqMethod, body, path, ratls.ConfigureEndpoint(app)); err != nil {
+						return nil, fmt.Errorf("refusing the call: %w", err)
+					}
+				} else if reqMethod != "" && !strings.EqualFold(strings.TrimSpace(reqMethod), "POST") {
+					return nil, errors.New("method applies to container apps; a wasm app's function takes a call, not an HTTP method")
 				}
 				attURL, attTok := "", ""
 				if b, _ := args["attest"].(bool); b {
@@ -1111,7 +1122,7 @@ func (s *Server) registerTools() {
 				var buf bytes.Buffer
 				status, err := ratls.Call(ctx, ratls.CallParams{
 					Host: host, ServerName: host, AppName: name, AppType: aType,
-					Function: fn, Path: path, Body: body, AppToken: d.Token, Headers: headers,
+					Function: fn, Path: path, Method: method, Body: body, AppToken: d.Token, Headers: headers,
 					Challenge: ratls.NewNonce(), AttServerURL: attURL, AttServerTok: attTok,
 				}, &buf)
 				if err != nil {

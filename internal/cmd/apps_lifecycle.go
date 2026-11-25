@@ -2104,7 +2104,7 @@ only to the registry you approve: you are asked, or name it with --image-host.`,
 }
 
 func newAppsCallCmd() *cobra.Command {
-	var data, host, token, path, attServer string
+	var data, host, token, path, method, attServer string
 	var headers []string
 	var noChallenge, doAttest bool
 	cmd := &cobra.Command{
@@ -2123,6 +2123,10 @@ quote verification (genuine TEE + TCB) against the attestation server.
   --host    enclave gateway FQDN (default: resolved from the app)
   --token   token to present to the app (default: your access token)
   --path    container endpoint path (default: /<function>)
+  --method  container HTTP method (default POST). A call to the app's
+            configure endpoint without --data is refused unless --method is
+            given: an empty POST there can reset the app's settings, so pass
+            --method GET to read them.
   --attest  also verify the quote against the attestation server
   --no-challenge  skip the fresh-nonce challenge (deterministic verify)`,
 		Args: cobra.ExactArgs(2),
@@ -2166,6 +2170,16 @@ quote verification (genuine TEE + TCB) against the attestation server.
 			if path == "" && aType == "container" {
 				path = resolveContainerPath(app, args[1])
 			}
+			// The method, checked before anything is sent: an empty POST to
+			// the app's configure endpoint is refused unless asked for.
+			httpMethod := ""
+			if aType == "container" {
+				if httpMethod, err = ratls.CallMethod(method, body, path, ratls.ConfigureEndpoint(app)); err != nil {
+					return fmt.Errorf("refusing the call: %w (--method, --data)", err)
+				}
+			} else if method != "" && !strings.EqualFold(strings.TrimSpace(method), "POST") {
+				return errors.New("--method applies to container apps; a wasm app's function takes a call, not an HTTP method")
+			}
 			if serverName == "" {
 				serverName, err = client.ActiveDeploymentHost(ctx, appID)
 				if err != nil {
@@ -2206,7 +2220,7 @@ quote verification (genuine TEE + TCB) against the attestation server.
 
 			status, err := ratls.Call(ctx, ratls.CallParams{
 				Host: serverName, ServerName: serverName, AppName: appName, AppType: aType,
-				Function: args[1], Path: path, Body: body, AppToken: appTok, Headers: extra,
+				Function: args[1], Path: path, Method: httpMethod, Body: body, AppToken: appTok, Headers: extra,
 				Challenge: nonce, AttServerURL: attURL, AttServerTok: attTok,
 			}, os.Stdout)
 			if err != nil {
@@ -2223,6 +2237,7 @@ quote verification (genuine TEE + TCB) against the attestation server.
 	cmd.Flags().StringVar(&host, "host", "", "enclave gateway FQDN (default: resolved from the app)")
 	cmd.Flags().StringVar(&token, "token", "", "token to present to the app (default: your access token)")
 	cmd.Flags().StringVar(&path, "path", "", "container endpoint path (default: /<function>)")
+	cmd.Flags().StringVar(&method, "method", "", "container HTTP method: GET, HEAD, POST, PUT, PATCH or DELETE (default POST)")
 	cmd.Flags().StringArrayVar(&headers, "header", nil, "extra request header \"Name: value\" for a container call (repeatable)")
 	cmd.Flags().BoolVar(&doAttest, "attest", false, "also verify the quote against the attestation server")
 	cmd.Flags().StringVar(&attServer, "att-server", "https://as.privasys.org/verify", "attestation server verify endpoint (with --attest)")
