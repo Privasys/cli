@@ -171,7 +171,13 @@ func DestroyKeyInVault(ctx context.Context, p VaultOpParams) (deletedOn []string
 		derr = c.DeleteKey(ctx, p.Handle)
 		c.Close()
 		if derr != nil {
-			if strings.Contains(derr.Error(), "not found") {
+			gone, tombstone := keyGone(derr)
+			if tombstone {
+				// Already deleted there (a tombstone): done, idempotently.
+				deleted = append(deleted, ep)
+				continue
+			}
+			if gone {
 				continue
 			}
 			lastErr = derr
@@ -329,6 +335,7 @@ func GetPublicKeyInVault(ctx context.Context, p VaultOpParams) (*PublicKeyResult
 	}
 	opts := vault.DialOptions{AuthToken: staticToken(p.OwnerToken), VaultPolicy: verify}
 	var lastErr error
+	wasDeleted := false
 	for _, ep := range p.Endpoints {
 		c, derr := vault.Dial(ctx, vaultReg(ep), opts)
 		if derr != nil {
@@ -338,7 +345,8 @@ func GetPublicKeyInVault(ctx context.Context, p VaultOpParams) (*PublicKeyResult
 		info, ierr := c.GetKeyInfo(ctx, p.Handle)
 		c.Close()
 		if ierr != nil {
-			if strings.Contains(ierr.Error(), "not found") {
+			if gone, tombstone := keyGone(ierr); gone {
+				wasDeleted = wasDeleted || tombstone
 				continue
 			}
 			lastErr = ierr
@@ -351,6 +359,9 @@ func GetPublicKeyInVault(ctx context.Context, p VaultOpParams) (*PublicKeyResult
 		return res, nil
 	}
 	if lastErr == nil {
+		if wasDeleted {
+			return nil, deletedErr(p.Handle)
+		}
 		return nil, fmt.Errorf("no vault has key %q: %w", p.Handle, ErrKeyNotFound)
 	}
 	return nil, fmt.Errorf("no vault has key %q: %v", p.Handle, lastErr)

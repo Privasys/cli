@@ -375,3 +375,27 @@ func requestGrant(ctx context.Context, p CreateParams, cnf string) (string, erro
 	}
 	return out.Grant, nil
 }
+
+// ErrKeyDeleted: the vaults hold only a deleted key's record (formats §9.3,
+// a tombstone): it was there and is gone. It also matches ErrKeyNotFound, so
+// every path that treats a missing key as absent treats a deleted one alike.
+var ErrKeyDeleted = errors.New("key deleted")
+
+// keyGone reports a vault answer meaning the key is not there: never held,
+// or deleted (a tombstone's errors start "key deleted").
+func keyGone(err error) (gone, deleted bool) {
+	if err == nil {
+		return false, false
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "key deleted") {
+		return true, true
+	}
+	return strings.Contains(msg, "not found"), false
+}
+
+// deletedErr says the key is deleted, and matches both ErrKeyDeleted and
+// ErrKeyNotFound.
+func deletedErr(handle string) error {
+	return fmt.Errorf("key %q was deleted: %w (%w)", handle, ErrKeyDeleted, ErrKeyNotFound)
+}
