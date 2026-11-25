@@ -86,10 +86,9 @@ type RetiredProfile struct {
 	WorkloadDigest, MRTD, RTMR1, RTMR2 string
 }
 
-// ExpectRetireProfile is current with exactly the one TEE profile p names
-// removed, as the control plane builds it, and nothing else changed. Several
-// profiles matching all four values are refused: which one would go is not
-// the owner's choice to leave to the control plane.
+// ExpectRetireProfile is current with the TEE profile p names removed, as the
+// control plane builds it, and nothing else changed. Profiles identical in all
+// four values are one profile, and all of them go.
 func ExpectRetireProfile(current json.RawMessage, p RetiredProfile) (json.RawMessage, error) {
 	lower := func(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 	want := RetiredProfile{lower(p.WorkloadDigest), lower(p.MRTD), lower(p.RTMR1), lower(p.RTMR2)}
@@ -116,11 +115,8 @@ func ExpectRetireProfile(current json.RawMessage, p RetiredProfile) (json.RawMes
 			found++
 		}
 	}
-	switch {
-	case found == 0:
+	if found == 0 {
 		return nil, errors.New("the key's policy has no profile with that build and runtime")
-	case found > 1:
-		return nil, fmt.Errorf("the key's policy holds %d identical profiles with that build and runtime", found)
 	}
 	if _, err := removeTees(root, match); err != nil {
 		return nil, err

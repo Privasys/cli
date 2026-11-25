@@ -64,9 +64,14 @@ func TestExpectRetireProfile(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
+	// Identical profiles all go, as the control plane removes them.
 	dup := pol([]string{tdxTee(cur, "aa", "bb", "cc"), tdxTee(cur, "aa", "bb", "cc"), tdxTee(cur, "dd", "ee", "ff")}, "")
-	if _, err := ExpectRetireProfile(dup, RetiredProfile{cur, "aa", "bb", "cc"}); err == nil || !strings.Contains(err.Error(), "identical") {
+	gotDup, err := ExpectRetireProfile(dup, RetiredProfile{cur, "aa", "bb", "cc"})
+	if err != nil {
 		t.Fatalf("duplicates: %v", err)
+	}
+	if same, _ := SameStoredPolicy(bg, identityCanon, gotDup, pol([]string{tdxTee(cur, "dd", "ee", "ff")}, "")); !same {
+		t.Fatalf("duplicates not all removed: %s", gotDup)
 	}
 	if _, err := ExpectRetireProfile(pol([]string{tdxTee(cur, "aa", "bb", "cc")}, ""), RetiredProfile{cur, "aa", "bb", "cc"}); err == nil {
 		t.Fatal("the last profile was retired")
