@@ -380,6 +380,26 @@ func (a ApprovalV2) checkPolicies() error {
 			return errors.New("the target of a policy update is not computed from its policies")
 		}
 		return nil
+	case vault.BindCreate:
+		// A create approval binds the policy the key is born with, in the
+		// vaults' stored form, at version 0 (formats §9.3.1).
+		if len(a.NewPolicy) == 0 {
+			return errors.New("a create approval names no policy")
+		}
+		if len(a.CurrentPolicy) != 0 {
+			return errors.New("a create carries no current policy")
+		}
+		if a.PolicyVersion != 0 {
+			return errors.New("a create approval is for policy version 0")
+		}
+		pd, err := vault.PolicyDigestJSON(a.NewPolicy)
+		if err != nil {
+			return err
+		}
+		if a.Target != pd {
+			return errors.New("the target of a create is not the digest of its policy")
+		}
+		return nil
 	}
 	if len(a.NewPolicy) != 0 || len(a.CurrentPolicy) != 0 {
 		return fmt.Errorf("a %s carries no policy", a.Operation)
@@ -398,5 +418,20 @@ func DeleteAfterSuccessorApproval(old, successor string, policyVersion uint64, i
 	}
 	a := ApprovalV2{Operation: vault.BindDeleteAfter, Handle: old, SuccessorHandle: successor, Target: target,
 		PolicyVersion: policyVersion, Identities: ids, Audience: audience, Context: context}
+	return a, a.check()
+}
+
+// CreateApproval builds the owner's approval to create handle, a re-created
+// vault key name (".../new-<k>", formats §9.3.1), born with storedPolicy: the
+// grant's policy exactly as the key's vaults store it (every member's
+// CanonicalPolicy, agreeing). The target is computed here from that policy.
+func CreateApproval(handle string, storedPolicy json.RawMessage, ids []PinnedIdentity,
+	audience string, context map[string]string) (ApprovalV2, error) {
+	pd, err := vault.PolicyDigestJSON(storedPolicy)
+	if err != nil {
+		return ApprovalV2{}, fmt.Errorf("the key's policy: %w", err)
+	}
+	a := ApprovalV2{Operation: vault.BindCreate, Handle: handle, Target: pd, PolicyVersion: 0,
+		Identities: ids, NewPolicy: storedPolicy, Audience: audience, Context: context}
 	return a, a.check()
 }
