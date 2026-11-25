@@ -6,6 +6,7 @@ package secrets
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"strings"
 	"testing"
 )
@@ -63,5 +64,35 @@ func TestExpectRetireRuntime(t *testing.T) {
 	}
 	if _, err := ExpectRetireRuntime(pol([]string{p("f2", "e0", "4a")}, ""), Runtime{"f2", "e0", "4a"}); err == nil {
 		t.Fatal("the last profile was retired")
+	}
+}
+
+func withID(id, m string) string {
+	return `{"Tee":{"name":"v","measurements":[{"Tdx":{"mrtd":"` + m + `","rtmr1":"1","rtmr2":"2"}}],"attestation_servers":[],` +
+		`"required_oids":[{"oid":"` + OIDWorkloadID + `","value":"` + id + `"}],"acceptable_tcb_statuses":null}}`
+}
+
+func TestKeyWorkloadID(t *testing.T) {
+	id := "1efff2acfa6745bd9fd10c9ecbbcb9a4"
+	if got, err := KeyWorkloadID(pol([]string{withID(id, "a"), withID(strings.ToUpper(id), "b")}, "")); err != nil || got != id {
+		t.Fatalf("got %q %v", got, err)
+	}
+	if _, err := KeyWorkloadID(pol([]string{withID(id, "a"), withID("other", "b")}, "")); err == nil {
+		t.Fatal("different workload ids accepted")
+	}
+	if _, err := KeyWorkloadID(pol([]string{tdxTee("", "a", "1", "2")}, "")); err == nil {
+		t.Fatal("a profile without a workload id accepted")
+	}
+}
+
+func TestCertCarries(t *testing.T) {
+	id := "1efff2acfa6745bd9fd10c9ecbbcb9a4"
+	asText := map[string]string{OIDWorkloadID: hex.EncodeToString([]byte(id))}
+	asHex := map[string]string{OIDWorkloadID: id}
+	if !CertCarries(asText, OIDWorkloadID, id) || !CertCarries(asHex, OIDWorkloadID, strings.ToUpper(id)) {
+		t.Fatal("a matching id was refused")
+	}
+	if CertCarries(asText, OIDWorkloadID, "c7d28e2611a84905beda3944419d79cc") || CertCarries(map[string]string{}, OIDWorkloadID, id) {
+		t.Fatal("another or a missing id was accepted")
 	}
 }

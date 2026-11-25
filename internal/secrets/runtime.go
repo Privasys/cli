@@ -90,3 +90,61 @@ func ExpectRetireRuntime(current json.RawMessage, r Runtime) (json.RawMessage, e
 	}
 	return json.Marshal(root)
 }
+
+// OIDWorkloadID is the X.509 OID a TEE profile pins its workload's identity
+// with: the enclave id for a machine's data key, the app id for an app's key.
+const OIDWorkloadID = "1.3.6.1.4.1.65230.4.1"
+
+// KeyWorkloadID is the workload id every TEE profile of a key pins
+// (OIDWorkloadID). Profiles that pin none, or different ones, are refused:
+// the key could not then be tied to one machine or app.
+func KeyWorkloadID(current json.RawMessage) (string, error) {
+	doc, err := decodeTree(current)
+	if err != nil {
+		return "", fmt.Errorf("the key's current policy: %w", err)
+	}
+	root, _ := doc.(map[string]any)
+	principals, _ := root["principals"].(map[string]any)
+	tees, _ := principals["tees"].([]any)
+	id := ""
+	for _, t := range tees {
+		m, _ := t.(map[string]any)
+		prof, _ := m["Tee"].(map[string]any)
+		oids, _ := prof["required_oids"].([]any)
+		v := ""
+		for _, o := range oids {
+			om, _ := o.(map[string]any)
+			if oid, _ := om["oid"].(string); oid == OIDWorkloadID {
+				v, _ = om["value"].(string)
+			}
+		}
+		v = strings.ToLower(strings.TrimSpace(v))
+		if v == "" {
+			return "", errors.New("a profile of the key pins no workload id")
+		}
+		if id != "" && v != id {
+			return "", errors.New("the key's profiles pin different workload ids")
+		}
+		id = v
+	}
+	if id == "" {
+		return "", errors.New("the key has no TEE profile")
+	}
+	return id, nil
+}
+
+// CertCarries reports whether an attested certificate's custom OIDs (value
+// as hex of its bytes) carry oid with value, given as hex or as text.
+func CertCarries(oids map[string]string, oid, value string) bool {
+	got, ok := oids[oid]
+	if !ok {
+		return false
+	}
+	want := strings.ToLower(strings.TrimSpace(value))
+	got = strings.ToLower(got)
+	if got == want {
+		return true
+	}
+	b, err := hex.DecodeString(got)
+	return err == nil && strings.ToLower(strings.TrimSpace(string(b))) == want
+}

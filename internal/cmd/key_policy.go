@@ -59,16 +59,33 @@ the control plane's record for --enclave; they must agree.`,
 			if err != nil {
 				return err
 			}
-			running, err := runningRuntime(cmd, env, client, enclaveID, host)
-			if err != nil {
-				return err
-			}
-			if running.Equal(r) {
-				return fmt.Errorf("that is the runtime the machine runs now; it cannot be retired")
+			handle := args[0]
+			// The machine whose runtime is protected must be the one this key is
+			// for: the attested host must carry the workload id the key pins, and
+			// a machine's data key is named after its enclave.
+			precheck := func(current json.RawMessage) error {
+				id, err := secrets.KeyWorkloadID(current)
+				if err != nil {
+					return err
+				}
+				if strings.Contains(handle, "/manager/data/") && !strings.Contains(handle, "/"+strings.ReplaceAll(strings.ToLower(enclaveID), "-", "")+"/manager/data/") {
+					return fmt.Errorf("%s is not the data key of enclave %s", handle, enclaveID)
+				}
+				running, oids, err := runningRuntime(cmd, env, client, enclaveID, host)
+				if err != nil {
+					return err
+				}
+				if !secrets.CertCarries(oids, secrets.OIDWorkloadID, id) {
+					return fmt.Errorf("%s does not attest the workload this key is for (%s); nothing was changed", host, id)
+				}
+				if running.Equal(r) {
+					return fmt.Errorf("that is the runtime the machine runs now; it cannot be retired")
+				}
+				return nil
 			}
 			summary := "Stop releasing this key to the machine runtime with RTMR1 " + truncHex(rtmr1)
-			return directKeyPolicyChange(cmd, env, client, args[0], summary, yes,
-				func(cur json.RawMessage) (json.RawMessage, error) { return secrets.ExpectRetireRuntime(cur, r) })
+			return directKeyPolicyChange(cmd, env, client, handle, summary, yes,
+				func(cur json.RawMessage) (json.RawMessage, error) { return secrets.ExpectRetireRuntime(cur, r) }, precheck)
 		},
 	}
 	cmd.Flags().StringVar(&enclaveID, "enclave", "", "the machine's enclave id (its recorded measurement)")
@@ -104,7 +121,7 @@ func newKeyPolicyTCBCmd() *cobra.Command {
 				summary = "Accept the TCB floor plus " + strings.Join(statuses, ", ") + " for this key"
 			}
 			return directKeyPolicyChange(cmd, env, client, args[0], summary, yes,
-				func(cur json.RawMessage) (json.RawMessage, error) { return secrets.ExpectTCBPolicy(cur, statuses) })
+				func(cur json.RawMessage) (json.RawMessage, error) { return secrets.ExpectTCBPolicy(cur, statuses) }, nil)
 		},
 	}
 	cmd.Flags().StringArrayVar(&accept, "accept", nil, "a TCB status to accept beyond the floor (repeatable)")
@@ -125,36 +142,40 @@ func keyPolicyEnv(cmd *cobra.Command) (*Env, *api.Client, error) {
 // runningRuntime is the runtime the machine runs now: from a fresh, verified
 // RA-TLS quote of a host it serves, which must agree with the control plane's
 // record of the machine.
-func runningRuntime(cmd *cobra.Command, env *Env, client *api.Client, enclaveID, host string) (secrets.Runtime, error) {
+func runningRuntime(cmd *cobra.Command, env *Env, client *api.Client, enclaveID, host string) (secrets.Runtime, map[string]string, error) {
 	ctx := cmd.Context()
 	attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
 	res, err := ratls.Verify(ctx, ratls.Params{Host: host, ServerName: host, Challenge: ratls.NewNonce(),
 		AttServerURL: defaultAttServer, AttServerTok: attTok})
 	if err != nil {
-		return secrets.Runtime{}, fmt.Errorf("attest %s: %w", host, err)
+		return secrets.Runtime{}, nil, fmt.Errorf("attest %s: %w", host, err)
 	}
 	if !res.Verified {
-		return secrets.Runtime{}, fmt.Errorf("the attestation of %s did not verify: %s", host, res.VerifyError)
+		return secrets.Runtime{}, nil, fmt.Errorf("the attestation of %s did not verify: %s", host, res.VerifyError)
 	}
 	live, err := secrets.TDXRuntime(res.QuoteRaw)
 	if err != nil {
-		return secrets.Runtime{}, fmt.Errorf("the quote of %s: %w", host, err)
+		return secrets.Runtime{}, nil, fmt.Errorf("the quote of %s: %w", host, err)
 	}
 	rec, err := client.EnclaveMeasurements(ctx, enclaveID)
 	if err != nil {
-		return secrets.Runtime{}, fmt.Errorf("the recorded measurement of %s: %w", enclaveID, err)
+		return secrets.Runtime{}, nil, fmt.Errorf("the recorded measurement of %s: %w", enclaveID, err)
 	}
 	if !live.Equal(secrets.Runtime{MRTD: rec.MRTD, RTMR1: rec.RTMR1, RTMR2: rec.RTMR2}) {
-		return secrets.Runtime{}, errors.New("the machine's live attestation and its recorded measurement differ: the machine was rolled since the record, or the record is stale; nothing was changed")
+		return secrets.Runtime{}, nil, errors.New("the machine's live attestation and its recorded measurement differ: the machine was rolled since the record, or the record is stale; nothing was changed")
 	}
-	return live, nil
+	oids := map[string]string{}
+	for _, o := range res.CustomOIDs {
+		oids[o.OID] = o.ValueHex
+	}
+	return live, oids, nil
 }
 
 // directKeyPolicyChange finds the key's vaults, plans the change from what
 // every vault holds, takes the approval the key's rule asks for, applies it
 // on the vaults that need it, and reads every vault back.
 func directKeyPolicyChange(cmd *cobra.Command, env *Env, client *api.Client, handle, summary string, yes bool,
-	expect func(json.RawMessage) (json.RawMessage, error)) error {
+	expect func(json.RawMessage) (json.RawMessage, error), precheck func(json.RawMessage) error) error {
 	ctx := cmd.Context()
 	errOut := cmd.ErrOrStderr()
 	attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
@@ -170,6 +191,11 @@ func directKeyPolicyChange(cmd *cobra.Command, env *Env, client *api.Client, han
 	if len(plan.ToUpdate) == 0 {
 		fmt.Fprintf(errOut, "Every vault of %s already holds this change.\n", dir.Name)
 		return nil
+	}
+	if precheck != nil {
+		if err := precheck(plan.Current); err != nil {
+			return err
+		}
 	}
 	if len(plan.Done) > 0 {
 		fmt.Fprintf(errOut, "Finishing an earlier change: %s already hold it, %s do not.\n",
