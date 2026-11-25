@@ -52,3 +52,16 @@ func TestCallMethod(t *testing.T) {
 		}
 	}
 }
+
+func TestIsConfigureEndpoint(t *testing.T) {
+	app := map[string]interface{}{"container_mcp": map[string]interface{}{
+		"configure": map[string]interface{}{"endpoint": "/v1/config"}}}
+	for path, want := range map[string]bool{"/v1/config": true, "/v1/config/": true, "v1/config?x=1": true, "/v1/configs": false, "/run": false} {
+		if got := IsConfigureEndpoint(app, path); got != want {
+			t.Errorf("%s: got %v", path, got)
+		}
+	}
+	if IsConfigureEndpoint(map[string]interface{}{}, "/configure") {
+		t.Error("no declared endpoint matched")
+	}
+}

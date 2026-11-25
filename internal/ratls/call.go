@@ -122,6 +122,13 @@ func ConfigureEndpoint(app map[string]interface{}) string {
 	return ep
 }
 
+// IsConfigureEndpoint reports whether path is the configure endpoint the app
+// declares.
+func IsConfigureEndpoint(app map[string]interface{}, path string) bool {
+	ep := ConfigureEndpoint(app)
+	return ep != "" && samePath(path, ep)
+}
+
 // CallMethod is the HTTP method of a container call. With no method given it
 // is POST, as it always was, except to the app's configure endpoint with no
 // body: that POSTs an empty configuration, which an app may take as "reset my

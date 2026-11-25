@@ -1051,7 +1051,7 @@ func (s *Server) registerTools() {
 				"method": map[string]interface{}{
 					"type":        "string",
 					"enum":        []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"},
-					"description": "a CONTAINER app's HTTP method (default POST). A call to the app's configure endpoint without data is refused unless method is given: an empty POST there can reset the app's settings, so use GET to read them",
+					"description": "a CONTAINER app's HTTP method (default POST). The app's configure endpoint is never reached through apps_call: use apps_configure",
 				},
 				"attest": boolProp("also verify the quote against the attestation server"),
 				"headers": map[string]interface{}{
@@ -1099,6 +1099,12 @@ func (s *Server) registerTools() {
 				reqMethod, _ := args["method"].(string)
 				if aType == "container" {
 					path = containerPath(app, fn)
+					// Configuration has its own tool, apps_configure, marked
+					// destructive: an agent never reaches it through this
+					// generic call, whatever the method or body.
+					if ratls.IsConfigureEndpoint(app, path) {
+						return nil, fmt.Errorf("refusing the call: %s is the app's configure endpoint; use apps_configure", path)
+					}
 					if method, err = ratls.CallMethod(reqMethod, body, path, ratls.ConfigureEndpoint(app)); err != nil {
 						return nil, fmt.Errorf("refusing the call: %w", err)
 					}
