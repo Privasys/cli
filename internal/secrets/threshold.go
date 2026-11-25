@@ -49,7 +49,11 @@ func CreateThresholdKeyInVault(ctx context.Context, p VaultCreateParams, thresho
 	if err != nil {
 		return nil, nil, err
 	}
-	con := vault.NewStaticConstellation(addr.Endpoints, vault.DialOptions{ClientCert: cert, VaultPolicy: verify})
+	opts := vault.DialOptions{ClientCert: cert, VaultPolicy: verify}
+	if err := withCreateApproval(ctx, p, addr, grant, &opts); err != nil {
+		return nil, nil, err
+	}
+	con := vault.NewStaticConstellation(addr.Endpoints, opts)
 	key, err := con.CreateThresholdKey(ctx, addr.Handle, grant, threshold)
 	if err != nil {
 		return nil, nil, err

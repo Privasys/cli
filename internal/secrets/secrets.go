@@ -94,6 +94,8 @@ type VaultAddressing struct {
 	AttServer string
 	Threshold int
 	ExpiresAt string // RFC 3339, from the catalogue; "" if unknown
+	// Audience is the audience the constellation's vaults accept.
+	Audience string
 }
 
 // VaultCreateParams creates a key in a user-facing vault using a grant the
@@ -107,6 +109,13 @@ type VaultCreateParams struct {
 	// MintGrant asks the platform to mint a grant for a key bound to the agent's
 	// holder-of-key cnf, returning the grant and the constellation addressing.
 	MintGrant func(ctx context.Context, cnf string) (grant string, addr VaultAddressing, err error)
+	// ApproveCreate asks the owner to approve creating a re-created name
+	// ("…/new-<k>", formats §9.3.1) and returns the approval token. Nil:
+	// such a create is refused before anything is sent.
+	ApproveCreate func(ctx context.Context, a ApprovalV2) (string, error)
+	// ApprovalSub is the subject the key's vaults see: the sub of the owner's
+	// vault-audience token, which must own the grant's policy.
+	ApprovalSub func(ctx context.Context, audience string) (string, error)
 }
 
 // Result summarises a created secret (no key material).

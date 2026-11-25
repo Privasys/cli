@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -270,7 +271,9 @@ constellation. The platform never sees the key material.
 
 			var res *secrets.Result
 			var publicKey []byte
-			params := secrets.VaultCreateParams{Sub: sub, Exportable: exp, AttToken: attTok, MintGrant: mint}
+			approvalSub, approveCreate := vaultCreateApprovals(env, cmd.ErrOrStderr())
+			params := secrets.VaultCreateParams{Sub: sub, Exportable: exp, AttToken: attTok, MintGrant: mint,
+				ApprovalSub: approvalSub, ApproveCreate: approveCreate}
 			switch {
 			case vaultKeyType == secrets.ThresholdKeyType:
 				res, publicKey, err = secrets.CreateThresholdKeyInVault(ctx, params, threshold)
@@ -394,6 +397,7 @@ func mintVaultKeyGrant(ctx context.Context, client *api.Client, vaultID, name, k
 		AttServer: r.Constellation.AttestationServer,
 		Threshold: r.Constellation.Threshold,
 		ExpiresAt: expires,
+		Audience:  r.Constellation.OIDCAudience,
 	}, nil
 }
 
@@ -463,6 +467,10 @@ func vaultKeyAddressing(ctx context.Context, cmd *cobra.Command, env *Env, clien
 		return secrets.VaultOpParams{}, err
 	}
 	attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
+	// A re-created name is used only once the vaults confirm it (§9.3.1).
+	if err := secrets.CheckReCreatedName(ctx, dir, ownerTok, attTok, vaultID, name, handle); err != nil {
+		return secrets.VaultOpParams{}, err
+	}
 	return secrets.VaultOpParams{
 		Handle:     handle,
 		Endpoints:  dir.Endpoints,
@@ -1070,4 +1078,43 @@ wallet: the approval names the exact vaults and build the key goes to.
 	}
 	cmd.Flags().IntVar(&threshold, "threshold", 0, "how many vaults must sign after the renewal (0 = the constellation's threshold)")
 	return cmd
+}
+
+// vaultCreateApprovals are what a create of a re-created vault key name
+// (".../new-<k>", formats §9.3.1) needs: the subject the key's vaults will
+// see (that of the owner's token for their audience) and the owner's create
+// approval in the Privasys Wallet.
+func vaultCreateApprovals(env *Env, out io.Writer) (func(context.Context, string) (string, error), func(context.Context, secrets.ApprovalV2) (string, error)) {
+	sub := func(ctx context.Context, reported string) (string, error) {
+		audience, err := vaultApprovalAudience(reported)
+		if err != nil {
+			return "", err
+		}
+		tok, err := auth.VaultTokenFor(ctx, env.Cfg.Issuer, audience)
+		if err != nil {
+			return "", err
+		}
+		claims, err := auth.Claims(tok)
+		if err != nil {
+			return "", err
+		}
+		s, _ := claims["sub"].(string)
+		if s == "" {
+			return "", fmt.Errorf("the vault token names no subject")
+		}
+		return s, nil
+	}
+	approve := func(ctx context.Context, a secrets.ApprovalV2) (string, error) {
+		audience, err := vaultApprovalAudience(a.Audience)
+		if err != nil {
+			return "", err
+		}
+		a.Audience = audience
+		bearer, err := auth.AccessToken(ctx, env.Cfg.Issuer)
+		if err != nil {
+			return "", err
+		}
+		return secrets.RequestApprovalV2(ctx, env.Cfg.Issuer, bearer, a, secrets.OpenBrowser, out)
+	}
+	return sub, approve
 }

@@ -57,7 +57,11 @@ func createWholeKeyOnVault(ctx context.Context, p VaultCreateParams, material []
 		return nil, err
 	}
 	ep := addr.Endpoints[0] // single-enclave: the first (deterministic) vault holds it
-	c, err := vault.Dial(ctx, vaultReg(ep), vault.DialOptions{ClientCert: cert, VaultPolicy: verify})
+	opts := vault.DialOptions{ClientCert: cert, VaultPolicy: verify}
+	if err := withCreateApproval(ctx, p, addr, grant, &opts); err != nil {
+		return nil, err
+	}
+	c, err := vault.Dial(ctx, vaultReg(ep), opts)
 	if err != nil {
 		return nil, fmt.Errorf("dial %s: %w", ep, err)
 	}
@@ -479,10 +483,11 @@ func CreateInVault(ctx context.Context, p VaultCreateParams) (*Result, error) {
 			Token:    p.AttToken,
 		},
 	}
-	con := vault.NewStaticConstellation(addr.Endpoints, vault.DialOptions{
-		ClientCert:  cert,
-		VaultPolicy: verify,
-	})
+	opts := vault.DialOptions{ClientCert: cert, VaultPolicy: verify}
+	if err := withCreateApproval(ctx, p, addr, grant, &opts); err != nil {
+		return nil, err
+	}
+	con := vault.NewStaticConstellation(addr.Endpoints, opts)
 	results, _, err := con.CreateKeyShares(ctx, addr.Handle, p.Secret, threshold, grant)
 	if err != nil {
 		return nil, fmt.Errorf("create key shares: %w", err)

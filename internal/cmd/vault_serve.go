@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -150,7 +151,8 @@ func (f *kvFacade) create(w http.ResponseWriter, r *http.Request) {
 	mint := func(ctx context.Context, cnf string) (string, secrets.VaultAddressing, error) {
 		return mintVaultKeyGrant(ctx, f.client, f.vaultID, name, kvKeyType(body.Kty), cnf, kvKeyType(body.Kty) == "", "", "")
 	}
-	params := secrets.VaultCreateParams{Sub: sub, AttToken: attTok, MintGrant: mint}
+	approvalSub, approveCreate := vaultCreateApprovals(f.env, os.Stderr)
+	params := secrets.VaultCreateParams{Sub: sub, AttToken: attTok, MintGrant: mint, ApprovalSub: approvalSub, ApproveCreate: approveCreate}
 	var res *secrets.Result
 	switch kvKeyType(body.Kty) {
 	case "P256SigningKey":

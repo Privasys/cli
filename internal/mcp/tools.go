@@ -1611,6 +1611,10 @@ func vaultKeyAddr(ctx context.Context, d Deps, vaultID, name string, version int
 		return secrets.VaultOpParams{}, err
 	}
 	attTok, _ := auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")
+	// A re-created name is used only once the vaults confirm it (§9.3.1).
+	if err := secrets.CheckReCreatedName(ctx, dir, ownerTok, attTok, vaultID, name, handle); err != nil {
+		return secrets.VaultOpParams{}, err
+	}
 	return secrets.VaultOpParams{
 		Handle: handle, Endpoints: dir.Endpoints, MRENCLAVE: dir.MRENCLAVE,
 		AttServer: dir.AttestationServer, AttToken: attTok, OwnerToken: ownerTok,
