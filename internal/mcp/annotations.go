@@ -84,8 +84,10 @@ var toolHints = map[string]hints{
 	"apps_owners_list":               read("List an app's owners"),
 	"apps_owners_add":                write("Give a member access to an app", true),
 	"apps_owners_remove":             destroy("Remove a member's access to an app", true),
-	"apps_api":                       read("List an app's functions"),
-	"apps_mcp":                       read("Show an app's MCP tools"),
+	// For a WASM app the control plane asks the enclave, so the answer comes
+	// from the app's own code.
+	"apps_api":                       {title: "List an app's functions", readOnly: true, idempotent: true, openWorld: true},
+	"apps_mcp":                       {title: "Show an app's MCP tools", readOnly: true, idempotent: true, openWorld: true},
 	"apps_call":                      {title: "Call an app function", destructive: true, openWorld: true},
 	"apps_action":                    {title: "Run an app action", destructive: true, openWorld: true},
 	"apps_configure":                 {title: "Configure an app (one-time)", destructive: true, openWorld: true},
