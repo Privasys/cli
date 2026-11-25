@@ -241,20 +241,53 @@ func directKeyPolicyChange(cmd *cobra.Command, env *Env, client *api.Client, han
 			}
 			allDone = false
 		}
-		rows = append(rows, []string{m.Endpoint, fmt.Sprintf("v%d", m.Version), state})
-		out = append(out, map[string]any{"vault": m.Endpoint, "version": m.Version, "holds_change": m.PD == plan.TargetPD})
+		rows = append(rows, []string{m.Endpoint, fmt.Sprintf("v%d", m.Version), shortPD(m.PD), state})
+		out = append(out, map[string]any{"vault": m.Endpoint, "version": m.Version, "pd": m.PD, "holds_change": m.PD == plan.TargetPD})
 	}
-	if err := output.Emit(env.Format, map[string]any{"handle": handle, "constellation": dir.Name, "vaults": out, "complete": allDone},
-		func() output.Table { return output.Table{Headers: []string{"VAULT", "VERSION", "RESULT"}, Rows: rows} }); err != nil {
+	if err := output.Emit(env.Format, map[string]any{"handle": handle, "constellation": dir.Name, "target_pd": plan.TargetPD, "vaults": out, "complete": allDone},
+		func() output.Table {
+			return output.Table{Headers: []string{"VAULT", "VERSION", "PD (sent " + shortPD(plan.TargetPD) + ")", "RESULT"}, Rows: rows}
+		}); err != nil {
 		return err
 	}
 	if rerr != nil {
 		return fmt.Errorf("the vaults could not all be read back: %w", rerr)
 	}
 	if !allDone {
+		if samePDs(after) {
+			// Every vault agrees on one policy, not the one sent: either a
+			// vault build that writes the same policy differently, or a
+			// different policy. Running the command again tells them apart:
+			// it plans from what the vaults now hold, and finds nothing to do
+			// when they already hold the change.
+			return fmt.Errorf("every vault now holds the same policy (pd %s), which is not the policy sent (pd %s) as written; "+
+				"run the same command again: it reports \"already holds this change\" if the vaults only wrote it differently, "+
+				"and plans the change again otherwise", shortPD(after[0].PD), shortPD(plan.TargetPD))
+		}
 		return fmt.Errorf("the change is not on every vault; run the same command again to finish it")
 	}
 	return nil
+}
+
+// shortPD is a policy digest cut to tell digests apart in a table.
+func shortPD(pd string) string {
+	if len(pd) > 16 {
+		return pd[:16]
+	}
+	return pd
+}
+
+// samePDs reports whether every member read back holds the same policy.
+func samePDs(ms []secrets.MemberPolicy) bool {
+	if len(ms) == 0 {
+		return false
+	}
+	for _, m := range ms[1:] {
+		if m.PD != ms[0].PD {
+			return false
+		}
+	}
+	return true
 }
 
 // findKeyVaults finds the live constellation holding handle, where every
