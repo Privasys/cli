@@ -89,7 +89,7 @@ them.`,
 				q.Set("tail_bytes", strconv.Itoa(tail))
 			}
 			status, err := ratls.ManagerGet(ctx, ratls.ManagerParams{
-				Host: where.dial, ServerName: where.manager, EnclaveID: where.enclaveID,
+				Host: where.dial, Port: where.port, ServerName: where.manager, EnclaveID: where.enclaveID,
 				MRTD: where.mrtd, RTMR1: where.rtmr1, RTMR2: where.rtmr2,
 				AttServerURL: defaultAttServer, AttServerTok: attTok,
 				Path:     "/api/v1/containers/" + url.PathEscape(where.container) + "/logs?" + q.Encode(),
@@ -110,6 +110,7 @@ them.`,
 // logsWhere is where an app's logs are read.
 type logsWhere struct {
 	dial, manager, container string
+	port                     int
 	enclaveID                []byte
 	mrtd, rtmr1, rtmr2       []byte
 }
@@ -131,7 +132,10 @@ func logsTarget(app, cur map[string]interface{}) (logsWhere, error) {
 		dial:      output.Str(cur, "gateway_host"),
 		container: output.Str(app, "name"),
 	}
-	if w.manager == "" || w.dial == "" {
+	// The port is dialled exactly as given (a tunnelled host's is not 443).
+	port, _ := cur["manager_port"].(float64)
+	w.port = int(port)
+	if w.manager == "" || w.dial == "" || port != float64(w.port) || w.port <= 0 || w.port > 65535 {
 		return logsWhere{}, errors.New("the platform did not say where the app's enclave manager is (this platform version does not serve logs yet)")
 	}
 	for _, f := range []struct {
