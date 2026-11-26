@@ -12,18 +12,20 @@ import (
 func TestLogsTargetNeedsTheManagerFromThePlatform(t *testing.T) {
 	app := map[string]interface{}{"name": "my-app"}
 	cur := map[string]interface{}{"enclave_id": "0f8e5a2c-1b3d-4e6f-8a9b-0c1d2e3f4a5b",
-		"manager_hostname": "eu-france-1-mgr.apps.example", "gateway_host": "203.0.113.7"}
+		"manager_hostname": "eu-france-1-mgr.apps.example", "gateway_host": "203.0.113.7",
+		"enclave_mrtd": strings.Repeat("11", 48), "enclave_rtmr1": strings.Repeat("22", 48), "enclave_rtmr2": strings.Repeat("33", 48)}
 	w, err := logsTarget(app, cur)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w.manager != "eu-france-1-mgr.apps.example" || w.dial != "203.0.113.7" || w.container != "my-app" || len(w.enclaveID) != 16 || w.enclaveID[0] != 0x0f {
+	if w.manager != "eu-france-1-mgr.apps.example" || w.dial != "203.0.113.7" || w.container != "my-app" || len(w.enclaveID) != 16 || w.enclaveID[0] != 0x0f ||
+		len(w.mrtd) != 48 || w.rtmr1[0] != 0x22 || w.rtmr2[0] != 0x33 {
 		t.Errorf("target = %+v", w)
 	}
 	if _, err := logsTarget(app, nil); err == nil {
 		t.Error("no running deployment gave a target")
 	}
-	for _, drop := range []string{"manager_hostname", "gateway_host"} {
+	for _, drop := range []string{"manager_hostname", "gateway_host", "enclave_mrtd", "enclave_rtmr1", "enclave_rtmr2"} {
 		c := map[string]interface{}{}
 		for k, v := range cur {
 			if k != drop {

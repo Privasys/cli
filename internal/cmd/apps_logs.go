@@ -90,6 +90,7 @@ them.`,
 			}
 			status, err := ratls.ManagerGet(ctx, ratls.ManagerParams{
 				Host: where.dial, ServerName: where.manager, EnclaveID: where.enclaveID,
+				MRTD: where.mrtd, RTMR1: where.rtmr1, RTMR2: where.rtmr2,
 				AttServerURL: defaultAttServer, AttServerTok: attTok,
 				Path:     "/api/v1/containers/" + url.PathEscape(where.container) + "/logs?" + q.Encode(),
 				Bearer:   bearer,
@@ -110,10 +111,12 @@ them.`,
 type logsWhere struct {
 	dial, manager, container string
 	enclaveID                []byte
+	mrtd, rtmr1, rtmr2       []byte
 }
 
 // logsTarget takes the app's running deployment as the control plane reports
-// it: the enclave, its manager's name and address, and the container.
+// it: the enclave, its manager's name and address, the measurements recorded
+// for its runtime, and the container.
 func logsTarget(app, cur map[string]interface{}) (logsWhere, error) {
 	if cur == nil {
 		return logsWhere{}, errors.New("the app has no running deployment, so there are no logs to read")
@@ -130,6 +133,16 @@ func logsTarget(app, cur map[string]interface{}) (logsWhere, error) {
 	}
 	if w.manager == "" || w.dial == "" {
 		return logsWhere{}, errors.New("the platform did not say where the app's enclave manager is (this platform version does not serve logs yet)")
+	}
+	for _, f := range []struct {
+		field string
+		dst   *[]byte
+	}{{"enclave_mrtd", &w.mrtd}, {"enclave_rtmr1", &w.rtmr1}, {"enclave_rtmr2", &w.rtmr2}} {
+		b, err := hex.DecodeString(output.Str(cur, f.field))
+		if err != nil || len(b) == 0 {
+			return logsWhere{}, fmt.Errorf("the platform did not give the enclave's recorded %s, so it cannot be verified", f.field)
+		}
+		*f.dst = b
 	}
 	if w.container == "" {
 		return logsWhere{}, errors.New("the app has no name")
