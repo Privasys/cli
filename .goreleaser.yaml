@@ -86,6 +86,43 @@ scoops:
     description: Deploy and verify confidential apps from your terminal or your agent
     license: AGPL-3.0
 
+# winget (Windows Package Manager). A release opens a pull request to
+# microsoft/winget-pkgs from the Privasys fork, which Microsoft validates and
+# merges, so winget follows a release by a review delay (Scoop stays the
+# immediate channel). It needs its own classic PAT (WINGET_GITHUB_TOKEN,
+# public_repo) whose owner has accepted the Microsoft CLA; without the secret,
+# or for a prerelease, the step disables itself.
+winget:
+  - name: privasys
+    package_identifier: Privasys.CLI
+    publisher: Privasys
+    publisher_url: https://privasys.org
+    publisher_support_url: https://github.com/Privasys/cli/issues
+    homepage: https://privasys.org
+    short_description: Deploy and verify confidential apps from your terminal or your agent
+    description: |-
+      The command-line interface to the Privasys confidential-computing platform.
+      Authenticate with the wallet, deploy and manage confidential apps, manage
+      teams and billing, and verify enclave attestation. Agent-first (MCP).
+    license: AGPL-3.0
+    license_url: https://github.com/Privasys/cli/blob/main/LICENSE
+    copyright: Copyright (c) Privasys
+    release_notes_url: "https://github.com/Privasys/cli/releases/tag/{{ .Tag }}"
+    tags: [privasys, confidential-computing, attestation, cli, mcp]
+    skip_upload: '{{ if and .Env.WINGET_GITHUB_TOKEN (eq .Prerelease "") }}false{{ else }}true{{ end }}'
+    repository:
+      owner: Privasys
+      name: winget-pkgs
+      branch: "privasys-cli-{{ .Version }}"
+      token: "{{ .Env.WINGET_GITHUB_TOKEN }}"
+      pull_request:
+        enabled: true
+        draft: false
+        base:
+          owner: microsoft
+          name: winget-pkgs
+          branch: master
+
 checksum:
   name_template: "checksums.txt"
 

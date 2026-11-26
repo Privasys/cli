@@ -66,3 +66,6 @@ jobs:
           # Always defined (empty when the secret is unset) so the goreleaser
           # templates resolve; when empty the brew/scoop publishers self-disable.
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          # Classic PAT (public_repo) for the winget pull request from
+          # Privasys/winget-pkgs to microsoft/winget-pkgs. Empty = winget skipped.
+          WINGET_GITHUB_TOKEN: ${{ secrets.WINGET_GITHUB_TOKEN }}
