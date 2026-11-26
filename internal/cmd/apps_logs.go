@@ -81,7 +81,7 @@ them.`,
 			}
 			attTok, err := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
 			if err != nil || attTok == "" {
-				return fmt.Errorf("no attestation-server token, so the enclave cannot be verified; nothing was sent: %v", err)
+				return ratls.Refused("no attestation-server token, so the enclave cannot be verified; nothing was sent: %v", err)
 			}
 
 			q := url.Values{"stream": {stream}}
@@ -144,7 +144,7 @@ func logsTarget(app, cur map[string]interface{}) (logsWhere, error) {
 	}{{"enclave_mrtd", &w.mrtd}, {"enclave_rtmr1", &w.rtmr1}, {"enclave_rtmr2", &w.rtmr2}} {
 		b, err := hex.DecodeString(output.Str(cur, f.field))
 		if err != nil || len(b) == 0 {
-			return logsWhere{}, fmt.Errorf("the platform did not give the enclave's recorded %s, so it cannot be verified", f.field)
+			return logsWhere{}, ratls.Refused("the platform did not give the enclave's recorded %s, so it cannot be verified", f.field)
 		}
 		*f.dst = b
 	}

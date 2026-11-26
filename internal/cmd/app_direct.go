@@ -109,7 +109,7 @@ func appCallTarget(ctx context.Context, client *api.Client, app map[string]inter
 	}
 	pin, err := ratls.PinFor(app, dep, ver)
 	if err != nil {
-		return "", nil, fmt.Errorf("the app's enclave cannot be pinned, so nothing was sent: %w", err)
+		return "", nil, ratls.Refused("the app's enclave cannot be pinned, so nothing was sent: %w", err)
 	}
 	return host, pin, nil
 }

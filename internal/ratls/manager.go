@@ -92,7 +92,7 @@ func ManagerGet(ctx context.Context, p ManagerParams, out io.Writer) (*ManagerEr
 func managerGet(ctx context.Context, p ManagerParams, out io.Writer) (int, string, error) {
 	policy, err := managerPolicy(p)
 	if err != nil {
-		return 0, "", fmt.Errorf("the enclave manager cannot be verified, so nothing was sent: %w", err)
+		return 0, "", Refused("the enclave manager cannot be verified, so nothing was sent: %w", err)
 	}
 	port := p.Port
 	if port == 0 {
@@ -104,7 +104,7 @@ func managerGet(ctx context.Context, p ManagerParams, out io.Writer) (int, strin
 	}
 	defer client.Close()
 	if _, verr := client.VerifyCertificate(policy); verr != nil {
-		return 0, "", fmt.Errorf("the manager's attestation failed, refusing to send anything: %w", verr)
+		return 0, "", Refused("the manager's attestation failed, refusing to send anything: %w", verr)
 	}
 
 	hdr := http.Header{}

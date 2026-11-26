@@ -14,6 +14,7 @@ import (
 
 	"github.com/Privasys/cli/internal/auth"
 	"github.com/Privasys/cli/internal/config"
+	"github.com/Privasys/cli/internal/ratls"
 )
 
 // Build version, injected via -ldflags at release time.
@@ -93,7 +94,13 @@ func Execute() {
 // can branch on the failure class.
 //
 //	1 generic   3 not authenticated   4 not authorized   5 not found
+//
+// A refusal to send to an enclave that could not be verified is generic (1),
+// whatever its message quotes (it may say an OID was "not found").
 func exitCode(err error) int {
+	if errors.Is(err, ratls.ErrRefused) {
+		return 1
+	}
 	if errors.Is(err, auth.ErrNotLoggedIn) {
 		return 3
 	}

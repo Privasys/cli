@@ -6,7 +6,6 @@ package ratls
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,7 +41,7 @@ type CallParams struct {
 // ErrNoQuoteVerification refuses a call that could not verify the enclave's
 // quote with the attestation server: the request carries the caller's token,
 // and a local check alone does not prove the quote's signature or TCB.
-var ErrNoQuoteVerification = errors.New("no attestation-server token, so the enclave's quote cannot be verified; nothing was sent (check `privasys auth status`)")
+var ErrNoQuoteVerification = Refused("no attestation-server token, so the enclave's quote cannot be verified; nothing was sent (check `privasys auth status`)")
 
 // Call verifies the enclave and, only if every check passes, sends the
 // request directly to the app; the control plane is never in the data path.
@@ -55,7 +54,7 @@ func Call(ctx context.Context, p CallParams, out io.Writer) (int, error) {
 		return 0, ErrNoQuoteVerification
 	}
 	if err := p.Pin.valid(); err != nil {
-		return 0, fmt.Errorf("the app cannot be pinned, so nothing was sent: %w", err)
+		return 0, Refused("the app cannot be pinned, so nothing was sent: %w", err)
 	}
 	opts := &rc.Options{ServerName: p.ServerName, Timeout: 60 * time.Second,
 		Attestation: rc.AttestationDeterministic, Trust: rc.TrustFleet}
@@ -77,7 +76,7 @@ func Call(ctx context.Context, p CallParams, out io.Writer) (int, error) {
 	// evidence was obtained after the handshake; this checks it).
 	policy := p.Pin.policy(p.AttServerURL, p.AttServerTok)
 	if _, verr := client.VerifyCertificate(policy); verr != nil {
-		return 0, fmt.Errorf("enclave attestation failed — refusing to send data: %w", verr)
+		return 0, Refused("enclave attestation failed — refusing to send data: %w", verr)
 	}
 
 	if p.AppType == "container" {
