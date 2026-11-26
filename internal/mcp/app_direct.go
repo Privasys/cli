@@ -37,9 +37,9 @@ func callAppDirect(ctx context.Context, d Deps, appID, fn string, body interface
 	if aType == "container" {
 		path = containerPath(app, fn)
 	}
-	host, err := d.Client.ActiveDeploymentHost(ctx, appID)
+	host, pin, err := appCallTarget(ctx, d, app, appID)
 	if err != nil {
-		return nil, fmt.Errorf("%w — the app must be deployed to call it", err)
+		return nil, err
 	}
 	var raw []byte
 	if body != nil {
@@ -56,6 +56,7 @@ func callAppDirect(ctx context.Context, d Deps, appID, fn string, body interface
 		// The quote is always verified with the attestation server before
 		// the owner's token is sent.
 		AttServerURL: attServerURL, AttServerTok: attServerToken(ctx, d),
+		Pin: pin,
 	}, &buf)
 	if err != nil {
 		return nil, err

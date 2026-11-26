@@ -85,6 +85,28 @@ func (c *Client) ResolveUpgradeTarget(ctx context.Context, appID string) (Deploy
 	return DeployTarget{Location: str(locs[0], "code")}, nil
 }
 
+// RunningDeploymentAndVersion is the app's one running deployment and the
+// version it runs: what a direct call pins the app's enclave to.
+func (c *Client) RunningDeploymentAndVersion(ctx context.Context, appID string) (map[string]interface{}, map[string]interface{}, error) {
+	deps, err := c.ListDeployments(ctx, appID)
+	if err != nil {
+		return nil, nil, err
+	}
+	cur := CurrentDeployment(deps)
+	if cur == nil {
+		return nil, nil, fmt.Errorf("the app has no single running deployment to verify")
+	}
+	vid := str(cur, "version_id")
+	if vid == "" {
+		return nil, nil, fmt.Errorf("the running deployment names no version")
+	}
+	ver, err := c.GetVersion(ctx, appID, vid)
+	if err != nil {
+		return nil, nil, fmt.Errorf("the running version %s: %w", vid, err)
+	}
+	return cur, ver, nil
+}
+
 // enclaveLocationCode is the location code the platform gives a host: its
 // cloud region code, else its region.
 func enclaveLocationCode(e map[string]interface{}) string {

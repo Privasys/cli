@@ -34,6 +34,9 @@ type CallParams struct {
 	Challenge    []byte // non-empty selects challenge mode (evidence bound to the connection)
 	AttServerURL string // required, with AttServerTok: the quote is always verified remotely
 	AttServerTok string
+	// Pin is required: the host's recorded measurements, the app id and the
+	// running version's code hash the serving leaf must carry (PinFor).
+	Pin *AppPin
 }
 
 // ErrNoQuoteVerification refuses a call that could not verify the enclave's
@@ -41,16 +44,21 @@ type CallParams struct {
 // and a local check alone does not prove the quote's signature or TCB.
 var ErrNoQuoteVerification = errors.New("no attestation-server token, so the enclave's quote cannot be verified; nothing was sent (check `privasys auth status`)")
 
-// Call verifies the enclave (RA-TLS challenge + report-data binding; plus a
-// remote quote verification when AttServerURL/Tok are set) and, only if
-// verification passes, sends the request directly to the app — the control
-// plane is never in the data path. Container responses (incl. chunked/SSE)
-// stream to out; the response status is returned.
+// Call verifies the enclave and, only if every check passes, sends the
+// request directly to the app; the control plane is never in the data path.
+// The checks: the chain reaches the Privasys fleet anchors, the quote is
+// verified by the attestation server and bound to the connection, and the
+// leaf matches the pin (host measurements, app id, code hash). Container
+// responses (incl. chunked/SSE) stream to out; the response status is returned.
 func Call(ctx context.Context, p CallParams, out io.Writer) (int, error) {
 	if p.AttServerURL == "" || p.AttServerTok == "" {
 		return 0, ErrNoQuoteVerification
 	}
-	opts := &rc.Options{ServerName: p.ServerName, Timeout: 60 * time.Second, Attestation: rc.AttestationDeterministic}
+	if err := p.Pin.valid(); err != nil {
+		return 0, fmt.Errorf("the app cannot be pinned, so nothing was sent: %w", err)
+	}
+	opts := &rc.Options{ServerName: p.ServerName, Timeout: 60 * time.Second,
+		Attestation: rc.AttestationDeterministic, Trust: rc.TrustFleet}
 	if len(p.Challenge) > 0 {
 		opts.Attestation = rc.AttestationChallenge
 		if len(p.Challenge) == rc.ContextLen {
@@ -67,8 +75,7 @@ func Call(ctx context.Context, p CallParams, out io.Writer) (int, error) {
 
 	// Verify the enclave BEFORE sending any application data (RA-TLS v2: the
 	// evidence was obtained after the handshake; this checks it).
-	policy := &rc.VerificationPolicy{TEE: teeOf(client.Evidence()),
-		QuoteVerification: &rc.QuoteVerificationConfig{Endpoint: p.AttServerURL, Token: p.AttServerTok}}
+	policy := p.Pin.policy(p.AttServerURL, p.AttServerTok)
 	if _, verr := client.VerifyCertificate(policy); verr != nil {
 		return 0, fmt.Errorf("enclave attestation failed — refusing to send data: %w", verr)
 	}

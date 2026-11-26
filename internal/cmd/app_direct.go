@@ -45,9 +45,9 @@ func callAppDirect(ctx context.Context, env *Env, client *api.Client, appID, fn 
 	if aType == "container" {
 		path = resolveContainerPath(app, fn)
 	}
-	host, err := client.ActiveDeploymentHost(ctx, appID)
+	host, pin, err := appCallTarget(ctx, client, app, appID)
 	if err != nil {
-		return nil, fmt.Errorf("%w — the app must be deployed to call it", err)
+		return nil, err
 	}
 	appTok, err := auth.AccessToken(ctx, env.Cfg.Issuer)
 	if err != nil {
@@ -72,6 +72,7 @@ func callAppDirect(ctx context.Context, env *Env, client *api.Client, appID, fn 
 		// The quote is always verified with the attestation server before
 		// the owner's token is sent.
 		AttServerURL: defaultAttServer, AttServerTok: attTok,
+		Pin: pin,
 	}, &buf)
 	if err != nil {
 		return nil, err
@@ -93,6 +94,24 @@ func callAppDirect(ctx context.Context, env *Env, client *api.Client, appID, fn 
 		return nil, fmt.Errorf("app returned status %d", status)
 	}
 	return out, nil
+}
+
+// appCallTarget is the hostname of the app's running deployment and the pin
+// its serving leaf must match (ratls.PinFor), both from the same deployment.
+func appCallTarget(ctx context.Context, client *api.Client, app map[string]interface{}, appID string) (string, *ratls.AppPin, error) {
+	dep, ver, err := client.RunningDeploymentAndVersion(ctx, appID)
+	if err != nil {
+		return "", nil, fmt.Errorf("%w; the app must be deployed and running to call it", err)
+	}
+	host := output.Str(dep, "hostname")
+	if host == "" {
+		return "", nil, fmt.Errorf("the app's running deployment has no hostname")
+	}
+	pin, err := ratls.PinFor(app, dep, ver)
+	if err != nil {
+		return "", nil, fmt.Errorf("the app's enclave cannot be pinned, so nothing was sent: %w", err)
+	}
+	return host, pin, nil
 }
 
 // firstLineOf trims a response body to something fit for one error line.

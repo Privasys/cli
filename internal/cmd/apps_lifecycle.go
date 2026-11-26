@@ -2209,11 +2209,14 @@ sent.
 			} else if method != "" && !strings.EqualFold(strings.TrimSpace(method), "POST") {
 				return errors.New("--method applies to container apps; a wasm app's function takes a call, not an HTTP method")
 			}
+			// The pin comes from the app's running deployment even when
+			// --host names the address: whatever answers must be this app.
+			depHost, pin, err := appCallTarget(ctx, client, app, appID)
+			if err != nil {
+				return err
+			}
 			if serverName == "" {
-				serverName, err = client.ActiveDeploymentHost(ctx, appID)
-				if err != nil {
-					return fmt.Errorf("%w; pass --host <enclave-fqdn>", err)
-				}
+				serverName = depHost
 			}
 
 			appTok := token
@@ -2246,7 +2249,7 @@ sent.
 			status, err := ratls.Call(ctx, ratls.CallParams{
 				Host: serverName, ServerName: serverName, AppName: appName, AppType: aType,
 				Function: args[1], Path: path, Method: httpMethod, Body: body, AppToken: appTok, Headers: extra,
-				Challenge: nonce, AttServerURL: attURL, AttServerTok: attTok,
+				Challenge: nonce, AttServerURL: attURL, AttServerTok: attTok, Pin: pin,
 			}, os.Stdout)
 			if err != nil {
 				return err

@@ -1073,7 +1073,7 @@ func (s *Server) registerTools() {
 				if err != nil {
 					return nil, err
 				}
-				host, err := d.Client.ActiveDeploymentHost(ctx, id)
+				host, pin, err := appCallTarget(ctx, d, app, id)
 				if err != nil {
 					return nil, err
 				}
@@ -1127,7 +1127,7 @@ func (s *Server) registerTools() {
 				status, err := ratls.Call(ctx, ratls.CallParams{
 					Host: host, ServerName: host, AppName: name, AppType: aType,
 					Function: fn, Path: path, Method: method, Body: body, AppToken: d.Token, Headers: headers,
-					Challenge: ratls.NewNonce(), AttServerURL: attURL, AttServerTok: attTok,
+					Challenge: ratls.NewNonce(), AttServerURL: attURL, AttServerTok: attTok, Pin: pin,
 				}, &buf)
 				if err != nil {
 					return nil, err
