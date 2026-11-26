@@ -40,7 +40,10 @@ type ManagerParams struct {
 
 // managerPolicy is everything the manager must prove before it is sent the
 // bearer: a TDX quote verified by the attestation server, the recorded
-// runtime measurements, a production image, and the enclave id. The chain to
+// runtime measurements, a production image, and the enclave id. The image
+// profile (OID 1.2) must be PRESENT and "production": the verifier on its own
+// accepts a leaf without it (images older than the marker), but every runtime
+// that serves logs (1.3 on the manager leaf) also carries 1.2. The chain to
 // the Privasys fleet anchors is checked during the handshake (managerOptions).
 func managerPolicy(p ManagerParams) (*rc.VerificationPolicy, error) {
 	if len(p.EnclaveID) != 16 {
@@ -58,10 +61,16 @@ func managerPolicy(p ManagerParams) (*rc.VerificationPolicy, error) {
 		TEE:  rc.TeeTypeTDX,
 		MRTD: p.MRTD, RTMR1: p.RTMR1, RTMR2: p.RTMR2,
 		QuoteVerification: &rc.QuoteVerificationConfig{Endpoint: p.AttServerURL, Token: p.AttServerTok},
-		ExpectedOids:      []rc.ExpectedOid{{OID: rc.OidEnclaveInstanceID, ExpectedValue: p.EnclaveID}},
+		ExpectedOids: []rc.ExpectedOid{
+			{OID: rc.OidEnclaveInstanceID, ExpectedValue: p.EnclaveID},
+			{OID: rc.OidImageProfile, ExpectedValue: []byte(productionProfile)},
+		},
 		// AllowDebugImages stays false: a non-production image is refused.
 	}, nil
 }
+
+// productionProfile is the exact image profile value a manager must carry.
+const productionProfile = "production"
 
 // managerOptions dial in challenge mode with a fresh context, and require the
 // chain to reach the Privasys fleet anchors.

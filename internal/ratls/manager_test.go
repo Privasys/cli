@@ -37,8 +37,9 @@ func TestManagerPolicyPinsTheEnclave(t *testing.T) {
 		!bytes.Equal(pol.RTMR2, p.RTMR2) || pol.AllowDebugImages || pol.QuoteVerification == nil {
 		t.Errorf("policy = %+v", pol)
 	}
-	if len(pol.ExpectedOids) != 1 || pol.ExpectedOids[0].OID != rc.OidEnclaveInstanceID ||
-		!bytes.Equal(pol.ExpectedOids[0].ExpectedValue, p.EnclaveID) {
+	if len(pol.ExpectedOids) != 2 || pol.ExpectedOids[0].OID != rc.OidEnclaveInstanceID ||
+		!bytes.Equal(pol.ExpectedOids[0].ExpectedValue, p.EnclaveID) ||
+		pol.ExpectedOids[1].OID != rc.OidImageProfile || string(pol.ExpectedOids[1].ExpectedValue) != "production" {
 		t.Errorf("expected OIDs = %+v", pol.ExpectedOids)
 	}
 	if o := managerOptions(p); o.Trust != rc.TrustFleet || o.Attestation != rc.AttestationChallenge || len(o.Context) != rc.ContextLen {
