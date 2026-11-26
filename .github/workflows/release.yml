@@ -26,13 +26,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout cli
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           path: cli
           fetch-depth: 0
 
       - name: Checkout ra-tls-clients (sibling for the go.mod replace)
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: Privasys/ra-tls-clients
           # v0.12.0: platform allow-list + PlatformFromQuote (attest reports whether the
@@ -41,13 +41,13 @@ jobs:
           path: ra-tls-clients
 
       - name: Checkout enclave-vaults-client (sibling for the go.mod replace)
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: Privasys/enclave-vaults-client
           path: enclave-vaults-client
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: cli/go.mod
 
@@ -55,7 +55,7 @@ jobs:
         working-directory: cli
         run: go test ./...
 
-      - uses: goreleaser/goreleaser-action@v6
+      - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
           version: "~> v2"
           args: release --clean
