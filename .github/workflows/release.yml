@@ -44,6 +44,10 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           repository: Privasys/enclave-vaults-client
+          # Pinned: the CLI handles sign-ins, so a new client commit enters a
+          # release only when this pin is moved on purpose. 1d8423da =
+          # vaultprobe-v0.4.0, what v0.61.1 was built with.
+          ref: 1d8423da9a6dd92bd3077ee9c3ababca7146a3f3
           path: enclave-vaults-client
 
       - name: Set up Go
@@ -57,7 +61,9 @@ jobs:
 
       - uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
         with:
-          version: "~> v2"
+          # Pinned like the actions: the release tool runs with the publishing
+          # tokens. v2.20.3 built v0.61.1; move it on purpose.
+          version: "v2.20.3"
           args: release --clean
           workdir: cli
         env:
