@@ -4,6 +4,7 @@
 package ratls
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -79,16 +80,37 @@ func codeHash(app, version map[string]interface{}) ([]byte, error) {
 		}
 		return h, nil
 	}
+	// The digest the platform recorded for the version (its measurement set,
+	// what the runtime pulled), else the one in a digest-pinned image ref. A
+	// version whose ref names a tag still has its recorded digest; when both
+	// are present they must agree.
 	ref := str(version, "container_image")
-	_, digest, ok := strings.Cut(ref, "@sha256:")
-	if !ok {
-		return nil, fmt.Errorf("the running version's image %q is not pinned by digest", ref)
+	var recorded, inRef []byte
+	if ms, _ := version["measurement_set"].(map[string]interface{}); ms != nil {
+		if d := str(ms, "image_digest"); d != "" {
+			h, err := hexLen(strings.TrimPrefix(d, "sha256:"), 32)
+			if err != nil || !strings.HasPrefix(d, "sha256:") {
+				return nil, fmt.Errorf("the running version's recorded image digest %q is not a sha256 digest", d)
+			}
+			recorded = h
+		}
 	}
-	h, err := hexLen(digest, 32)
-	if err != nil {
-		return nil, fmt.Errorf("the running version's image digest: %w", err)
+	if _, digest, ok := strings.Cut(ref, "@sha256:"); ok {
+		h, err := hexLen(digest, 32)
+		if err != nil {
+			return nil, fmt.Errorf("the running version's image digest: %w", err)
+		}
+		inRef = h
 	}
-	return h, nil
+	switch {
+	case recorded != nil && inRef != nil && !bytes.Equal(recorded, inRef):
+		return nil, fmt.Errorf("the running version's image %q and its recorded digest differ", ref)
+	case recorded != nil:
+		return recorded, nil
+	case inRef != nil:
+		return inRef, nil
+	}
+	return nil, fmt.Errorf("the running version's image %q is not pinned by digest and the platform recorded none", ref)
 }
 
 // policy is the verification policy for the pin, with the remote quote

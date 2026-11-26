@@ -60,6 +60,33 @@ func TestPinForAWasmAppOnSGX(t *testing.T) {
 	}
 }
 
+// A version whose image ref names a tag is pinned by the digest the platform
+// recorded for it; a recorded digest that disagrees with the ref refuses.
+func TestPinForUsesTheRecordedDigestOfATaggedImage(t *testing.T) {
+	app := map[string]interface{}{"id": testAppID, "app_type": "container"}
+	tagged := map[string]interface{}{"container_image": "ghcr.io/o/app:v0.1.3",
+		"measurement_set": map[string]interface{}{"image_digest": "sha256:" + strings.Repeat("e1", 32)}}
+	p, err := PinFor(app, tdxDeployment(), tagged)
+	if err != nil || p.CodeHash[0] != 0xe1 {
+		t.Fatalf("pin = %+v, %v", p, err)
+	}
+	same := map[string]interface{}{"container_image": "r@sha256:" + strings.Repeat("e1", 32),
+		"measurement_set": map[string]interface{}{"image_digest": "sha256:" + strings.Repeat("e1", 32)}}
+	if _, err := PinFor(app, tdxDeployment(), same); err != nil {
+		t.Errorf("agreeing ref and record refused: %v", err)
+	}
+	differ := map[string]interface{}{"container_image": "r@sha256:" + strings.Repeat("ab", 32),
+		"measurement_set": map[string]interface{}{"image_digest": "sha256:" + strings.Repeat("e1", 32)}}
+	if _, err := PinFor(app, tdxDeployment(), differ); err == nil {
+		t.Error("a ref and a recorded digest that differ gave a pin")
+	}
+	bad := map[string]interface{}{"container_image": "r:v1",
+		"measurement_set": map[string]interface{}{"image_digest": strings.Repeat("e1", 32)}}
+	if _, err := PinFor(app, tdxDeployment(), bad); err == nil {
+		t.Error("a recorded digest without its sha256: prefix gave a pin")
+	}
+}
+
 // Anything the pin needs and the platform did not give is a refusal.
 func TestPinForRefusesAnIncompletePin(t *testing.T) {
 	app := map[string]interface{}{"id": testAppID, "app_type": "container"}
