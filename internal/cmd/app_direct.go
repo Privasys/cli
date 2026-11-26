@@ -60,6 +60,8 @@ func callAppDirect(ctx context.Context, env *Env, client *api.Client, appID, fn 
 		}
 	}
 
+	attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
+
 	var buf bytes.Buffer
 	status, err := ratls.Call(ctx, ratls.CallParams{
 		Host: host, ServerName: host, AppName: appName, AppType: aType,
@@ -67,6 +69,9 @@ func callAppDirect(ctx context.Context, env *Env, client *api.Client, appID, fn 
 		// A fresh nonce binds the quote to THIS connection, so a replayed
 		// certificate cannot stand in for a live enclave.
 		Challenge: ratls.NewNonce(),
+		// The quote is always verified with the attestation server before
+		// the owner's token is sent.
+		AttServerURL: defaultAttServer, AttServerTok: attTok,
 	}, &buf)
 	if err != nil {
 		return nil, err

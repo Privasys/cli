@@ -53,6 +53,9 @@ func callAppDirect(ctx context.Context, d Deps, appID, fn string, body interface
 		Host: host, ServerName: host, AppName: name, AppType: aType,
 		Function: fn, Path: path, Body: raw, AppToken: d.Token,
 		Challenge: ratls.NewNonce(),
+		// The quote is always verified with the attestation server before
+		// the owner's token is sent.
+		AttServerURL: attServerURL, AttServerTok: attServerToken(ctx, d),
 	}, &buf)
 	if err != nil {
 		return nil, err

@@ -2145,9 +2145,9 @@ attestation, and sending the request directly — the control plane is never in
 the data path. Your token is presented to the app for its own auth. The
 response streams to stdout, so chunked and SSE endpoints work.
 
-By default the enclave is verified locally (RA-TLS + fresh-nonce report-data
-binding) without contacting the attestation server. Pass --attest for full
-quote verification (genuine TEE + TCB) against the attestation server.
+The enclave's quote is always verified with the attestation server (genuine TEE
+and TCB) together with the fresh-nonce report-data binding, before anything is
+sent.
 
   --data    JSON request body, or @file
   --host    enclave gateway FQDN (default: resolved from the app)
@@ -2157,7 +2157,6 @@ quote verification (genuine TEE + TCB) against the attestation server.
             configure endpoint without --data is refused unless --method is
             given: an empty POST there can reset the app's settings, so pass
             --method GET to read them.
-  --attest  also verify the quote against the attestation server
   --no-challenge  skip the fresh-nonce challenge (deterministic verify)`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -2224,15 +2223,11 @@ quote verification (genuine TEE + TCB) against the attestation server.
 					return err
 				}
 			}
-			// The attestation-server call is opt-in (--attest); by default we
-			// verify the RA-TLS report-data binding locally without it.
-			attURL, attTok := "", ""
-			if doAttest {
-				attURL = attServer
-				if attTok, _ = auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server"); attTok == "" {
-					fmt.Fprintln(cmd.ErrOrStderr(), "warning: could not mint an attestation-server token; verifying report-data binding only")
-				}
-			}
+			// The quote is always verified with the attestation server: the
+			// request carries a token, and a local check alone proves neither
+			// the quote's signature nor its TCB. Without a token nothing is sent.
+			attURL := attServer
+			attTok, _ := auth.AccessTokenForAudience(ctx, env.Cfg.Issuer, "attestation-server")
 			var nonce []byte
 			if !noChallenge {
 				nonce = ratls.NewNonce()
@@ -2269,8 +2264,11 @@ quote verification (genuine TEE + TCB) against the attestation server.
 	cmd.Flags().StringVar(&path, "path", "", "container endpoint path (default: /<function>)")
 	cmd.Flags().StringVar(&method, "method", "", "container HTTP method: GET, HEAD, POST, PUT, PATCH or DELETE (default POST)")
 	cmd.Flags().StringArrayVar(&headers, "header", nil, "extra request header \"Name: value\" for a container call (repeatable)")
-	cmd.Flags().BoolVar(&doAttest, "attest", false, "also verify the quote against the attestation server")
-	cmd.Flags().StringVar(&attServer, "att-server", "https://as.privasys.org/verify", "attestation server verify endpoint (with --attest)")
+	// --attest is kept so existing scripts still run; the verification it
+	// asked for is now always on.
+	cmd.Flags().BoolVar(&doAttest, "attest", false, "no effect: the quote is always verified with the attestation server")
+	_ = cmd.Flags().MarkHidden("attest")
+	cmd.Flags().StringVar(&attServer, "att-server", defaultAttServer, "attestation server verify endpoint")
 	cmd.Flags().BoolVar(&noChallenge, "no-challenge", false, "skip the fresh-nonce challenge (deterministic verify)")
 	return cmd
 }

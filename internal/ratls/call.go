@@ -6,6 +6,7 @@ package ratls
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,9 +32,14 @@ type CallParams struct {
 	// wasm, whose connect_call carries no headers.
 	Headers      map[string][]string
 	Challenge    []byte // non-empty selects challenge mode (evidence bound to the connection)
-	AttServerURL string // set (with AttServerTok) to verify the quote remotely
+	AttServerURL string // required, with AttServerTok: the quote is always verified remotely
 	AttServerTok string
 }
+
+// ErrNoQuoteVerification refuses a call that could not verify the enclave's
+// quote with the attestation server: the request carries the caller's token,
+// and a local check alone does not prove the quote's signature or TCB.
+var ErrNoQuoteVerification = errors.New("no attestation-server token, so the enclave's quote cannot be verified; nothing was sent (check `privasys auth status`)")
 
 // Call verifies the enclave (RA-TLS challenge + report-data binding; plus a
 // remote quote verification when AttServerURL/Tok are set) and, only if
@@ -41,6 +47,9 @@ type CallParams struct {
 // plane is never in the data path. Container responses (incl. chunked/SSE)
 // stream to out; the response status is returned.
 func Call(ctx context.Context, p CallParams, out io.Writer) (int, error) {
+	if p.AttServerURL == "" || p.AttServerTok == "" {
+		return 0, ErrNoQuoteVerification
+	}
 	opts := &rc.Options{ServerName: p.ServerName, Timeout: 60 * time.Second, Attestation: rc.AttestationDeterministic}
 	if len(p.Challenge) > 0 {
 		opts.Attestation = rc.AttestationChallenge
@@ -58,10 +67,8 @@ func Call(ctx context.Context, p CallParams, out io.Writer) (int, error) {
 
 	// Verify the enclave BEFORE sending any application data (RA-TLS v2: the
 	// evidence was obtained after the handshake; this checks it).
-	policy := &rc.VerificationPolicy{TEE: teeOf(client.Evidence())}
-	if p.AttServerURL != "" && p.AttServerTok != "" {
-		policy.QuoteVerification = &rc.QuoteVerificationConfig{Endpoint: p.AttServerURL, Token: p.AttServerTok}
-	}
+	policy := &rc.VerificationPolicy{TEE: teeOf(client.Evidence()),
+		QuoteVerification: &rc.QuoteVerificationConfig{Endpoint: p.AttServerURL, Token: p.AttServerTok}}
 	if _, verr := client.VerifyCertificate(policy); verr != nil {
 		return 0, fmt.Errorf("enclave attestation failed — refusing to send data: %w", verr)
 	}

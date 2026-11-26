@@ -1053,7 +1053,7 @@ func (s *Server) registerTools() {
 					"enum":        []string{"GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"},
 					"description": "a CONTAINER app's HTTP method (default POST). The app's configure endpoint is never reached through apps_call: use apps_configure",
 				},
-				"attest": boolProp("also verify the quote against the attestation server"),
+				"attest": boolProp("no effect: the quote is always verified against the attestation server"),
 				"headers": map[string]interface{}{
 					"type":                 "object",
 					"additionalProperties": map[string]interface{}{"type": "string"},
@@ -1111,11 +1111,9 @@ func (s *Server) registerTools() {
 				} else if reqMethod != "" && !strings.EqualFold(strings.TrimSpace(reqMethod), "POST") {
 					return nil, errors.New("method applies to container apps; a wasm app's function takes a call, not an HTTP method")
 				}
-				attURL, attTok := "", ""
-				if b, _ := args["attest"].(bool); b {
-					attURL = "https://as.privasys.org/verify"
-					attTok, _ = auth.AccessTokenForAudience(ctx, d.Issuer, "attestation-server")
-				}
+				// The quote is always verified with the attestation server
+				// ("attest" is accepted and has no further effect).
+				attURL, attTok := attServerURL, attServerToken(ctx, d)
 				var headers map[string][]string
 				if hm, ok := args["headers"].(map[string]interface{}); ok {
 					headers = map[string][]string{}
