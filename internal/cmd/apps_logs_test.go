@@ -7,6 +7,8 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+
+	"github.com/Privasys/cli/internal/ratls"
 )
 
 func TestLogsTargetNeedsTheManagerFromThePlatform(t *testing.T) {
@@ -56,13 +58,16 @@ func TestPlainPlatformBearerRefusesAnApproval(t *testing.T) {
 }
 
 func TestLogsStatus(t *testing.T) {
-	if logsStatus(200) != nil {
+	if logsStatus(nil) != nil {
 		t.Error("200")
 	}
-	if err := logsStatus(403); err == nil || !strings.Contains(err.Error(), "only the app's owner") {
+	if err := logsStatus(&ratls.ManagerError{Status: 403}); err == nil || !strings.Contains(err.Error(), "only the app's owner") {
 		t.Errorf("403: %v", err)
 	}
-	if err := logsStatus(404); err == nil || err.Error() != "nothing captured yet" {
-		t.Errorf("404: %v", err)
+	if err := logsStatus(&ratls.ManagerError{Status: 404, Error: "no logs captured"}); err == nil || err.Error() != "nothing captured yet" {
+		t.Errorf("404 with the runtime's answer: %v", err)
+	}
+	if err := logsStatus(&ratls.ManagerError{Status: 404}); err == nil || !strings.Contains(err.Error(), "too old") {
+		t.Errorf("plain 404: %v", err)
 	}
 }

@@ -88,7 +88,7 @@ them.`,
 			if tail > 0 {
 				q.Set("tail_bytes", strconv.Itoa(tail))
 			}
-			status, err := ratls.ManagerGet(ctx, ratls.ManagerParams{
+			answer, err := ratls.ManagerGet(ctx, ratls.ManagerParams{
 				Host: where.dial, Port: where.port, ServerName: where.manager, EnclaveID: where.enclaveID,
 				MRTD: where.mrtd, RTMR1: where.rtmr1, RTMR2: where.rtmr2,
 				AttServerURL: defaultAttServer, AttServerTok: attTok,
@@ -99,7 +99,7 @@ them.`,
 			if err != nil {
 				return err
 			}
-			return logsStatus(status)
+			return logsStatus(answer)
 		},
 	}
 	cmd.Flags().StringVar(&stream, "stream", "stderr", "stdout or stderr")
@@ -177,17 +177,26 @@ func plainPlatformBearer(tok string) error {
 }
 
 // logsStatus turns the manager's answer into the owner-facing outcome.
-func logsStatus(status int) error {
-	switch status {
-	case 200:
+// A 404 whose JSON error is noLogsCaptured means the app has written nothing
+// yet; any other 404 means the host's runtime does not serve logs (or, on a
+// runtime older than that answer, nothing captured either).
+const noLogsCaptured = "no logs captured"
+
+func logsStatus(answer *ratls.ManagerError) error {
+	if answer == nil {
 		return nil
+	}
+	switch answer.Status {
 	case 401:
 		return errors.New("not authenticated: the enclave did not accept the sign-in token")
 	case 403:
 		return errors.New("not authorized: only the app's owner can read its logs")
 	case 404:
-		return errors.New("nothing captured yet")
+		if answer.Error == noLogsCaptured {
+			return errors.New("nothing captured yet")
+		}
+		return errors.New("not found: nothing captured yet, or the app's host runs a runtime too old to serve logs")
 	default:
-		return fmt.Errorf("the enclave answered %d", status)
+		return fmt.Errorf("the enclave answered %d", answer.Status)
 	}
 }

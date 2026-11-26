@@ -5,6 +5,7 @@ package ratls
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -69,14 +70,29 @@ func managerOptions(p ManagerParams) *rc.Options {
 		Attestation: rc.AttestationChallenge, Context: NewNonce(), Trust: rc.TrustFleet}
 }
 
+// ManagerError is a non-200 answer from the manager: its status and the
+// "error" field of a JSON body, if it had one (never written to out).
+type ManagerError struct {
+	Status int
+	Error  string
+}
+
 // ManagerGet attests the manager and, only once its chain, quote,
 // measurements and enclave id all verify, sends one GET with the caller's
-// bearer. A 200 body is copied to out; any other status is returned with no
-// body written.
-func ManagerGet(ctx context.Context, p ManagerParams, out io.Writer) (int, error) {
+// bearer. A 200 body is copied to out; any other answer is returned as a
+// ManagerError with nothing written to out.
+func ManagerGet(ctx context.Context, p ManagerParams, out io.Writer) (*ManagerError, error) {
+	st, msg, err := managerGet(ctx, p, out)
+	if err != nil || st == http.StatusOK {
+		return nil, err
+	}
+	return &ManagerError{Status: st, Error: msg}, nil
+}
+
+func managerGet(ctx context.Context, p ManagerParams, out io.Writer) (int, string, error) {
 	policy, err := managerPolicy(p)
 	if err != nil {
-		return 0, fmt.Errorf("the enclave manager cannot be verified, so nothing was sent: %w", err)
+		return 0, "", fmt.Errorf("the enclave manager cannot be verified, so nothing was sent: %w", err)
 	}
 	port := p.Port
 	if port == 0 {
@@ -84,27 +100,36 @@ func ManagerGet(ctx context.Context, p ManagerParams, out io.Writer) (int, error
 	}
 	client, err := rc.Connect(p.Host, port, managerOptions(p))
 	if err != nil {
-		return 0, fmt.Errorf("RA-TLS connect to %s (%s): %w", p.ServerName, p.Host, err)
+		return 0, "", fmt.Errorf("RA-TLS connect to %s (%s): %w", p.ServerName, p.Host, err)
 	}
 	defer client.Close()
 	if _, verr := client.VerifyCertificate(policy); verr != nil {
-		return 0, fmt.Errorf("the manager's attestation failed, refusing to send anything: %w", verr)
+		return 0, "", fmt.Errorf("the manager's attestation failed, refusing to send anything: %w", verr)
 	}
 
 	hdr := http.Header{}
 	hdr.Set("Authorization", "Bearer "+p.Bearer)
 	resp, err := client.HTTPDoHeader(http.MethodGet, p.Path, p.ServerName, nil, hdr)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return resp.StatusCode, nil
+		// Only the "error" field of a small JSON body is kept, to tell the
+		// owner why; the body itself is never written out.
+		var e struct {
+			Error string `json:"error"`
+		}
+		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		if json.Unmarshal(data, &e) != nil {
+			e.Error = ""
+		}
+		return resp.StatusCode, e.Error, nil
 	}
 	var body io.Reader = resp.Body
 	if p.MaxBytes > 0 {
 		body = io.LimitReader(resp.Body, p.MaxBytes)
 	}
 	_, err = io.Copy(out, body)
-	return resp.StatusCode, err
+	return resp.StatusCode, "", err
 }
