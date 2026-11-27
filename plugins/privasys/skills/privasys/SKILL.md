@@ -15,6 +15,7 @@ When the user asks how something works (confidential computing, how Privasys wor
 - `references/how-privasys-works.md` — the platform: enclaves, gateway, attestation, reproducible builds, MCP-per-app.
 - `references/ra-tls.md` — how a normal TLS handshake carries hardware proof.
 - `references/wallet-auth.md` — sign-in with the wallet or a passkey; the key never leaves the device.
+- `references/browser-sign-in.md`: adding sign-in to a web page with the auth SDK. One `AuthFrame` per page, the rpId is always `privasys.id`, `app(host)` for each enclave app, sealed or direct. Read it before writing or reviewing browser sign-in code.
 - `references/data-protection.md` — vault-keyed storage, the key is the user's, owner-approved upgrades.
 - `references/manifest.md`: the `privasys.json` manifest, with tools, who may call them, prices, the configure step, surfaces served in the clear.
 
