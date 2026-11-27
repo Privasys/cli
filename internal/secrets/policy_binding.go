@@ -16,6 +16,12 @@ import (
 // only the version its rule names, so rules on one op that disagree are
 // refused rather than guessed.
 func BindingVersion(p vault.KeyPolicy, op vault.Operation) (int, error) {
+	return BindingVersionOn(p, op, false)
+}
+
+// BindingVersionOn is BindingVersion on vaults that may read every step-up as
+// binding v2 (CapabilityBindingV2Always): there, any step-up takes v2.
+func BindingVersionOn(p vault.KeyPolicy, op vault.Operation, alwaysV2 bool) (int, error) {
 	version := 0
 	for _, rule := range p.Operations {
 		covers := false
@@ -33,7 +39,7 @@ func BindingVersion(p vault.KeyPolicy, op vault.Operation) (int, error) {
 				continue
 			}
 			v := 1
-			if c.OidcStepUp.Binding == 2 {
+			if c.OidcStepUp.Binding == 2 || alwaysV2 {
 				v = 2
 			} else if c.OidcStepUp.Binding > 2 {
 				return 0, fmt.Errorf("the key's policy asks for approval binding %d on %s, which this CLI does not know", c.OidcStepUp.Binding, op)
@@ -74,11 +80,13 @@ func KeyApproval(ctx context.Context, t KeyTarget, op vault.Operation) (binding 
 	// version, so members that disagree (a partial update) must be resolved
 	// before anything is approved.
 	var policy *vault.KeyPolicy
+	alwaysV2 := false
 	for _, ep := range t.Endpoints {
 		c, derr := vault.Dial(ctx, vaultReg(ep), vault.DialOptions{VaultPolicy: verify, AuthToken: staticToken(t.Bearer)})
 		if derr != nil {
 			continue
 		}
+		alwaysV2 = alwaysV2 || readsAllV2(ctx, c)
 		p, v, perr := c.GetPolicy(ctx, t.Handle)
 		c.Close()
 		if perr != nil {
@@ -93,7 +101,7 @@ func KeyApproval(ctx context.Context, t KeyTarget, op vault.Operation) (binding 
 	if policy == nil {
 		return 1, nil, 0, nil
 	}
-	binding, err = BindingVersion(*policy, op)
+	binding, err = BindingVersionOn(*policy, op, alwaysV2)
 	if err != nil || binding != 2 {
 		return binding, nil, policyVersion, err
 	}
@@ -124,11 +132,13 @@ func ReadPolicyRule(ctx context.Context, t KeyTarget, op vault.Operation) (Polic
 	}
 	var policy *vault.KeyPolicy
 	var version uint32
+	alwaysV2 := false
 	for _, ep := range t.Endpoints {
 		c, derr := vault.Dial(ctx, vaultReg(ep), vault.DialOptions{VaultPolicy: verify, AuthToken: staticToken(t.Bearer)})
 		if derr != nil {
 			continue
 		}
+		alwaysV2 = alwaysV2 || readsAllV2(ctx, c)
 		p, v, perr := c.GetPolicy(ctx, t.Handle)
 		c.Close()
 		if perr != nil {
@@ -143,9 +153,38 @@ func ReadPolicyRule(ctx context.Context, t KeyTarget, op vault.Operation) (Polic
 	if policy == nil {
 		return PolicyRule{}, nil
 	}
-	b, err := BindingVersion(*policy, op)
+	b, err := BindingVersionOn(*policy, op, alwaysV2)
 	if err != nil {
 		return PolicyRule{}, err
 	}
 	return PolicyRule{Readable: true, Binding: b, Version: version}, nil
+}
+
+// readsAllV2 says whether the vault behind c reads every step-up as binding
+// v2. The capability is believed as read over the vault's own pinned
+// connection; a vault that does not answer is taken as an older build.
+func readsAllV2(ctx context.Context, c *vault.Client) bool {
+	id, err := c.GetVaultIdentity(ctx)
+	return err == nil && id.Has(vault.CapabilityBindingV2Always)
+}
+
+// VaultsReadAllV2 says whether t's vaults read every step-up as binding v2,
+// from the first member that answers over a pinned connection.
+func VaultsReadAllV2(ctx context.Context, t KeyTarget) bool {
+	if len(t.Endpoints) == 0 || t.MRENCLAVE == "" {
+		return false
+	}
+	verify, err := verifyPolicy(t.MRENCLAVE, t.AttServer, t.AttToken)
+	if err != nil {
+		return false
+	}
+	for _, ep := range t.Endpoints {
+		c, derr := vault.Dial(ctx, vaultReg(ep), vault.DialOptions{VaultPolicy: verify, AuthToken: staticToken(t.Bearer)})
+		if derr != nil {
+			continue
+		}
+		defer c.Close()
+		return readsAllV2(ctx, c)
+	}
+	return false
 }

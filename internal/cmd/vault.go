@@ -1026,6 +1026,19 @@ wallet: the approval names the exact vaults and build the key goes to.
 				},
 				Out: cmd.ErrOrStderr(), Open: secrets.OpenBrowser,
 				DisplayName: vaultKeyDisplayName(ctx, client, vaultID, name),
+				ApproveV2: func(ctx context.Context, a secrets.ApprovalV2) (string, error) {
+					audience, err := vaultApprovalAudience(a.Audience)
+					if err != nil {
+						return "", err
+					}
+					bearer, err := auth.AccessToken(ctx, env.Cfg.Issuer)
+					if err != nil {
+						return "", err
+					}
+					a.Audience = audience
+					a.Context = withCardName(a.Context, vaultKeyDisplayName(ctx, client, vaultID, name))
+					return secrets.RequestApprovalV2(ctx, env.Cfg.Issuer, bearer, a, secrets.OpenBrowser, cmd.ErrOrStderr())
+				},
 				Mint: func(ctx context.Context, cnf string) (string, string, secrets.RenewConstellation, secrets.RenewConstellation, error) {
 					r, err := client.RenewVaultKeyGrant(ctx, vaultID, name, cnf)
 					if err != nil {

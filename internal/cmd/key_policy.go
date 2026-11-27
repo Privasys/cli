@@ -334,7 +334,9 @@ func directApproval(cmd *cobra.Command, env *Env, dir *api.VaultDirectory, handl
 	if err := json.Unmarshal(plan.Current, &kp); err != nil {
 		return secrets.DirectApproval{}, fmt.Errorf("the key's policy: %w", err)
 	}
-	binding, err := secrets.BindingVersion(kp, vault.OpUpdatePolicy)
+	alwaysV2 := secrets.VaultsReadAllV2(ctx, secrets.KeyTarget{Handle: handle, Endpoints: dir.Endpoints,
+		MRENCLAVE: dir.MRENCLAVE, AttServer: dir.AttestationServer, AttToken: attTok, Bearer: vaultTok})
+	binding, err := secrets.BindingVersionOn(kp, vault.OpUpdatePolicy, alwaysV2)
 	if err != nil {
 		return secrets.DirectApproval{}, err
 	}

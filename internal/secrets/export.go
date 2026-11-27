@@ -61,11 +61,12 @@ func Export(ctx context.Context, p ExportParams) ([]byte, *ExportResult, error) 
 			return nil, nil, fmt.Errorf("get key info: %w", err)
 		}
 		policy, _, err := c.GetPolicy(ctx, p.Handle)
+		alwaysV2 := readsAllV2(ctx, c)
 		c.Close()
 		if err != nil {
 			return nil, nil, fmt.Errorf("get key policy: %w", err)
 		}
-		binding, err := BindingVersion(policy, vault.OpExportKey)
+		binding, err := BindingVersionOn(policy, vault.OpExportKey, alwaysV2)
 		if err != nil {
 			return nil, nil, err
 		}

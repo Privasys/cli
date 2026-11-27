@@ -109,7 +109,11 @@ type ThresholdRenewParams struct {
 	// wallet push.
 	DisplayName string
 	Out         io.Writer
-	Open BrowserOpener
+	Open        BrowserOpener
+	// ApproveV2 asks the owner for a binding v2 approval (a.Audience is the
+	// home vaults' audience): used when the home vaults read every step-up
+	// as binding v2.
+	ApproveV2 func(ctx context.Context, a ApprovalV2) (string, error)
 }
 
 // ThresholdRenewResult is a renewed threshold key.
@@ -152,6 +156,20 @@ func RenewThresholdKeyInVault(ctx context.Context, p ThresholdRenewParams) (*Thr
 	if err != nil {
 		return nil, err
 	}
+	// Vaults without binding v1 approve the move with a binding v2 reshare
+	// naming their members; older vaults take the v1 approval.
+	homeDial := vault.DialOptions{VaultPolicy: homeVerify}
+	var homeIDs []PinnedIdentity
+	if VaultsReadAllV2(ctx, KeyTarget{Handle: handle, Endpoints: home.Endpoints, MRENCLAVE: home.MRENCLAVE,
+		AttServer: home.AttestationServer, AttToken: p.AttToken, Bearer: homeTok}) {
+		if p.ApproveV2 == nil {
+			return nil, fmt.Errorf("renewing %q needs the owner's approval in the Privasys Wallet", handle)
+		}
+		if homeIDs, err = ConstellationIdentities(ctx, home.Endpoints, home.MRENCLAVE, home.AttestationServer, p.AttToken); err != nil {
+			return nil, fmt.Errorf("read the vaults' identities: %w", err)
+		}
+		homeDial.BindingMembers = memberIDs(homeIDs)
+	}
 	n := len(target.Endpoints)
 	t := p.Threshold
 	if t == 0 {
@@ -166,7 +184,7 @@ func RenewThresholdKeyInVault(ctx context.Context, p ThresholdRenewParams) (*Thr
 	inPlace := home.ID == target.ID
 	key, err := vault.ReshareThresholdKey(ctx, vault.ReshareParams{
 		Handle: handle, Grant: grant, Threshold: t,
-		Home: home.Endpoints, HomeDial: vault.DialOptions{VaultPolicy: homeVerify}, HomeToken: homeTok,
+		Home: home.Endpoints, HomeDial: homeDial, HomeToken: homeTok,
 		Target: target.Endpoints,
 		TargetDial: vault.DialOptions{
 			ClientCert: cert, VaultPolicy: targetVerify, AuthToken: vault.StaticToken(targetTok),
@@ -198,6 +216,10 @@ func RenewThresholdKeyInVault(ctx context.Context, p ThresholdRenewParams) (*Thr
 					"MRENCLAVE %s. Its public key does not change.", n, t, build, strings.ToLower(target.MRENCLAVE)),
 			}
 			actx.name(p.DisplayName)
+			if len(homeIDs) > 0 {
+				return p.ApproveV2(ctx, ApprovalV2{Operation: vault.BindReshare, Handle: handle, Target: a.ContextHex,
+					PolicyVersion: uint64(a.PolicyVersion), Identities: homeIDs, Audience: home.Audience, Context: actx})
+			}
 			out := p.Out
 			if out == nil {
 				out = os.Stderr
