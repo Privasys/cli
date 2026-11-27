@@ -39,8 +39,6 @@ against the source before you release the key to it.
 - **Retiring an old version** (`apps_retire_measurement`): stop releasing the
   key to a superseded build. On those keys the owner approves the exact new
   policy, after the CLI has checked it retires only that build.
-- **Separation of duties** (`apps_cosign`): require a *second* team member to
-  co-sign a promote, so no single person can authorize new code over the data.
 - **Owner-approved upgrades survive data**: approved upgrades reattach the same
   encrypted volume, so data persists across upgrades you allowed and is denied to
   ones you did not.
