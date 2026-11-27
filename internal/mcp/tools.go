@@ -1306,22 +1306,6 @@ func (s *Server) registerTools() {
 			},
 		},
 		{
-			Name:        "apps_cosign",
-			Description: "Enable or disable separation-of-duties co-sign on promote for a vault-backed app: when on, a SECOND team approver must co-sign before an upgrade's data key is released. Owner-only.",
-			Schema: obj(map[string]interface{}{
-				"app_id": strProp("the app id"),
-				"enable": boolProp("true to require co-sign, false to disable"),
-			}, "app_id", "enable"),
-			Handler: func(ctx context.Context, d Deps, args map[string]interface{}) (interface{}, error) {
-				id, err := requireStr(args, "app_id")
-				if err != nil {
-					return nil, err
-				}
-				enable, _ := args["enable"].(bool)
-				return d.Client.SetVaultCosign(ctx, id, enable)
-			},
-		},
-		{
 			Name:        "apps_migrate_constellation",
 			Description: "Migrate a vault-backed app's data key to a different vault constellation (advanced ops, e.g. region change). Owner-only. Surface the target to a human before running. As with apps_rotate_key, deleting the old key afterwards may need the owner's wallet approval (see the answer's 'next' note).",
 			Schema: obj(map[string]interface{}{

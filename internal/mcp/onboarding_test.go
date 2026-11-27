@@ -130,16 +130,11 @@ func TestMCPKeyOpsTools(t *testing.T) {
 	}, "test")
 
 	resps := run(t, srv,
-		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"apps_cosign","arguments":{"app_id":"app-1","enable":true}}}`,
 		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"apps_migrate_constellation","arguments":{"app_id":"app-1","target":"con-2"}}}`,
 	)
 	byID := indexByID(resps)
 
-	resultText(t, byID, 1) // fails the test on a tool error
-	if mgmt.lastCosign["require_cosign"] != true {
-		t.Errorf("apps_cosign should send require_cosign=true, got %v", mgmt.lastCosign)
-	}
-	resultText(t, byID, 2)
+	resultText(t, byID, 2) // fails the test on a tool error
 	if mgmt.migrateHit != "/api/v1/apps/app-1/migrate-constellation" {
 		t.Errorf("apps_migrate_constellation hit %q", mgmt.migrateHit)
 	}

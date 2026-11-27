@@ -65,7 +65,6 @@ func newMockIdP(t *testing.T) *mockIdP {
 type mockMgmt struct {
 	*httptest.Server
 	lastCreate map[string]interface{}
-	lastCosign map[string]interface{}
 	migrateHit string
 }
 
@@ -93,9 +92,6 @@ func newMockMgmt(t *testing.T) *mockMgmt {
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"id": "ver-1", "version_number": "v1.0.0", "status": "building",
 			})
-		case r.Method == http.MethodPatch && strings.HasSuffix(p, "/vault-cosign"):
-			_ = json.NewDecoder(r.Body).Decode(&m.lastCosign)
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"require_cosign": m.lastCosign["require_cosign"]})
 		case r.Method == http.MethodPost && strings.HasSuffix(p, "/migrate-constellation"):
 			m.migrateHit = p
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "migrating"})

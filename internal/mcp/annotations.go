@@ -75,7 +75,6 @@ var toolHints = map[string]hints{
 	"apps_retire_measurement":        destroy("Retire an old version's key access", true),
 	"apps_rotate_key":                destroy("Rotate an app's data key", false),
 	"apps_migrate_constellation":     destroy("Move an app's key to other vaults", false),
-	"apps_cosign":                    destroy("Set co-sign on promote", true),
 	"apps_export_key":                write("Export an app's data key to a local file", false),
 	"apps_policy_show":               read("Show an app's approved policy"),
 	"apps_dependencies":              destroy("Set an app's attested dependencies", true),

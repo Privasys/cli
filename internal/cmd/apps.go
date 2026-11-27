@@ -80,7 +80,6 @@ func newAppsCmd() *cobra.Command {
 		newAppsExportKeyCmd(),
 		newAppsKeyCmd(),
 		newAppsBackupCmd(),
-		newAppsCosignCmd(),
 		newAppsMigrateConstellationCmd(),
 		newAppsMeasurementsCmd(),
 		newAppsRetireMeasurementCmd(),
