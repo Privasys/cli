@@ -45,9 +45,10 @@ jobs:
         with:
           repository: Privasys/enclave-vaults-client
           # Pinned: the CLI handles sign-ins, so a new client commit enters a
-          # release only when this pin is moved on purpose. 1d8423da =
-          # vaultprobe-v0.4.0, what v0.61.1 was built with.
-          ref: 1d8423da9a6dd92bd3077ee9c3ababca7146a3f3
+          # release only when this pin is moved on purpose. d3aab925 =
+          # the Go client with CapabilityBindingV2Always (v0.63.x asks v2
+          # approvals on vaults that read every step-up as v2).
+          ref: d3aab925133c9a5d99391b03e92601943a4dff71
           path: enclave-vaults-client
 
       - name: Set up Go
